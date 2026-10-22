@@ -1,0 +1,3 @@
+500001,http://download.windowsupdate.com/c/msdownload/update/software/secu/2026/01/windows11.0-kb5054156-x64.cab
+500002,http://download.windowsupdate.com/c/msdownload/update/software/secu/2026/01/windows10.0-kb5015684-x64.cab
+500003,http://download.windowsupdate.com/c/msdownload/update/software/secu/2026/01/mso2016-kb1234567-fullfile-x64-glb.exe

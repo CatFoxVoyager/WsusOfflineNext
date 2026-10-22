@@ -1,0 +1,12 @@
+https://catalog.s.download.windowsupdate.com/msdownload/update/software/dflt/2008/04/windowsxp-kb936929-sp3-x86-enu_c81472f7eeea2eca421e116cd4c03e2300ebfde4.exe
+https://catalog.s.download.windowsupdate.com/d/csa/csa/secu/2017/02/windowsxp-kb4012598-x86-custom-enu_eceb7d5023bbb23c0dc633e46b9c2f14fa6ee9dd.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2019/04/windowsxp-kb4500331-x86-custom-enu_d7206aca53552fececf72a3dee93eb2da0421188.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/06/windowsxp-kb4025218-x86-custom-enu_f72f48762b3c7354919c86f10d3139b65ddc8a26.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/05/windowsxp-kb4022747-x86-custom-enu_79307511c6d11bf713a33e53683b594c8876e78e.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/05/windowsxp-kb4019204-x86-custom-enu_4498d4a6c2faf1232afa6595b9a0bdb9e39526c5.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/06/windowsxp-kb4024402-x86-custom-enu_c2334a5c8087e107fe26570650966a8f42602b0a.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/04/windowsxp-kb4018466-x86-custom-enu_97472f796e84cd9869c02c32178886115a77daf6.exe
+https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/04/ie8-windowsxp-kb4018271-x86-custom-enu_122a1122404b9862e6998bcec0917de02c378de6.exe
+https://catalog.s.download.windowsupdate.com/d/csa/csa/secu/2017/06/windowsxp-kb4024323-x86-custom-enu_edb5a850bcbcc640c2b8c8aad3ab4d36a3b6fb26.exe
+https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2013/10/windowsxp-kb2868626-x86-enu_1a00424d2070b57a4d9e2e73e54d90f51bb0562a.exe
+https://catalog.s.download.windowsupdate.com/msdownload/update/software/updt/2009/11/windowsxp-kb969084-x86-enu_153587172bf060ddc9d2c966f1eaaf4f47926f28.exe

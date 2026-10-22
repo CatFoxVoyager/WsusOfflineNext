@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>UpdateInstaller</AssemblyName>
+    <RootNamespace>WSUSOffline.Installer</RootNamespace>
+    <Product>WSUS Offline Next</Product>
+    <Description>WSUS Offline Next - Installer</Description>
+    <Version>2026.10.0</Version>
+    <FileVersion>2026.10.0.0</FileVersion>
+    <AssemblyVersion>2026.10.0.0</AssemblyVersion>
+    <ApplicationIcon>..\..\..\ico\okshield.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    
+    <!-- Single File Output Settings -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+  </ItemGroup>
+
+  <!-- Embed React assets directly inside the EXE assembly resources -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\dist\**" LogicalName="wwwroot.%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="..\dist\**" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

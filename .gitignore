@@ -1,0 +1,129 @@
+# Deploy and local overrides
+deploy-local.cmd
+static/custom/StaticDownloadLinks-w100-x64-glb.txt
+
+# Agent, orchestration & local tool state
+.agents/
+.gsd/
+.planning/
+.claude/
+.Claude/
+scratch/
+
+# Environment variables & secrets
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.pfx
+*.p12
+*.kdbx
+*.pkcs12
+*.secret
+*.token
+id_rsa*
+id_ed25519*
+
+# WSUS Offline Update - Downloaded updates & runtime packages (large binary artifacts)
+*.zip
+*_hashes.txt
+client/win/
+client/w100/
+client/w100-x64/
+client/w110-x64/
+client/w62/
+client/w62-x64/
+client/w63/
+client/w63-x64/
+client/o2k*/
+client/dotnet/
+client/cpp/
+client/edge/
+client/msedge/
+client/msse/
+client/wd/
+client/wddefs/
+client/ofc/
+client/UpdateTable/*.csv
+exclude/ExcludeList-superseded.txt
+exclude/ExcludeList-superseded-seconly.txt
+iso/*.iso
+usb/*
+!iso/dummy.txt
+!usb/dummy.txt
+
+# WSUS Offline Update - Catalog binary cache & hashes
+client/wsus/wsusscn2.cab
+client/wsus/*.cab
+client/wsus/*.bak
+client/wsus/*.xml
+client/wsus/*.exe
+client/md/*.txt
+
+# Compiled AutoIt binaries, manifests & local configuration
+UpdateGenerator.exe
+UpdateGeneratorLegacy.exe
+UpdateGeneratorModern.exe
+client/UpdateInstaller.exe
+client/UpdateInstallerLegacy.exe
+client/UpdateInstallerModern.exe
+*.exe.manifest
+UpdateGenerator.ini
+client/autorun.inf
+client/builddate.txt
+client/catalogdate.txt
+
+# Dynamically downloaded utilities & runtime state
+bin/.wget-hsts
+bin/mkisofs.exe
+bin/sigcheck*.exe
+bin/streams*.exe
+bin/odt/
+client/office/
+client/bin/Autologon*.exe
+client/bin/unzip.exe
+Windows10Versions.ini
+static/SelfUpdateVersion-recent.txt
+
+# Logs & temporary files
+log/*.log
+client/log/*.log
+!log/dummy.txt
+temp/
+client/temp/
+*.log
+*.tmp
+*.bak
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDE & Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.suo
+*.user
+
+# Operating System artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Modern Web/Host artifacts (.NET 8 & React)
+src-modern/**/node_modules/
+src-modern/**/dist/
+src-modern/**/bin/
+src-modern/**/obj/
+wwwroot/
+client/wwwroot/
+*.orig.exe
+

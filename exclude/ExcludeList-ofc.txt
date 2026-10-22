@@ -1,0 +1,122 @@
+# ==============================================================================
+# WSUS Offline Update - Office Exclusion List
+# Product Family: Microsoft Office 16.0 (o2k16)
+#
+# LIFECYCLE & EOL STATUS:
+# - Microsoft Office 2016 (MSI & C2R): End of Life October 14, 2025 (FROZEN)
+# - Microsoft Office 2019 (Perpetual): End of Life October 14, 2025 (FROZEN)
+# - Microsoft Office LTSC 2021:        End of Life October 13, 2026 (FROZEN)
+# - Microsoft Office LTSC 2024:        Active Support until October 9, 2029 (ACTIVE)
+#
+# Machinery Note:
+# The o2k16 tree serves as the shared servicing engine for all Office 16.x suites.
+# Exclusions here freeze obsolete legacy patches without breaking LTSC 2024 servicing.
+# ==============================================================================
+
+-fullfile-
+-fullfile_
+-server-
+-server_
+/acmserversp-
+/acsrvmui-
+/acsrvmuisp-
+/acsrvwfe-
+/acsrvwfesp-
+/clientshared32wwsp-
+/clientshared32muisp-
+/clientshared64wwsp-
+/clientshared64muisp-
+/clientsharedmuisp-
+/coreserver-
+/coreservermui-
+/coreserversp-
+/coreservermuisp-
+/duetserversp-
+/eduwfe-
+/edumui-
+/eduwfesp-
+/edumuisp-
+/ems-
+/grs-
+/ifswfe-
+/ifsmui-
+/ifswfesp-
+/ifsmuisp-
+/lpsrvwfe-
+/lpsrvmui-
+/lpsrvwfesp-
+/lpsrvmuisp-
+/officesuitewwsp-
+/officesuitemuisp-
+/oserver-
+/osmuisp-
+/oserversp-
+/osfserver-
+/osfserversp-
+/osfservermuisp-
+/ppsmawfe-
+/ppsmamui-
+/ppsmawfesp-
+/ppsmamuisp-
+/pptserver-
+/pptservermui-
+/pptserversp-
+/pptservermuisp-
+/projectserverwfe-
+/projectservermui-
+/projectserverwfesp-
+/projectservermuisp-
+/projectwwsp-
+/projectmuisp-
+/pjsrvwfe-
+/pserver-
+/pserversp-
+/sharepointdesignerwwsp-
+/sharepointdesignermuisp-
+/sms-
+/smsmui-
+/smssp-
+/smsmuisp-
+/snapview_
+/spd-
+/spdcore-
+/spdevsdk-
+/sqlemuisp-
+/sts-
+/stssp-
+/sts_
+/uicaptssp-
+/visiowwsp-
+/visiomuisp-
+/vismuisp-
+/vsrvwfe-
+/vsrvmui-
+/vsrvwfesp-
+/vsrvmuisp-
+/vviewersp-
+/wacserver-
+/wacserversp-
+/wacserverlpksp-
+/wacwfe
+/wasrvwfe-
+/wasrvmui-
+/wasrvwfesp-
+/wasrvmuisp-
+/wdsrv-
+/wdsrvmui-
+/wdsrvsp-
+/wdsrvmuisp-
+/wosrv-
+/wss-
+/wss2003
+/wsssp
+/wsslpk
+/wssmui
+/wsstpk
+/wssww
+/xlsrvwfe-
+/xlsrvmui-
+/xlsrvwfesp-
+/xlsrvmuisp-
+/xlwacwfe-
+/xsmuisp-

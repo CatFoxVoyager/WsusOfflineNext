@@ -1,0 +1,14 @@
+# ==============================================================================
+# WSUS Offline Update - Office Exclusion List
+# Product Family: Microsoft Office 16.0 (o2k16)
+#
+# LIFECYCLE & EOL STATUS:
+# - Microsoft Office 2016 (MSI & C2R): End of Life October 14, 2025 (FROZEN)
+# - Microsoft Office 2019 (Perpetual): End of Life October 14, 2025 (FROZEN)
+# - Microsoft Office LTSC 2021:        End of Life October 13, 2026 (FROZEN)
+# - Microsoft Office LTSC 2024:        Active Support until October 9, 2029 (ACTIVE)
+#
+# Machinery Note:
+# The o2k16 tree serves as the shared servicing engine for all Office 16.x suites.
+# Exclusions here freeze obsolete legacy patches without breaking LTSC 2024 servicing.
+# ==============================================================================

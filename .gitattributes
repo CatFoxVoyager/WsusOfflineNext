@@ -1,0 +1,13 @@
+# Auto-detect text files and normalize
+* text=auto
+
+# Windows batch scripts and AutoIt scripts MUST have CRLF line endings for cmd.exe compatibility
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.vbs text eol=crlf
+*.au3 text eol=crlf
+*.ini text eol=crlf
+*.txt text eol=crlf
+
+# Shell scripts must have LF line endings
+*.sh text eol=lf

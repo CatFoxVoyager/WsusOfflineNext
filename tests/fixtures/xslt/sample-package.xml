@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OfflineSyncPackage xmlns="http://schemas.microsoft.com/msus/2004/02/OfflineSync"
+                    PackageId="e3984d72-b7e1-4573-9a3c-bbf930495f54"
+                    PackageVersion="1.0"
+                    ProtocolVersion="1.0"
+                    MinimumClientVersion="5.8.0.2465">
+  <FileLocations>
+    <FileLocation Id="500001" Url="http://download.windowsupdate.com/c/msdownload/update/software/secu/2026/01/windows11.0-kb5054156-x64.cab" />
+    <FileLocation Id="500002" Url="http://download.windowsupdate.com/c/msdownload/update/software/secu/2026/01/windows10.0-kb5015684-x64.cab" />
+    <FileLocation Id="500003" Url="http://download.windowsupdate.com/c/msdownload/update/software/secu/2026/01/mso2016-kb1234567-fullfile-x64-glb.exe" />
+  </FileLocations>
+  <Updates>
+    <!-- Windows 11 Bundle Update -->
+    <Update UpdateId="11111111-aaaa-bbbb-cccc-000000000001" RevisionId="100001" IsBundle="true">
+      <Categories>
+        <Category Type="Product" Id="72e7624a-5b00-45d2-b92f-e561c0a6a160" />
+      </Categories>
+    </Update>
+    <!-- Windows 10 (1903+) Bundle Update -->
+    <Update UpdateId="11111111-aaaa-bbbb-cccc-000000000002" RevisionId="100002" IsBundle="true">
+      <Categories>
+        <Category Type="Product" Id="b3c75dc1-155f-4be4-b015-3f1a91758e52" />
+      </Categories>
+    </Update>
+    <!-- Windows 10 (Base) Bundle Update - Superseded by 100002 -->
+    <Update UpdateId="11111111-aaaa-bbbb-cccc-000000000003" RevisionId="100003" IsBundle="true">
+      <Categories>
+        <Category Type="Product" Id="a3c2375d-0c8a-42f9-bce0-28333e198407" />
+      </Categories>
+      <SupersededBy>
+        <Revision Id="100002" />
+      </SupersededBy>
+    </Update>
+    <!-- Office 2016 Bundle Update -->
+    <Update UpdateId="22222222-aaaa-bbbb-cccc-000000000001" RevisionId="200001" IsBundle="true">
+      <Categories>
+        <Category Type="Product" Id="25aed893-7c2d-4a31-ae22-28ff8ac150ed" />
+      </Categories>
+    </Update>
+    <!-- Other Product Update (Ignored by w100 and o2k16 filters) -->
+    <Update UpdateId="33333333-aaaa-bbbb-cccc-000000000001" RevisionId="300001" IsBundle="true">
+      <Categories>
+        <Category Type="Product" Id="00000000-0000-0000-0000-000000000000" />
+      </Categories>
+    </Update>
+    <!-- Leaf Update 1 for Win11 Bundle -->
+    <Update UpdateId="44444444-aaaa-bbbb-cccc-000000000001" RevisionId="400001" IsBundle="false">
+      <BundledBy>
+        <Revision Id="100001" />
+      </BundledBy>
+      <PayloadFiles>
+        <File Id="500001" />
+      </PayloadFiles>
+    </Update>
+    <!-- Leaf Update 2 for Win10 Bundle -->
+    <Update UpdateId="44444444-aaaa-bbbb-cccc-000000000002" RevisionId="400002" IsBundle="false">
+      <BundledBy>
+        <Revision Id="100002" />
+      </BundledBy>
+      <PayloadFiles>
+        <File Id="500002" />
+      </PayloadFiles>
+    </Update>
+    <!-- Leaf Update 3 for Office 2016 Bundle -->
+    <Update UpdateId="44444444-aaaa-bbbb-cccc-000000000003" RevisionId="400003" IsBundle="false">
+      <BundledBy>
+        <Revision Id="200001" />
+      </BundledBy>
+      <PayloadFiles>
+        <File Id="500003" />
+      </PayloadFiles>
+    </Update>
+  </Updates>
+</OfflineSyncPackage>

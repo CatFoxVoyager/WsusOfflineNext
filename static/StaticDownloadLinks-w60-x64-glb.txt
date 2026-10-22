@@ -1,0 +1,3 @@
+https://catalog.s.download.windowsupdate.com/msdownload/update/software/svpk/2008/04/windows6.0-kb936330-x64_12eed6cf0a842ce2a609c622b843afc289a8f4b9.exe
+https://catalog.s.download.windowsupdate.com/msdownload/update/software/svpk/2009/06/windows6.0-kb948465-x64_2eedca0bfa5ae8d1b0acf2117ddc4f15ac5183c9.exe
+http://download.microsoft.com/download/E/7/6/E76850B8-DA6E-4FF5-8CCE-A24FC513FD16/Windows6.0-KB2506146-x64.msu

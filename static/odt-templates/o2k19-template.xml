@@ -1,0 +1,8 @@
+<Configuration>
+  <Add SourcePath="{SOURCE_PATH}" OfficeClientEdition="{EDITION}" Channel="PerpetualVL2019">
+    <Product ID="ProPlus2019Volume">
+      <Language ID="{LANG}" />
+    </Product>
+  </Add>
+  <Display Level="None" AcceptEULA="TRUE" />
+</Configuration>

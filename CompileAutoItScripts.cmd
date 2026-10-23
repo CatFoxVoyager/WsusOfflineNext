@@ -11,12 +11,12 @@ if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set AUT2EXE_EXE=Aut2exe_x64.exe) else
 )
 
 echo Compiling AutoIt Legacy GUIs...
-"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0UpdateGenerator.au3" /out "%~dps0UpdateGeneratorLegacy.exe" /icon "%~dps0ico\okshield.ico" /x86 /comp 0 /nopack
-"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0client\UpdateInstaller.au3" /out "%~dps0client\UpdateInstallerLegacy.exe" /icon "%~dps0ico\okshield.ico" /x86 /comp 0 /nopack
+"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0UpdateGenerator.au3" /out "%~dps0UpdateGeneratorLegacy.exe" /icon "%~dps0ico\wson.ico" /x86 /comp 0 /nopack
+"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0client\UpdateInstaller.au3" /out "%~dps0client\UpdateInstallerLegacy.exe" /icon "%~dps0ico\wson.ico" /x86 /comp 0 /nopack
 
 echo Compiling AutoIt Adaptive Launchers...
-"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0UpdateGeneratorLauncher.au3" /out "%~dps0UpdateGenerator.exe" /icon "%~dps0ico\okshield.ico" /x86 /comp 0 /nopack
-"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0client\UpdateInstallerLauncher.au3" /out "%~dps0client\UpdateInstaller.exe" /icon "%~dps0ico\okshield.ico" /x86 /comp 0 /nopack
+"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0UpdateGeneratorLauncher.au3" /out "%~dps0UpdateGenerator.exe" /icon "%~dps0ico\wson.ico" /x86 /comp 0 /nopack
+"%~dps0bin\%AUT2EXE_EXE%" /in "%~dps0client\UpdateInstallerLauncher.au3" /out "%~dps0client\UpdateInstaller.exe" /icon "%~dps0ico\wson.ico" /x86 /comp 0 /nopack
 goto EoF
 
 :NoExtensions

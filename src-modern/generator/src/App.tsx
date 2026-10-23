@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Shield,
   Folder,
   Disc,
   Usb,
@@ -19,6 +18,8 @@ import {
   PackageCheck,
   Loader2
 } from 'lucide-react';
+
+import logo from './assets/logo.png';
 
 interface LogEntry {
   id: string;
@@ -288,9 +289,7 @@ export default function App() {
       {/* 1. Header Bar */}
       <header className="h-14 border-b border-dark-800 bg-dark-900 px-5 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-md bg-accent-600/15 border border-accent-600/30 flex items-center justify-center text-accent-400">
-            <Shield className="w-4 h-4" />
-          </div>
+          <img src={logo} alt="WSUS Offline Next" className="w-9 h-9" draggable={false} />
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-semibold text-zinc-100 tracking-tight">WSUS Offline Next</h1>

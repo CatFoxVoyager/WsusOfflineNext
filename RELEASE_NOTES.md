@@ -2,6 +2,30 @@
 
 [Back to the project](README.md) · [Quick start](README.md#quick-start) · [Support development](https://liberapay.com/Jeremie/) · [LinkedIn](https://www.linkedin.com/in/jeremiedufault)
 
+## 2026.10.1
+
+**Status:** current release.
+
+### Highlights
+
+- **New project logo everywhere:** a dedicated WSUS Offline Next logo (update cube and refresh arrow) now appears in the README header, as the GitHub social preview, and as the application icon of all six executables — the adaptive launchers, the modern .NET 8 applications, and the legacy AutoIt GUIs.
+- **Branded Generator interface:** the modern Generator header replaces the placeholder shield with the project logo, and the application window icon follows the same mark.
+- **Refreshed screenshots:** all README screenshot assets were retaken against the branded interface, so documentation matches what the applications actually look like.
+
+### Release packaging
+
+- Fixed release packaging on Windows: `MakeRelease.cmd` now resolves 7-Zip through the scoop installation and excludes development and workspace content from the published archive.
+
+### Requirements and upgrade guidance
+
+- Same requirements as 2026.10.0: Windows 10 or 11 (x64) for the generator, .NET 8 and WebView2 for the modern interface, with automatic fallback to the legacy Win32 GUI otherwise.
+- Drop-in replacement: replace the previous tree with this one; configuration (`UpdateGenerator.ini`, `UpdateInstaller.ini`) and existing download repositories are preserved. No configuration migration is required.
+
+### Validation
+
+- Full rebuild of both React frontends, both .NET 8 single-file hosts, and all four AutoIt binaries against the 2026.10.1 version metadata.
+- Icons verified by extraction from the rebuilt executables; the modern Generator interface was exercised in a browser to confirm the branded header and favicon.
+
 ## 2026.10.0
 
 **Status:** current repository snapshot. Publication and release packaging are tracked separately.

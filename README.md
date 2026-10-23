@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="doc/logo.png" alt="WSUS Offline Next logo" width="240">
+
 # WSUS Offline Next
 
 ### Prepare online. Update offline.

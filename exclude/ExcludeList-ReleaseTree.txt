@@ -49,3 +49,11 @@ client\office\
 client\msedge\
 UpdateGenerator.ini
 Windows10Versions.ini
+.planning\
+.playwright-mcp\
+.tmp-
+.gitignore
+.gitattributes
+.agents\
+.claude\
+.gsd\

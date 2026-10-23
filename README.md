@@ -8,7 +8,7 @@
 
 **A modern, independent successor to WSUS Offline Update Community Edition.**
 
-[![Version](https://img.shields.io/badge/version-2026.10.0-2563eb?style=flat-square)](RELEASE_NOTES.md)
+[![Version](https://img.shields.io/badge/version-2026.10.1-2563eb?style=flat-square)](RELEASE_NOTES.md)
 [![Desktop](https://img.shields.io/badge/desktop-Windows_x64-2563eb?style=flat-square)](#requirements)
 [![License](https://img.shields.io/badge/license-GPLv3-15803d?style=flat-square)](doc/license.txt)
 [![Support on Liberapay](https://img.shields.io/badge/support-Liberapay-F6C915?style=flat-square&logo=liberapay&logoColor=black)](https://liberapay.com/Jeremie/)
@@ -37,7 +37,7 @@ The familiar **Generator → client media → Installer** workflow continues, wi
 | **Modern components** | Optional Edge, WebView2, Defender definitions, Visual C++, .NET Framework, and .NET 8 / 10 runtime packages. |
 | **Integrity and diagnostics** | Hash verification, fail-closed checks in servicing paths, execution reports, and restart-loop protection. Keep verification enabled when preparing and applying media. |
 
-The application version is **2026.10.0**. Read the [release notes](RELEASE_NOTES.md) for changes, upgrade guidance, and known limitations. Internal milestones such as `v4.0` describe development stages, not a separate application release number.
+The application version is **2026.10.1**. Read the [release notes](RELEASE_NOTES.md) for changes, upgrade guidance, and known limitations. Internal milestones such as `v4.0` describe development stages, not a separate application release number.
 
 ## Screenshots
 

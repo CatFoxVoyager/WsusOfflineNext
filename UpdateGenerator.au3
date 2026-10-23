@@ -1,4 +1,4 @@
-; ***  WSUS Offline Next 2026.10.0 - Generator  ***
+; ***  WSUS Offline Next 2026.10.1 - Generator  ***
 ; ***       Author: T. Wittrock, Kiel        ***
 ; ***         - Next Edition -          ***
 ; ***     USB-Option added by Ch. Riedel     ***
@@ -9,14 +9,14 @@
 
 #pragma compile(CompanyName, "WSUS Offline Next Project")
 #pragma compile(FileDescription, "WSUS Offline Update Generator")
-#pragma compile(FileVersion, 2026.10.0)
+#pragma compile(FileVersion, 2026.10.1)
 #pragma compile(InternalName, "Generator")
 #pragma compile(LegalCopyright, "GNU GPLv3")
 #pragma compile(OriginalFilename, UpdateGenerator.exe)
 #pragma compile(ProductName, "WSUS Offline Next")
-#pragma compile(ProductVersion, 2026.10.0)
+#pragma compile(ProductVersion, 2026.10.1)
 
-Dim Const $caption                      = "WSUS Offline Next - 2026.10.0 (b2026.10)"
+Dim Const $caption                      = "WSUS Offline Next - 2026.10.1 (b2026.10)"
 Dim Const $title                        = $caption & " - Generator"
 Dim Const $downloadURL                  = "https://gitlab.com/wsusoffline/"
 Dim Const $downloadLogFile              = "download.log"

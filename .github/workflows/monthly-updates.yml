@@ -2,9 +2,10 @@ name: Monthly updates
 
 # Monthly catalog refresh + release (design: docs/superpowers/specs/2026-10-28-ci-cd-dependencies-updates-design.md)
 #
-# SECURITY: this workflow runs on the SELF-HOSTED runner (the maintainer's
-# machine). It must never execute for pull_request events, and only for this
-# repository — the guard below is load-bearing, do not relax it.
+# SECURITY: the release job runs on the SELF-HOSTED Windows runner (the
+# maintainer's machine); the catalog job runs on the self-hosted Docker Linux
+# runner. Neither may ever execute for pull_request events, and only for this
+# repository — the guards below are load-bearing, do not relax them.
 # dry_run (workflow_dispatch only) forbids every push, tag and release.
 # Scheduled runs pass no inputs, so dry_run defaults to false there.
 
@@ -27,9 +28,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  monthly:
-    runs-on: [self-hosted]
+  catalog:
+    name: Catalog refresh (Docker Linux)
+    runs-on: [self-hosted, wson-docker]
+    timeout-minutes: 90
     if: github.event_name != 'pull_request' && github.repository == 'CatFoxVoyager/WsusOfflineNext'
+    outputs:
+      fire: ${{ steps.decide.outputs.fire }}
+      lists_changed: ${{ steps.decide.outputs.lists_changed }}
     env:
       DRY_RUN: ${{ inputs.dry_run == true }}
     defaults:
@@ -42,14 +48,20 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Download catalog and extract id/url pairs
-        run: bash ci/extract-catalog.bash "$RUNNER_TEMP/catalog" --download
+      - name: Download catalog and extract id/url pairs (Linux toolchain)
+        run: bash ci/extract-catalog-linux.bash "$RUNNER_TEMP/catalog" --download
 
-      - name: Validate static links (before)
-        run: bash ci/validate-links.bash static pre.md dead.md
+      - name: Validate static links (two-pass, cache persisted between runs)
+        run: bash ci/validate-links.bash static "$RUNNER_TEMP/pre.md" "$RUNNER_TEMP/dead.md" --cache "$GITHUB_WORKSPACE/../wson-dead-cache.txt"
 
-      - name: Regenerate static lists (dry fusion, report only)
-        run: bash ci/regen-static-lists.bash "$RUNNER_TEMP/catalog" static dead.md --dry-run
+      - name: Regenerate static lists (real fusion unless dry run)
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            bash ci/regen-static-lists.bash "$RUNNER_TEMP/catalog" static "$RUNNER_TEMP/dead.md" --dry-run
+          else
+            bash ci/regen-static-lists.bash "$RUNNER_TEMP/catalog" static "$RUNNER_TEMP/dead.md"
+            mv .regen-report.md "$RUNNER_TEMP/regen-report.md"
+          fi
 
       - name: Control build (stands in for CI on token commits)
         run: |
@@ -75,10 +87,8 @@ jobs:
             fire=true
           fi
           {
-            echo "lists_changed=$lists_changed"
             echo "fire=$fire"
-            echo "last_tag=$last_tag"
-            echo "commits_since=$commits_since"
+            echo "lists_changed=$lists_changed"
           } >> "$GITHUB_OUTPUT"
           {
             echo "## Monthly updates report"
@@ -90,12 +100,12 @@ jobs:
             echo
             echo '### Link validation (before)'
             echo '```'
-            cat pre.md
+            cat "$RUNNER_TEMP/pre.md"
             echo '```'
             echo
             echo '### Regeneration report'
             echo '```'
-            cat .regen-report.md
+            cat "$RUNNER_TEMP/regen-report.md" 2>/dev/null || echo "(dry run — no fusion applied)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "decide: lists_changed=$lists_changed fire=$fire commits_since=$commits_since dry_run=$DRY_RUN"
@@ -107,11 +117,34 @@ jobs:
           git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
             commit -m "chore(static): refresh download links $(date -u +%Y-%m)"
           git push origin HEAD:main
-          # keep the local checkout on the pushed state for the release step
-          git branch --set-upstream-to=origin/main 2>/dev/null || true
+
+      - name: Dry-run boundary (catalog)
+        if: env.DRY_RUN == 'true'
+        run: echo "DRY RUN — no commit was pushed."
+
+  release:
+    name: Build and release (Windows native)
+    needs: catalog
+    runs-on: [self-hosted]
+    timeout-minutes: 90
+    if: |
+      needs.catalog.result == 'success' &&
+      needs.catalog.outputs.fire == 'true' &&
+      github.event_name != 'pull_request' &&
+      github.repository == 'CatFoxVoyager/WsusOfflineNext' &&
+      inputs.dry_run != true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout (includes the refreshed lists)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve next version
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
         id: version
         run: |
           base="$(date -u +%Y.%m)"
@@ -123,7 +156,6 @@ jobs:
           echo "version: ${base}.${patch}"
 
       - name: Bump version
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
         run: |
           bash ci/bump-version.bash "${{ steps.version.outputs.version }}"
           git add cmd/DownloadUpdates.cmd client/cmd/DoUpdate.cmd \
@@ -139,12 +171,11 @@ jobs:
             commit -m "chore(release): bump version to ${{ steps.version.outputs.version }}"
 
       - name: Append release notes
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
         run: |
           VER="${{ steps.version.outputs.version }}"
-          ADDED="$(grep -oE '[0-9]+ added' .regen-report.md | head -1 | cut -d' ' -f1)"
-          REMOVED="$(grep -oE '[0-9]+ removed' .regen-report.md | head -1 | cut -d' ' -f1)"
-          DEAD="$(grep -oE '[0-9]+ dead' pre.md | head -1 | cut -d' ' -f1)"
+          ADDED="$(grep -oE '[0-9]+ added' .regen-report.md 2>/dev/null | head -1 | cut -d' ' -f1 || true)"
+          REMOVED="$(grep -oE '[0-9]+ removed' .regen-report.md 2>/dev/null | head -1 | cut -d' ' -f1 || true)"
+          ADDED="${ADDED:-0}"; REMOVED="${REMOVED:-0}"
           {
             echo ""
             echo "## ${VER}"
@@ -153,8 +184,7 @@ jobs:
             echo ""
             echo "### Monthly update refresh"
             echo ""
-            echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED:-0} links added, ${REMOVED:-0} retired links removed."
-            echo "- Link validation: ${DEAD:-0} dead URLs detected across the static lists."
+            echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED} links added, ${REMOVED} retired links removed."
             echo ""
           } >> RELEASE_NOTES.md
           git add RELEASE_NOTES.md
@@ -162,35 +192,39 @@ jobs:
             commit -m "docs(release): add ${VER} release notes"
 
       - name: Fetch runtime helpers
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
         run: bash ci/fetch-release-helpers.bash
 
       - name: Build executables
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
-        run: cmd //c ".\CompileModernApps.cmd" --no-pause
+        run: cmd //c ".\\CompileModernApps.cmd" --no-pause
 
       - name: Create release archive
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
-        run: cmd //c ".\MakeRelease.cmd" "${{ steps.version.outputs.version }}"
+        run: cmd //c ".\\MakeRelease.cmd" "${{ steps.version.outputs.version }}"
+
+      - name: Verify release archive
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          ZIP="$TEMP/wsusofflineCE${VER}.zip"
+          [ -f "$ZIP" ] || { echo "FAIL: $ZIP absent"; exit 1; }
+          if unzip -l "$ZIP" | grep -qE "wsusoffline/(pre\.md|dead\.md|\.regen-report\.md|docs/superpowers|\.superpowers)"; then
+            echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/\."; exit 1
+          fi
+          unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe manquant"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe manquant"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -q "WSUSOFFLINE_VERSION=${VER}" || { echo "FAIL: version ${VER} non embarquée"; exit 1; }
+          echo "verify-release-archive: contenu OK"
 
       - name: Tag and publish release
-        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VER: ${{ steps.version.outputs.version }}
         run: |
+          VER="${{ steps.version.outputs.version }}"
           REL="WsusOfflineNext-${VER}"
           cp "$TEMP/wsusofflineCE${VER}.zip" "$TEMP/${REL}.zip"
           cp "$TEMP/wsusofflineCE${VER}_hashes.txt" "$TEMP/${REL}_hashes.txt"
-          # release notes body = the section just appended to RELEASE_NOTES.md
           sed -n "/^## ${VER//./\\.}/,\$p" RELEASE_NOTES.md > "$TEMP/release-body.md"
           git tag "v${VER}"
-          git push origin "v${VER}"
+          git push origin HEAD:main "v${VER}"
           gh release create "v${VER}" \
             --title "WSUS Offline Next ${VER}" \
             --notes-file "$TEMP/release-body.md" \
             "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
-
-      - name: Dry-run boundary
-        if: env.DRY_RUN == 'true'
-        run: echo "DRY RUN — no commit, no tag, no release was produced."

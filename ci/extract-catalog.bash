@@ -6,8 +6,10 @@
 #
 # Produces <work-dir>/update-ids-and-locations-all.txt ("<id>,<url>" pairs) from
 # wsusscn2.cab, using the repo's own tools (bin/wget64.exe, expand.exe,
-# cmd/XSLT.vbs, xslt/extract-update-cab-exe-ids-and-locations.xsl, bin/gsort.exe) —
-# the same chain as ExtractDownloadLinks-all.cmd, minus everything it does not need.
+# cmd/XSLT.vbs, xslt/extract-update-cab-exe-ids-and-locations.xsl, bin/gsort.exe).
+# NOTE: unlike ExtractDownloadLinks-all.cmd this output is NOT filtered through
+# the revision/file-id join chain — it carries superseded URLs too, which only
+# affects the disposition counters (ADD is off; REMOVE is dead-file-driven).
 # With --download (or when the cab is missing), the catalog is fetched first.
 
 # ===== Configuration =====

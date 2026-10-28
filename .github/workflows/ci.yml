@@ -27,6 +27,17 @@ jobs:
           npm ci
           npm run build
 
+  fixture-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Link validator and list fusion fixtures
+        run: |
+          bash ci/tests/test-validate-links.sh
+          bash ci/tests/test-regen-static-lists.sh
+          bash ci/tests/test-bump-version.sh
+
   dotnet-build:
     runs-on: ubuntu-latest
     steps:

@@ -2,9 +2,14 @@
 #
 # ci/validate-links.bash — HEAD-probe every URL of the static download lists
 #
-# Usage: bash ci/validate-links.bash <static-dir> <report-file> <dead-file> [--strict]
+# Usage: bash ci/validate-links.bash <static-dir> <report-file> <dead-file> [--strict] [--cache <file>]
 #
 # Writes a per-list markdown report and a plain dead-URLs file (one per line).
+# With --cache <file>, removal requires two consecutive dead passes: a URL dead
+# now but absent from the cache is only recorded as a candidate (dead-file stays
+# empty for it); a URL dead in this pass AND already in the cache lands in the
+# dead-file. A cached URL found alive leaves the cache. The cache file must
+# persist between runs to make the two-pass contract meaningful.
 # Exits 1 with --strict if at least one URL is dead. Non-strict always exits 0
 # unless the inputs are unusable (missing directory, no URLs found at all).
 
@@ -19,6 +24,7 @@ PROBE_TRIES=2
 static_dir=""
 report_file=""
 dead_file=""
+cache_file=""
 strict="disabled"
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 wget_bin=""
@@ -54,6 +60,7 @@ function list_urls ()
 while [ $# -gt 0 ]; do
   case "$1" in
     --strict) strict="enabled" ;;
+    --cache)  shift; cache_file="$1" ;;
     -*)       echo "validate-links: unknown option $1" >&2; exit 1 ;;
     *)        if [ -z "${static_dir}" ]; then static_dir="$1"
               elif [ -z "${report_file}" ]; then report_file="$1"
@@ -100,7 +107,17 @@ export WGET_BIN PROBE_TIMEOUT PROBE_TRIES UA
 sort -u "${work_dir}/all-urls.txt" | xargs -P "${PROBES_IN_PARALLEL}" -I '{}' sh -c '
   "${WGET_BIN}" --spider -S -T "${PROBE_TIMEOUT}" -t "${PROBE_TRIES}" -U "${UA}" -q "$1" 2>/dev/null || echo "$1"
 ' _ '{}' > "${work_dir}/dead-urls.txt" 2>/dev/null
-sort -u "${work_dir}/dead-urls.txt" -o "${dead_file}"
+sort -u "${work_dir}/dead-urls.txt" -o "${work_dir}/dead-now.txt"
+
+# Two-pass removal: with a cache, only URLs dead now AND already cached are
+# confirmed dead; the cache always converges to this pass's dead set.
+if [ -n "${cache_file}" ]; then
+  touch "${cache_file}"
+  grep -Fx -f "${cache_file}" "${work_dir}/dead-now.txt" > "${dead_file}" || true
+  cp "${work_dir}/dead-now.txt" "${cache_file}"
+else
+  cp "${work_dir}/dead-now.txt" "${dead_file}"
+fi
 
 # ===== Report =====
 

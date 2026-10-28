@@ -40,5 +40,6 @@ jobs:
         run: >
           dotnet publish src-modern/generator/host/UpdateGenerator.csproj
           -c Release -r win-x64
+          /p:EnableWindowsTargeting=true
           /p:PublishSingleFile=true /p:SelfContained=false
           -o ci-out

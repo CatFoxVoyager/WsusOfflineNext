@@ -1,0 +1,4 @@
+guid-1,https://download.example/a/prod-v1.0.exe
+guid-2,https://download.example/a/prod-v2.0.exe
+guid-3,https://download.example/a/b/other-x1.exe
+guid-4,https://download.example/a/prod-dead.exe

@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [generator, installer]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src-modern/${{ matrix.app }}/package-lock.json
+
+      - name: Build ${{ matrix.app }} (tsc + vite)
+        working-directory: src-modern/${{ matrix.app }}
+        run: |
+          npm ci
+          npm run build
+
+  dotnet-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish generator host (win-x64 sanity)
+        run: >
+          dotnet publish src-modern/generator/host/UpdateGenerator.csproj
+          -c Release -r win-x64
+          /p:PublishSingleFile=true /p:SelfContained=false
+          -o ci-out

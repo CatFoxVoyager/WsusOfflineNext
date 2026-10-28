@@ -164,11 +164,11 @@ jobs:
 
       - name: Build executables
         if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
-        run: cmd //c "CompileModernApps.cmd" --no-pause
+        run: cmd //c ".\CompileModernApps.cmd" --no-pause
 
       - name: Create release archive
         if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
-        run: cmd //c "MakeRelease.cmd" "${{ steps.version.outputs.version }}"
+        run: cmd //c ".\MakeRelease.cmd" "${{ steps.version.outputs.version }}"
 
       - name: Tag and publish release
         if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'

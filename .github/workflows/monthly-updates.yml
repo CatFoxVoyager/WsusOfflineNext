@@ -38,6 +38,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Download catalog and extract id/url pairs
         run: bash ci/extract-catalog.bash "$RUNNER_TEMP/catalog" --download

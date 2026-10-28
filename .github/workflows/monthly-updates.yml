@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   monthly:
-    runs-on: [self-hosted, wson-windows]
+    runs-on: [self-hosted]
     if: github.event_name != 'pull_request' && github.repository == 'CatFoxVoyager/WsusOfflineNext'
     env:
       DRY_RUN: ${{ inputs.dry_run == true }}

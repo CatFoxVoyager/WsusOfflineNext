@@ -41,11 +41,12 @@ function resolve_wget ()
   fi
 }
 
-# Print the clean URL list of one list file (CRLF and trailing spaces removed)
+# Print the clean URL list of one list file (CRLF, ",alias" suffix and
+# trailing spaces removed — some lists carry "url,target-name" lines)
 function list_urls ()
 {
   local file="$1"
-  cat_dos "${file}" | grep -E '^https?://' | sed 's/[[:space:]]*$//'
+  cat_dos "${file}" | grep -E '^https?://' | cut -d',' -f1 | sed 's/[[:space:]]*$//'
 }
 
 # ===== Main program =====

@@ -1,1 +1,1 @@
-https://www.microsoft.com/ 
+https://www.microsoft.com/,msalias.ico 

@@ -3,25 +3,29 @@
 set -u
 F="ci/tests/fixtures-regen"
 # fixtures auto-portantes : état initial recréé à chaque exécution
-printf 'https://download.example/a/prod-v1.0.exe
-https://download.example/a/prod-dead.exe
-' > "$F/static-test/listA.txt"
-printf 'https://download.example/a/prod-dead.exe
-' > "$F/static-test/listB.txt"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$F/static-test/listA.txt"
+printf 'https://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$F/static-test/listB.txt"
 rm -f "$F/.regen-report.md"
 bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2 --dry-run; rc=$?
 [ "$rc" -eq 0 ] || { echo "FAIL: fixture dry-run exited $rc"; exit 1; }
 # dry-run: listes INCHANGÉES
 grep -q "prod-v2.0" "$F/static-test/listA.txt" && { echo "FAIL: dry-run modified listA"; exit 1; }
 # run réel
-bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2; rc=$?
+bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2 --add; rc=$?
 [ "$rc" -eq 0 ] || { echo "FAIL: real run exited $rc"; exit 1; }
-grep -q "prod-v1.0" "$F/static-test/listA.txt" || { echo "FAIL: KEEP broken — url1 lost"; exit 1; }
+grep -q "prod-v1.0.exe,alias1.exe" "$F/static-test/listA.txt" || { echo "FAIL: KEEP/alias cassé — ligne avec alias perdue ou altérée"; exit 1; }
 grep -q "prod-v2.0" "$F/static-test/listA.txt" || { echo "FAIL: ADD broken — url2 (même famille) non ajoutée"; exit 1; }
 grep -q "other-x1" "$F/static-test/listA.txt" && { echo "FAIL: hors-famille ajouté"; exit 1; }
-grep -q "prod-dead" "$F/static-test/listA.txt" && { echo "FAIL: REMOVE broken — dead encore dans listA"; exit 1; }
+grep -q "aliasd" "$F/static-test/listA.txt" && { echo "FAIL: REMOVE broken — dead encore dans listA"; exit 1; }
 grep -q "prod-dead" "$F/static-test/listB.txt" && { echo "FAIL: REMOVE broken — dead encore dans listB"; exit 1; }
 grep -q "other-x1" "$F/static-test/listB.txt" && { echo "FAIL: pollution croisée dans listB"; exit 1; }
+# sans --add : aucun candidat écrit
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$F/static-test/listA.txt"
+printf 'https://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$F/static-test/listB.txt"
+bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: run sans --add exited $rc"; exit 1; }
+grep -q "prod-v2.0" "$F/static-test/listA.txt" && { echo "FAIL: ADD écrit sans --add"; exit 1; }
+grep -q "prod-dead" "$F/static-test/listA.txt" && { echo "FAIL: REMOVE cassé sans --add"; exit 1; }
 CRLF=$(head -1 "$F/static-test/listA.txt" | od -c | grep -c '\r') || true
 [ "$CRLF" -ge 1 ] || { echo "FAIL: sortie pas en CRLF"; exit 1; }
 # abort fail-closed : staging vide (hash avant/après)

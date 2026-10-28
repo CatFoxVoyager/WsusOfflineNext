@@ -2,12 +2,13 @@
 #
 # ci/regen-static-lists.bash — bounded regeneration of the static download lists
 #
-# Usage: bash ci/regen-static-lists.bash <staging-dir> <static-dir> <dead-file> [--dry-run] [--min-lines N]
+# Usage: bash ci/regen-static-lists.bash <staging-dir> <static-dir> <dead-file> [--dry-run] [--add] [--min-lines N]
 #
 # Fusion policy (protects the hand-curated lists):
 #   KEEP   — a live URL stays, even when the catalog extraction does not produce it
-#   ADD    — a catalog URL whose file-name family matches a live entry of the list,
-#            and which the list does not have yet, is added
+#   ADD    — OFF by default (calibration proved name-family matching floods the
+#            lists with every catalog variant: 237k candidates). Enable with
+#            --add only after product/language scoping exists.
 #   REMOVE — a URL proven dead (dead-file from ci/validate-links.bash) is removed,
 #            even when the catalog still lists it
 #
@@ -19,6 +20,7 @@
 readonly script_version="1.0"
 min_lines="1000"
 dry_run="disabled"
+add_policy="disabled"
 
 # ===== Global variables =====
 staging_dir=""
@@ -44,6 +46,7 @@ function url_family ()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)   dry_run="enabled" ;;
+    --add)       add_policy="enabled" ;;
     --min-lines) shift; min_lines="$1" ;;
     -*)          echo "regen-static-lists: unknown option $1" >&2; exit 1 ;;
     *)           if [ -z "${staging_dir}" ]; then staging_dir="$1"
@@ -55,7 +58,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${staging_dir}" ] || [ -z "${static_dir}" ] || [ -z "${dead_file}" ]; then
-  echo "usage: bash ci/regen-static-lists.bash <staging-dir> <static-dir> <dead-file> [--dry-run] [--min-lines N]" >&2
+  echo "usage: bash ci/regen-static-lists.bash <staging-dir> <static-dir> <dead-file> [--dry-run] [--add] [--min-lines N]" >&2
   exit 1
 fi
 
@@ -93,7 +96,11 @@ fi
 report_file="${static_dir}/../.regen-report.md"
 {
   printf '# Static lists regeneration report\n\n'
-  printf 'Catalog: %d URLs. Policy: KEEP live, ADD same-family catalog URLs, REMOVE dead.\n\n' "${catalog_total}"
+  if [ "${add_policy}" = "enabled" ]; then
+    printf 'Catalog: %d URLs. Policy: KEEP live, ADD same-family, REMOVE dead.\n\n' "${catalog_total}"
+  else
+    printf 'Catalog: %d URLs. Policy: KEEP live, REMOVE dead (ADD disabled — use --add).\n\n' "${catalog_total}"
+  fi
   printf '| list | kept | added | removed |\n'
   printf '| :--- | ---: | ---: | ---: |\n'
 } > "${report_file}"
@@ -106,19 +113,26 @@ added_urls_file="${work_dir}/added-all.txt"
 for list_file in "${static_dir}"/*.txt; do
   [ -e "${list_file}" ] || continue
   name="$(basename "${list_file}")"
+  list_lines_file="${work_dir}/lines-${name}"
   list_urls_file="${work_dir}/urls-${name}"
-  cat_dos "${list_file}" | grep -E '^https?://' | sed 's/[[:space:]]*$//' | sort -u > "${list_urls_file}"
+  # full lines ("url" or "url,alias"), and the URL field of each
+  cat_dos "${list_file}" | grep -E '^https?://' | sed 's/[[:space:]]*$//' > "${list_lines_file}"
+  cut -d',' -f1 "${list_lines_file}" | sort -u > "${list_urls_file}"
 
-  # REMOVE: dead URLs of this list
-  grep -Fx -f "${dead_file}" "${list_urls_file}" > "${work_dir}/removed.txt" || true
-  # KEEP: alive URLs
-  grep -Fx -v -f "${dead_file}" "${list_urls_file}" > "${work_dir}/kept.txt" || true
+  # REMOVE: lines whose URL is proven dead
+  awk -F',' 'NR==FNR { dead[$1]=1; next } ($1 in dead)' \
+    "${dead_file}" "${list_lines_file}" > "${work_dir}/removed.txt" || true
+  # KEEP: the other lines, alias field preserved
+  awk -F',' 'NR==FNR { dead[$1]=1; next } !($1 in dead)' \
+    "${dead_file}" "${list_lines_file}" > "${work_dir}/kept.txt" || true
 
   # ADD: catalog URLs of a live family of this list, unknown to the list,
   # never a URL from the dead set
-  awk -F/ '{ print $NF }' "${work_dir}/kept.txt" \
+  awk -F/ '{ print $NF }' "${list_urls_file}" \
     | sed 's/[0-9][0-9.].*$//' | sort -u > "${work_dir}/families.txt"
-  if [ -s "${work_dir}/families.txt" ]; then
+  if [ "${add_policy}" = "disabled" ]; then
+    : > "${work_dir}/candidates.txt"
+  elif [ -s "${work_dir}/families.txt" ]; then
     awk -F/ '{ print $NF "\t" $0 }' "${work_dir}/catalog-urls.txt" \
       | awk -F'\t' 'NR==FNR { fam[$1]=1; next } { n=$1; sub(/[0-9][0-9.].*$/, "", n); if (n in fam) print $2 }' \
         "${work_dir}/families.txt" - \
@@ -143,7 +157,7 @@ for list_file in "${static_dir}"/*.txt; do
   fi
 
   if [ "${added_n}" -gt 0 ] || [ "${removed_n}" -gt 0 ]; then
-    cat "${work_dir}/kept.txt" "${work_dir}/candidates.txt" | sort -u | awk '{ printf "%s\r\n", $0 }' > "${list_file}"
+    cat "${work_dir}/kept.txt" "${work_dir}/candidates.txt" | awk '{ printf "%s\r\n", $0 }' > "${list_file}"
   fi
 done
 

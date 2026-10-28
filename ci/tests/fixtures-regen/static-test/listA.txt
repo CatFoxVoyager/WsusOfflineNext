@@ -1,2 +1,1 @@
-https://download.example/a/prod-v1.0.exe
-https://download.example/a/prod-v2.0.exe
+https://download.example/a/prod-v1.0.exe,alias1.exe

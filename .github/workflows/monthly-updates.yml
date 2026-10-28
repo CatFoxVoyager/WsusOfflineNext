@@ -1,0 +1,193 @@
+name: Monthly updates
+
+# Monthly catalog refresh + release (design: docs/superpowers/specs/2026-10-28-ci-cd-dependencies-updates-design.md)
+#
+# SECURITY: this workflow runs on the SELF-HOSTED runner (the maintainer's
+# machine). It must never execute for pull_request events, and only for this
+# repository — the guard below is load-bearing, do not relax it.
+# dry_run (workflow_dispatch only) forbids every push, tag and release.
+# Scheduled runs pass no inputs, so dry_run defaults to false there.
+
+on:
+  schedule:
+    - cron: '0 6 15 * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report only: no push, no tag, no release'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wson-monthly
+  cancel-in-progress: false
+
+jobs:
+  monthly:
+    runs-on: [self-hosted, wson-windows]
+    if: github.event_name != 'pull_request' && github.repository == 'CatFoxVoyager/WsusOfflineNext'
+    env:
+      DRY_RUN: ${{ inputs.dry_run == true }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download catalog and extract id/url pairs
+        run: bash ci/extract-catalog.bash "$RUNNER_TEMP/catalog" --download
+
+      - name: Validate static links (before)
+        run: bash ci/validate-links.bash static pre.md dead.md
+
+      - name: Regenerate static lists (dry fusion, report only)
+        run: bash ci/regen-static-lists.bash "$RUNNER_TEMP/catalog" static dead.md --dry-run
+
+      - name: Control build (stands in for CI on token commits)
+        run: |
+          cd src-modern/generator && npm ci && npm run build && cd ../..
+          cd src-modern/installer && npm ci && npm run build && cd ../..
+
+      - name: Decide
+        id: decide
+        run: |
+          if git diff --quiet -- static/; then
+            lists_changed=false
+          else
+            lists_changed=true
+          fi
+          last_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo none)"
+          if [ "$last_tag" = "none" ]; then
+            commits_since=1
+          else
+            commits_since="$(git rev-list --count "${last_tag}..HEAD")"
+          fi
+          fire=false
+          if [ "$lists_changed" = true ] || [ "$commits_since" -gt 0 ]; then
+            fire=true
+          fi
+          {
+            echo "lists_changed=$lists_changed"
+            echo "fire=$fire"
+            echo "last_tag=$last_tag"
+            echo "commits_since=$commits_since"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Monthly updates report"
+            echo
+            echo "- lists changed: $lists_changed"
+            echo "- commits since $last_tag: $commits_since"
+            echo "- release fired: $fire"
+            echo "- dry run: $DRY_RUN"
+            echo
+            echo '### Link validation (before)'
+            echo '```'
+            cat pre.md
+            echo '```'
+            echo
+            echo '### Regeneration report'
+            echo '```'
+            cat .regen-report.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "decide: lists_changed=$lists_changed fire=$fire commits_since=$commits_since dry_run=$DRY_RUN"
+
+      - name: Commit refreshed lists
+        if: steps.decide.outputs.lists_changed == 'true' && env.DRY_RUN != 'true'
+        run: |
+          git add static/
+          git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
+            commit -m "chore(static): refresh download links $(date -u +%Y-%m)"
+          git push origin HEAD:main
+          # keep the local checkout on the pushed state for the release step
+          git branch --set-upstream-to=origin/main 2>/dev/null || true
+
+      - name: Resolve next version
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        id: version
+        run: |
+          base="$(date -u +%Y.%m)"
+          patch=0
+          while git rev-parse -q --verify "refs/tags/v${base}.${patch}" >/dev/null; do
+            patch=$((patch + 1))
+          done
+          echo "version=${base}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "version: ${base}.${patch}"
+
+      - name: Bump version
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        run: |
+          bash ci/bump-version.bash "${{ steps.version.outputs.version }}"
+          git add cmd/DownloadUpdates.cmd client/cmd/DoUpdate.cmd \
+            client/UpdateInstaller.au3 client/UpdateInstallerLauncher.au3 \
+            UpdateGenerator.au3 UpdateGeneratorLauncher.au3 \
+            CompileModernApps.cmd README.md \
+            sh/download-updates.bash sh/update-generator.bash \
+            src-modern/generator/host/UpdateGenerator.csproj src-modern/installer/host/UpdateInstaller.csproj \
+            src-modern/generator/package.json src-modern/installer/package.json \
+            src-modern/generator/src/App.tsx src-modern/installer/src/App.tsx \
+            static/SelfUpdateVersion-this.txt
+          git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
+            commit -m "chore(release): bump version to ${{ steps.version.outputs.version }}"
+
+      - name: Append release notes
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          ADDED="$(grep -oE '[0-9]+ added' .regen-report.md | head -1 | cut -d' ' -f1)"
+          REMOVED="$(grep -oE '[0-9]+ removed' .regen-report.md | head -1 | cut -d' ' -f1)"
+          DEAD="$(grep -oE '[0-9]+ dead' pre.md | head -1 | cut -d' ' -f1)"
+          {
+            echo ""
+            echo "## ${VER}"
+            echo ""
+            echo "**Status:** current release."
+            echo ""
+            echo "### Monthly update refresh"
+            echo ""
+            echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED:-0} links added, ${REMOVED:-0} retired links removed."
+            echo "- Link validation: ${DEAD:-0} dead URLs detected across the static lists."
+            echo ""
+          } >> RELEASE_NOTES.md
+          git add RELEASE_NOTES.md
+          git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
+            commit -m "docs(release): add ${VER} release notes"
+
+      - name: Fetch runtime helpers
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        run: bash ci/fetch-release-helpers.bash
+
+      - name: Build executables
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        run: cmd //c "CompileModernApps.cmd" --no-pause
+
+      - name: Create release archive
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        run: cmd //c "MakeRelease.cmd" "${{ steps.version.outputs.version }}"
+
+      - name: Tag and publish release
+        if: steps.decide.outputs.fire == 'true' && env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.version.outputs.version }}
+        run: |
+          REL="WsusOfflineNext-${VER}"
+          cp "$TEMP/wsusofflineCE${VER}.zip" "$TEMP/${REL}.zip"
+          cp "$TEMP/wsusofflineCE${VER}_hashes.txt" "$TEMP/${REL}_hashes.txt"
+          # release notes body = the section just appended to RELEASE_NOTES.md
+          sed -n "/^## ${VER//./\\.}/,\$p" RELEASE_NOTES.md > "$TEMP/release-body.md"
+          git tag "v${VER}"
+          git push origin "v${VER}"
+          gh release create "v${VER}" \
+            --title "WSUS Offline Next ${VER}" \
+            --notes-file "$TEMP/release-body.md" \
+            "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
+
+      - name: Dry-run boundary
+        if: env.DRY_RUN == 'true'
+        run: echo "DRY RUN — no commit, no tag, no release was produced."

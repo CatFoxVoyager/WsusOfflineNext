@@ -8,6 +8,8 @@ name: Monthly updates
 # repository — the guards below are load-bearing, do not relax them.
 # dry_run (workflow_dispatch only) forbids every push, tag and release.
 # Scheduled runs pass no inputs, so dry_run defaults to false there.
+# WR-03: the catalog job checks out main explicitly, so a workflow_dispatch
+# from any ref refreshes and pushes main content only - never a feature branch.
 
 on:
   schedule:
@@ -45,6 +47,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
           fetch-tags: true
 
@@ -125,6 +128,9 @@ jobs:
           git add static/
           git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
             commit -m "chore(static): refresh download links $(date -u +%Y-%m)"
+          git fetch -q origin main
+          git merge-base --is-ancestor FETCH_HEAD HEAD \
+            || { echo "REFUS: main a avance pendant le run - push non fast-forward evite; relancer le train mensuel" >&2; exit 1; }
           git push origin HEAD:main
 
       - name: Dry-run boundary (catalog)

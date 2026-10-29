@@ -130,3 +130,4 @@ client/wwwroot/
 
 # runner Docker: token
 self-hosted/compose.env
+!self-hosted/.env.example

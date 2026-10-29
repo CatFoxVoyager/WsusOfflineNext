@@ -127,3 +127,6 @@ wwwroot/
 client/wwwroot/
 *.orig.exe
 
+
+# runner Docker: token
+self-hosted/compose.env

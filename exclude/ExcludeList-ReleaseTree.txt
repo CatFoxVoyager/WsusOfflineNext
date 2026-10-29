@@ -62,3 +62,4 @@ docs\
 pre.md
 dead.md
 .regen-report.md
+compose.env

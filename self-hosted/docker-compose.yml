@@ -1,0 +1,11 @@
+name: wsusofflinenext-ci
+
+services:
+  catalog-runner:
+    build: ./runner
+    image: wsusofflinenext-gh-runner:local
+    restart: unless-stopped
+    env_file: compose.env
+    environment:
+      RUNNER_NAME: wson-catalog-1
+      REPO_SLUG: CatFoxVoyager/WsusOfflineNext

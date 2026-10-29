@@ -194,6 +194,11 @@ jobs:
       - name: Fetch runtime helpers
         run: bash ci/fetch-release-helpers.bash
 
+      - name: Install frontend dependencies (npm ci for the Windows build)
+        run: |
+          cd src-modern/generator && npm ci && cd ../..
+          cd src-modern/installer && npm ci && cd ../..
+
       - name: Build executables
         run: cmd //c ".\\CompileModernApps.cmd" --no-pause
 

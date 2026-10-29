@@ -1,14 +1,14 @@
-; ***  WSUS Offline Next 2026.10.1 - Generator Adaptive Launcher  ***
+; ***  WSUS Offline Next 2026.10.2 - Generator Adaptive Launcher  ***
 ; ***  Automatically routes to Modern (.NET 8) or Legacy (Win32)  ***
 
 #pragma compile(CompanyName, "WSUS Offline Next Project")
 #pragma compile(FileDescription, "WSUS Offline Update Generator (Adaptive Launcher)")
-#pragma compile(FileVersion, 2026.10.1)
+#pragma compile(FileVersion, 2026.10.2)
 #pragma compile(InternalName, "GeneratorLauncher")
 #pragma compile(LegalCopyright, "GNU GPLv3")
 #pragma compile(OriginalFilename, UpdateGenerator.exe)
 #pragma compile(ProductName, "WSUS Offline Next")
-#pragma compile(ProductVersion, 2026.10.1)
+#pragma compile(ProductVersion, 2026.10.2)
 
 Func _IsWebView2Installed()
     Local $sVer

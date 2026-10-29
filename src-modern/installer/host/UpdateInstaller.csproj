@@ -9,9 +9,9 @@
     <RootNamespace>WSUSOffline.Installer</RootNamespace>
     <Product>WSUS Offline Next</Product>
     <Description>WSUS Offline Next - Installer</Description>
-    <Version>2026.10.1</Version>
-    <FileVersion>2026.10.1.0</FileVersion>
-    <AssemblyVersion>2026.10.1.0</AssemblyVersion>
+    <Version>2026.10.2</Version>
+    <FileVersion>2026.10.2.0</FileVersion>
+    <AssemblyVersion>2026.10.2.0</AssemblyVersion>
     <ApplicationIcon>..\..\..\ico\wson.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     

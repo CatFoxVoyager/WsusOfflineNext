@@ -54,3 +54,11 @@ jobs:
           /p:EnableWindowsTargeting=true
           /p:PublishSingleFile=true /p:SelfContained=false
           -o ci-out
+
+      - name: Publish installer host (win-x64 sanity)
+        run: >
+          dotnet publish src-modern/installer/host/UpdateInstaller.csproj
+          -c Release -r win-x64
+          /p:EnableWindowsTargeting=true
+          /p:PublishSingleFile=true /p:SelfContained=false
+          -o ci-out/installer

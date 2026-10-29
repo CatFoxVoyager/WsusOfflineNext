@@ -120,10 +120,10 @@ for list_file in "${static_dir}"/*.txt; do
   cut -d',' -f1 "${list_lines_file}" | sort -u > "${list_urls_file}"
 
   # REMOVE: lines whose URL is proven dead
-  awk -F',' 'NR==FNR { dead[$1]=1; next } ($1 in dead)' \
+  awk -F',' 'FILENAME==ARGV[1] { dead[$1]=1; next } ($1 in dead)' \
     "${dead_file}" "${list_lines_file}" > "${work_dir}/removed.txt" || true
   # KEEP: the other lines, alias field preserved
-  awk -F',' 'NR==FNR { dead[$1]=1; next } !($1 in dead)' \
+  awk -F',' 'FILENAME==ARGV[1] { dead[$1]=1; next } !($1 in dead)' \
     "${dead_file}" "${list_lines_file}" > "${work_dir}/kept.txt" || true
 
   # ADD: catalog URLs of a live family of this list, unknown to the list,

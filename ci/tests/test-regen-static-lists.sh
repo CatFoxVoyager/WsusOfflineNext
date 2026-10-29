@@ -28,6 +28,26 @@ grep -q "prod-v2.0" "$F/static-test/listA.txt" && { echo "FAIL: ADD écrit sans 
 grep -q "prod-dead" "$F/static-test/listA.txt" && { echo "FAIL: REMOVE cassé sans --add"; exit 1; }
 CRLF=$(head -1 "$F/static-test/listA.txt" | od -c | grep -c '\r') || true
 [ "$CRLF" -ge 1 ] || { echo "FAIL: sortie pas en CRLF"; exit 1; }
+# dead-file VIDE : la liste doit survivre integralement (garde awk FILENAME==ARGV[1])
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$T/static/listE.txt"
+: > "$T/dead-empty.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead-empty.txt" --min-lines 2; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: empty-dead run exited $rc"; rm -rf "$T"; exit 1; }
+h1="$(md5sum < "$T/static/listE.txt")"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead-empty.txt" --min-lines 2; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: empty-dead run 2 exited $rc"; rm -rf "$T"; exit 1; }
+h2="$(md5sum < "$T/static/listE.txt")"
+[ "$h1" = "$h2" ] || { echo "FAIL: empty-dead sans --add a modifie la liste"; rm -rf "$T"; exit 1; }
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$T/static/listE.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead-empty.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: empty-dead --add exited $rc"; rm -rf "$T"; exit 1; }
+grep -q 'prod-v1.0.exe,alias1.exe' "$T/static/listE.txt" || { echo "FAIL: empty-dead --add a RASE la liste (idiome NR==FNR)"; rm -rf "$T"; exit 1; }
+grep -q 'prod-dead' "$T/static/listE.txt" || { echo "FAIL: empty-dead --add a retire une URL non prouvee morte"; rm -rf "$T"; exit 1; }
+grep -qE '\| listE\.txt *\| *2 *\| *1 *\| *0 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport mensonger (attendu 2 kept, 1 added, 0 removed)"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
 # abort fail-closed : staging vide (hash avant/après)
 h1="$(cat "$F"/static-test/*.txt | md5sum)"
 rm -f "$F/.regen-report.md"

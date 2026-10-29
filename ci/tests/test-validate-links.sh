@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fixture test for ci/validate-links.bash — run from repo root.
 set -u
-W=".superpowers/sdd/2026-10-28-ci-cd-monthly-updates"
+W="$(mktemp -d)"
+trap 'rm -rf "$W"' EXIT
 rep="$W/links-report.md"; dead="$W/links-dead.txt"
 rm -f "$rep" "$dead"
 bash ci/validate-links.bash ci/tests/fixtures-links "$rep" "$dead"; rc=$?

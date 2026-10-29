@@ -59,6 +59,9 @@ Windows10Versions.ini
 .gsd\
 docs\
 .superpowers\
+.github\
+ci\
+self-hosted\
 pre.md
 dead.md
 .regen-report.md

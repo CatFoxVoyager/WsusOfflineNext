@@ -20,6 +20,21 @@
 # Known parity divergence (accepted): bin/odt/setup.exe is NOT fetched here —
 # cmd/DownloadOfficeC2R.cmd downloads it on first use, so the release zip ships
 # without it and the client pipeline self-heals exactly as on a dev machine.
+#
+# Integrity (CIWF-06, finding IN-04): every downloaded helper is verified
+# against the pinned SHA256 list in ci/release-helper-hashes.sha256
+# (sha256sum format: 64 hex chars, two spaces, basename) BEFORE anything is
+# unpacked or integrated. The pins were seeded from fresh upstream downloads
+# (2026-10-29); the mkisofs pin was cross-checked with certutil.
+#
+# Refresh procedure: when verification fails the script exits 1 and prints
+# both the expected pin and the observed digest. Verify the new build's
+# provenance from the official source (download.sysinternals.com for the
+# Sysinternals archives, gitlab.com/wsusoffline/wsusoffline-sdd for
+# mkisofs.exe), then update the pin in a dedicated commit. Until then the
+# release stays red: the workflow's Fetch runtime helpers step
+# (monthly-updates.yml) fails before MakeRelease runs, so a modified,
+# corrupted or unpinned helper never enters the published zip.
 
 # ===== Configuration =====
 readonly script_version="1.2"
@@ -88,6 +103,8 @@ while IFS= read -r url; do
   echo "fetch-release-helpers: ${url} -> bin/${zip_name}"
   "${wget_bin}" -N -q -P bin "${url}" \
     || { echo "fetch-release-helpers: download failed: ${url}" >&2; exit 1; }
+  # CIWF-06: a tampered archive must never be unpacked - gate before the unzip
+  verify_helper_hash "${zip_name}"
   case "${zip_name}" in
     AutoLogon.zip) dest="client/bin" ;;
     *)             dest="bin" ;;

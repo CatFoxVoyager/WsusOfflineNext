@@ -10,6 +10,11 @@ name: Monthly updates
 # Scheduled runs pass no inputs, so dry_run defaults to false there.
 # WR-03: the catalog job checks out main explicitly, so a workflow_dispatch
 # from any ref refreshes and pushes main content only - never a feature branch.
+# WR-04: no checkout persists credentials; the write token exists only as
+# step-scoped env on the two push steps, and permissions are least-privilege
+# (workflow defaults to contents read, only the two pushing jobs escalate).
+# Residual: the job-scoped token transits one push command line - runner-PAT
+# argv hygiene is Phase 16 CISH-04, a different secret.
 
 on:
   schedule:
@@ -23,7 +28,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: wson-monthly
@@ -34,6 +39,8 @@ jobs:
     name: Catalog refresh (Docker Linux)
     runs-on: [self-hosted, wson-docker]
     timeout-minutes: 90
+    permissions:
+      contents: write
     if: github.event_name != 'pull_request' && github.repository == 'CatFoxVoyager/WsusOfflineNext'
     outputs:
       fire: ${{ steps.decide.outputs.fire }}
@@ -50,6 +57,7 @@ jobs:
           ref: main
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
       - name: Download catalog and extract id/url pairs (Linux toolchain)
         run: bash ci/extract-catalog-linux.bash "$RUNNER_TEMP/catalog" --download
@@ -124,14 +132,17 @@ jobs:
 
       - name: Commit refreshed lists
         if: steps.decide.outputs.lists_changed == 'true' && env.DRY_RUN != 'true'
+        env:
+          AUTH_TOKEN: ${{ github.token }}
         run: |
           git add static/
           git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
             commit -m "chore(static): refresh download links $(date -u +%Y-%m)"
-          git fetch -q origin main
+          REPO_URL="https://x-access-token:${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q "$REPO_URL" main
           git merge-base --is-ancestor FETCH_HEAD HEAD \
             || { echo "REFUS: main a avance pendant le run - push non fast-forward evite; relancer le train mensuel" >&2; exit 1; }
-          git push origin HEAD:main
+          git push "$REPO_URL" HEAD:main
 
       - name: Dry-run boundary (catalog)
         if: env.DRY_RUN == 'true'
@@ -142,6 +153,8 @@ jobs:
     needs: catalog
     runs-on: [self-hosted, wson-windows]
     timeout-minutes: 90
+    permissions:
+      contents: write
     if: |
       needs.catalog.result == 'success' &&
       needs.catalog.outputs.fire == 'true' &&
@@ -158,6 +171,7 @@ jobs:
           ref: main
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
       - name: Download regeneration report
         uses: actions/download-artifact@v4
@@ -244,6 +258,7 @@ jobs:
       - name: Tag and publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          AUTH_TOKEN: ${{ github.token }}
         run: |
           VER="${{ steps.version.outputs.version }}"
           REL="WsusOfflineNext-${VER}"
@@ -251,7 +266,11 @@ jobs:
           cp "$TEMP/wsusofflineCE${VER}_hashes.txt" "$TEMP/${REL}_hashes.txt"
           sed -n "/^## ${VER//./\\.}/,\$p" RELEASE_NOTES.md > "$TEMP/release-body.md"
           git tag "v${VER}"
-          git push origin HEAD:main "v${VER}"
+          REPO_URL="https://x-access-token:${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q "$REPO_URL" main
+          git merge-base --is-ancestor FETCH_HEAD HEAD \
+            || { echo "REFUS: main a avance pendant le run - push non fast-forward evite; relancer le train mensuel" >&2; exit 1; }
+          git push "$REPO_URL" HEAD:main "v${VER}"
           gh release create "v${VER}" \
             --title "WSUS Offline Next ${VER}" \
             --notes-file "$TEMP/release-body.md" \

@@ -45,6 +45,7 @@ jobs:
           bash ci/tests/test-validate-links.sh
           bash ci/tests/test-regen-static-lists.sh
           bash ci/tests/test-bump-version.sh
+          bash ci/tests/test-fetch-release-helpers.sh
 
   dotnet-build:
     runs-on: ubuntu-latest

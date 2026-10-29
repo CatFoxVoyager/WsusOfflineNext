@@ -27,6 +27,14 @@ jobs:
           npm ci
           npm run build
 
+  # fixture-tests is the third job — the 2026-10-28 design
+  # (docs/superpowers/specs/2026-10-28-ci-cd-dependencies-updates-design.md)
+  # planned two jobs (node-build, dotnet-build); this one is additive.
+  # It is load-bearing, not drift: it runs the ci/tests fixture suite on every
+  # pull_request and is the only job that catches ci-script regressions.
+  # Finding CR-02 of the 2026-10-29 CI/CD code review proved this job red on a
+  # clean checkout before the mkdir fix — exactly the class of rupture it
+  # exists to surface. Keep it.
   fixture-tests:
     runs-on: ubuntu-latest
     steps:

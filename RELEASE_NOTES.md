@@ -89,3 +89,12 @@ These checks did not perform real update downloads, installations, or restarts. 
 ### Credits and license
 
 Thanks to Torsten Wittrock and the WSUS Offline Update Community Edition contributors for the foundation of this project. The supplied license is [GNU GPLv3](doc/license.txt). Earlier upstream changes remain documented in [the historical changelog](doc/history.txt).
+
+## 2026.10.2
+
+**Status:** current release.
+
+### Monthly update refresh
+
+- Static download links refreshed from the 2026-10 WSUS catalog: 0 links added, 0 retired links removed.
+

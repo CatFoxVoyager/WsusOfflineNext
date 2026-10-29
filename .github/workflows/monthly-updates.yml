@@ -15,6 +15,19 @@ name: Monthly updates
 # (workflow defaults to contents read, only the two pushing jobs escalate).
 # Residual: the job-scoped token transits one push command line - runner-PAT
 # argv hygiene is Phase 16 CISH-04, a different secret.
+#
+# RUNNER MACHINE DEPENDENCIES (both runners are self-hosted, maintainer-owned)
+# Catalog job (label wson-docker, Linux container): bash + GNU coreutils, git,
+#   and node + npm for the Control build step; the Docker image itself provides
+#   the cabextract/xml toolchain the catalog extraction needs.
+# Release job (label wson-windows, Windows host - every step runs under Git
+#   Bash): Git Bash (provides bash, unzip, sha256sum and the GNU coreutils the
+#   steps and ci scripts call), 7-Zip (MakeRelease.cmd resolves
+#   %ProgramFiles%\7-Zip\7z.exe, then %ProgramFiles(x86)%\7-Zip\7z.exe, then
+#   7z.exe on PATH), gh (GitHub CLI, release publish step), node + npm (npm ci
+#   before the builds), .NET 8 SDK (CompileModernApps.cmd drives dotnet
+#   publish). ci/fetch-release-helpers.bash prefers the vendored bin/wget64.exe
+#   and bin/unzip.exe, so no PATH wget/unzip is needed for it.
 
 on:
   schedule:

@@ -22,13 +22,15 @@
 # without it and the client pipeline self-heals exactly as on a dev machine.
 
 # ===== Configuration =====
-readonly script_version="1.1"
+readonly script_version="1.2"
 MKISOFS_URL="https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/mkisofs.exe"
+readonly hashes_file="ci/release-helper-hashes.sha256"
 
 # ===== Global variables =====
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 wget_bin=""
 unzip_bin=""
+sha256_bin=""
 
 # ===== Functions =====
 
@@ -40,6 +42,36 @@ function resolve_tools ()
   else unzip_bin="$(command -v unzip || true)"; fi
   [ -n "${wget_bin}" ] || { echo "fetch-release-helpers: no wget found" >&2; exit 1; }
   [ -n "${unzip_bin}" ] || { echo "fetch-release-helpers: no unzip found" >&2; exit 1; }
+  sha256_bin="$(command -v sha256sum || true)"
+  [ -n "${sha256_bin}" ] || { echo "fetch-release-helpers: no sha256sum found" >&2; exit 1; }
+}
+
+# CIWF-06: fail-closed integrity gate. One argument: the artifact basename as
+# pinned in the sidecar. A missing sidecar and a missing pin take the same
+# failure path: the helper is refused, never shipped unverified.
+function verify_helper_hash ()
+{
+  local artifact_name="$1"
+  local hashes_path="${repo_root}/${hashes_file}"
+  local expected_pin=""
+  local observed_hash=""
+
+  if [ -f "${hashes_path}" ]; then
+    expected_pin="$(tr -d '\r' < "${hashes_path}" | grep -E "^[0-9a-f]{64}  ${artifact_name}\$" | cut -d' ' -f1)"
+  fi
+  if [ -z "${expected_pin}" ]; then
+    echo "fetch-release-helpers: no SHA256 pin for ${artifact_name} - refusing an unpinned helper" >&2
+    exit 1
+  fi
+  observed_hash="$("${sha256_bin}" "bin/${artifact_name}" | cut -d' ' -f1)"
+  if [ "${observed_hash}" != "${expected_pin}" ]; then
+    echo "fetch-release-helpers: SHA256 MISMATCH for ${artifact_name}" >&2
+    echo "  expected: ${expected_pin}" >&2
+    echo "  observed: ${observed_hash}" >&2
+    echo "  if upstream rotated this helper, verify the new build's provenance from the official source, then update the pin in a dedicated commit" >&2
+    exit 1
+  fi
+  echo "fetch-release-helpers: SHA256 OK ${artifact_name}"
 }
 
 # ===== Main program =====
@@ -75,6 +107,10 @@ if [ ! -f bin/mkisofs.exe ]; then
   "${wget_bin}" -q -O bin/mkisofs.exe "${MKISOFS_URL}" \
     || { echo "fetch-release-helpers: mkisofs download failed" >&2; exit 1; }
 fi
+
+# CIWF-06: hash-gate mkisofs.exe in BOTH cases - freshly downloaded above or
+# previously cached (the existence-only guard would otherwise bless the cache).
+verify_helper_hash "mkisofs.exe"
 
 echo "fetch-release-helpers: done — client/bin/Autologon.exe: $([ -f client/bin/Autologon.exe ] && echo OK || echo MISSING), client/bin/unzip.exe: $([ -f client/bin/unzip.exe ] && echo OK || echo MISSING), bin/mkisofs.exe: $([ -f bin/mkisofs.exe ] && echo OK || echo MISSING)"
 [ -f client/bin/Autologon.exe ] && [ -f client/bin/unzip.exe ] && [ -f bin/mkisofs.exe ]

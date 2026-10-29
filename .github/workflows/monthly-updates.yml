@@ -63,6 +63,15 @@ jobs:
             mv .regen-report.md "$RUNNER_TEMP/regen-report.md"
           fi
 
+      - name: Upload regeneration report
+        if: env.DRY_RUN != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: regen-report
+          path: ${{ runner.temp }}/regen-report.md
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Control build (stands in for CI on token commits)
         run: |
           cd src-modern/generator && npm ci && npm run build && cd ../..
@@ -125,7 +134,7 @@ jobs:
   release:
     name: Build and release (Windows native)
     needs: catalog
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, wson-windows]
     timeout-minutes: 90
     if: |
       needs.catalog.result == 'success' &&
@@ -143,6 +152,12 @@ jobs:
           ref: main
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Download regeneration report
+        uses: actions/download-artifact@v4
+        with:
+          name: regen-report
+          path: ${{ runner.temp }}
 
       - name: Resolve next version
         id: version
@@ -173,8 +188,10 @@ jobs:
       - name: Append release notes
         run: |
           VER="${{ steps.version.outputs.version }}"
-          ADDED="$(grep -oE '[0-9]+ added' .regen-report.md 2>/dev/null | head -1 | cut -d' ' -f1 || true)"
-          REMOVED="$(grep -oE '[0-9]+ removed' .regen-report.md 2>/dev/null | head -1 | cut -d' ' -f1 || true)"
+          REPORT="${RUNNER_TEMP}/regen-report.md"
+          [ -s "${REPORT}" ] || { echo "FAIL: rapport regen absent (transfert artifact manquant)"; exit 1; }
+          ADDED="$(grep -oE '[0-9]+ added' "${REPORT}" | head -1 | cut -d' ' -f1)"
+          REMOVED="$(grep -oE '[0-9]+ removed' "${REPORT}" | head -1 | cut -d' ' -f1)"
           ADDED="${ADDED:-0}"; REMOVED="${REMOVED:-0}"
           {
             echo ""
@@ -210,8 +227,8 @@ jobs:
           VER="${{ steps.version.outputs.version }}"
           ZIP="$TEMP/wsusofflineCE${VER}.zip"
           [ -f "$ZIP" ] || { echo "FAIL: $ZIP absent"; exit 1; }
-          if unzip -l "$ZIP" | grep -qE "wsusoffline/(pre\.md|dead\.md|\.regen-report\.md|docs/superpowers|\.superpowers)"; then
-            echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/\."; exit 1
+          if unzip -l "$ZIP" | grep -qE "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/)"; then
+            echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/)"; exit 1
           fi
           unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe manquant"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe manquant"; exit 1; }

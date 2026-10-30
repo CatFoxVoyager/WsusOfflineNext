@@ -77,4 +77,16 @@ PATH="${PATHSHIM}${PATH}" bash ci/regen-static-lists.bash "$T/staging" "$T/stati
 grep -q 'prod-dead' "$T/static/listE.txt" && { echo "FAIL: REMOVE strict-awk — dead CRLF encore dans la liste"; rm -rf "$T" "$STUB"; exit 1; }
 grep -qE '\| listE\.txt *\| *1 *\| *1 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport strict-awk mensonger (attendu 1 kept, 1 added, 1 removed)"; rm -rf "$T" "$STUB"; exit 1; }
 rm -rf "$T" "$STUB"
+# miroir sans shim : awk hote tel quel, meme dead-file CRLF — le fix ne doit pas
+# dependre du shim (sur ubuntu mawk est deja strict : ce cas mord directement).
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$T/static/listE.txt"
+printf 'https://download.example/a/prod-dead.exe\r\n' > "$T/dead-crlf.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead-crlf.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: no-shim run exited $rc"; rm -rf "$T"; exit 1; }
+grep -q 'prod-dead' "$T/static/listE.txt" && { echo "FAIL: REMOVE no-shim — dead CRLF encore dans la liste"; rm -rf "$T"; exit 1; }
+grep -qE '\| listE\.txt *\| *1 *\| *1 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport no-shim mensonger (attendu 1 kept, 1 added, 1 removed)"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
 echo "PASS regen fixtures (KEEP/ADD/famille/REMOVE multi-listes/CRLF/dry-run/abort)"

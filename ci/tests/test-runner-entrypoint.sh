@@ -25,6 +25,25 @@
 #      cleanup skips the config.sh remove leg but removes the Authorization
 #      header file UNCONDITIONALLY (pre-fix, `|| return 0` left the Bearer
 #      file on disk; bite-proofed against the HEAD bytes before the fix)
+# WR-04 disposition (2026-10-30 fix round): the PAT-stdin registration contract
+# is exercised HERE only against the config.sh STUB - the live fleet runs token
+# mode, and automating a real registration would burn a registration token and
+# create a real runner on every battery run. One-off live validation procedure
+# (run manually when the PAT mode changes; record date + outcome in the phase
+# record):
+#   1. mint a short-expiry fine-grained PAT (Administration: Read and write)
+#      against a DISPOSABLE repo;
+#   2. start the runner container once with a temporary override
+#      (docker compose run -e RUNNER_PAT=<pat> -e REPO_SLUG=<disposable repo>
+#      runner) - the override is never written to compose.env or .env;
+#   3. confirm the promptless stdin registration: configure output reports
+#      success and the runner is listed in the disposable repo's settings;
+#   4. docker stop the container: the runner disappears (remove-token leg) and
+#      no Authorization header file remains in the container filesystem;
+#   5. revert the override (nothing to clean if step 2 used `compose run`).
+# The stub battery stays the automated guard for the contract's shape (argv,
+# stdin, header-file hygiene); this procedure covers the one thing stubs cannot
+# prove: the real Runner.Listener's stdin prompt semantics.
 # Host note (mode-600 tier): MSYS stat reports 644 even after chmod 600, so
 # the strong "600" assertion runs only on hosts where a control file proves
 # the mode is representable; elsewhere the battery asserts equality with that

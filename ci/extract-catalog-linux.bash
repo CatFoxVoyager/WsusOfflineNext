@@ -7,9 +7,14 @@
 # Linux counterpart of ci/extract-catalog.bash: cabextract + xsltproc instead of
 # expand.exe + cscript/XSLT.vbs. Produces the same
 # <work-dir>/update-ids-and-locations-all.txt ("<id>,<url>" pairs).
+#
+# The final sort is guarded like the Windows variant (extract-catalog.bash:81-85)
+# and ids-and-locations-unsorted.txt is only deleted AFTER the sort succeeded -
+# a failed stage keeps the minutes of XSLT output available for diagnosis
+# (CISC-05, finding WR-13).
 
 # ===== Configuration =====
-readonly script_version="1.0"
+readonly script_version="1.1"
 
 # ===== Global variables =====
 work_dir=""
@@ -57,10 +62,16 @@ xsltproc -o "${work_dir}/ids-and-locations-unsorted.txt" \
   "${work_dir}/package.xml" \
   || { echo "extract-catalog-linux: xsltproc failed" >&2; exit 1; }
 
-sort -u -o "${work_dir}/update-ids-and-locations-all.txt" "${work_dir}/ids-and-locations-unsorted.txt"
-rm -f "${work_dir}/ids-and-locations-unsorted.txt"
+# Guarded sort, parity with the Windows variant's gsort -T: a failed sort must
+# never fall through to the rm below (WR-13 - the intermediate is minutes of
+# XSLT and is not replayable without re-downloading the catalog)
+sort -u -T "${work_dir}" -o "${work_dir}/update-ids-and-locations-all.txt" "${work_dir}/ids-and-locations-unsorted.txt" \
+  || { echo "extract-catalog-linux: sort failed" >&2; exit 1; }
 
+# Diagnose BEFORE destroying the intermediate: count and report first, so a
+# failed or empty sort leaves ids-and-locations-unsorted.txt on disk
 lines="$(grep -c . "${work_dir}/update-ids-and-locations-all.txt" || true)"
 echo "extract-catalog-linux: done — ${lines} id/url pairs in ${work_dir}/update-ids-and-locations-all.txt"
+rm -f "${work_dir}/ids-and-locations-unsorted.txt"
 [ "${lines}" -gt 0 ] || exit 1
 exit 0

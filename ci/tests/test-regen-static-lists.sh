@@ -152,4 +152,45 @@ rm -rf "$T"
 # CISC-06 : UNE seule implémentation de la sémantique de famille — la fonction
 # morte url_family a disparu au profit de family_of(), appelée des deux côtés
 grep -qF 'url_family' ci/regen-static-lists.bash && { echo "FAIL: url_family subsiste (CISC-06)"; exit 1; }
+# CISC-09 : gardes fail-closed AVANT toute écriture.
+# (a) static-dir sans liste -> exit 1 + message, rien écrit (miroir validate-links)
+h1="$(cat "$F"/static-test/*.txt | md5sum)"
+rm -f "$F/.regen-report.md"
+E="$(mktemp -d)"
+mkdir -p "$E/empty-static"
+msg="$(bash ci/regen-static-lists.bash "$F" "$E/empty-static" "$F/dead.txt" --min-lines 2 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: static-dir vide doit aborter (rc=$rc)"; rm -rf "$E"; exit 1; }
+printf '%s\n' "$msg" | grep -qF 'no lists under' || { echo "FAIL: static-dir vide sans message 'no lists under'"; rm -rf "$E"; exit 1; }
+[ "$(cat "$F"/static-test/*.txt | md5sum)" = "$h1" ] || { echo "FAIL: static-dir vide a écrit dans les listes"; rm -rf "$E"; exit 1; }
+[ ! -f "$E/.regen-report.md" ] || { echo "FAIL: static-dir vide a écrit un rapport"; rm -rf "$E"; exit 1; }
+rm -rf "$E"
+# (b)/(c) --min-lines non numérique ou sans valeur -> exit 1 avec message
+bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines abc >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: --min-lines abc doit aborter (rc=$rc)"; exit 1; }
+msg="$(bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines abc 2>&1)"
+printf '%s\n' "$msg" | grep -qF -- '--min-lines must be' || { echo "FAIL: --min-lines abc sans message 'must be'"; exit 1; }
+bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: --min-lines sans valeur doit aborter (rc=$rc)"; exit 1; }
+msg="$(bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2>&1)"
+printf '%s\n' "$msg" | grep -qF -- '--min-lines requires' || { echo "FAIL: --min-lines sans valeur sans message 'requires'"; exit 1; }
+# (e)/(f) catalogue sans URL : les DEUX formes abortent avant toute écriture —
+# épingle la garde existante (morsure anti-régression : sans elle ces cas
+# tournent rc 0 et écrivent un rapport vide crédible)
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\n' > "$T/static/listZ.txt"
+: > "$T/staging/update-ids-and-locations-all.txt"
+cp "$F/dead.txt" "$T/dead.txt"
+h1="$(md5sum < "$T/static/listZ.txt")"
+msg="$(bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 0 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: catalogue 0 octet + --min-lines 0 doit aborter (rc=$rc)"; rm -rf "$T"; exit 1; }
+printf '%s\n' "$msg" | grep -qF 'no URLs in staging catalog' || { echo "FAIL: catalogue vide sans message 'no URLs in staging catalog'"; rm -rf "$T"; exit 1; }
+[ "$(md5sum < "$T/static/listZ.txt")" = "$h1" ] || { echo "FAIL: catalogue vide a écrit dans la liste"; rm -rf "$T"; exit 1; }
+[ ! -f "$T/.regen-report.md" ] || { echo "FAIL: catalogue vide a écrit un rapport"; rm -rf "$T"; exit 1; }
+# forme 2 : >= min-lines lignes brutes mais aucune ligne URL (le garde min-lines
+# seul la laisserait passer — seule la garde 0-URL la couvre)
+printf 'garbage-one\r\ngarbage-two\r\n' > "$T/staging/update-ids-and-locations-all.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] || { echo "FAIL: catalogue sans URL (lignes brutes) doit aborter (rc=$rc)"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
 echo "PASS regen fixtures (KEEP/ADD/famille/REMOVE multi-listes/CRLF/dry-run/abort)"

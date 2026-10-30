@@ -67,7 +67,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)   dry_run="enabled" ;;
     --add)       add_policy="enabled" ;;
-    --min-lines) shift; min_lines="$1" ;;
+    --min-lines) [ $# -ge 2 ] || { echo "regen-static-lists: --min-lines requires a numeric argument" >&2; exit 1; }
+                 shift; min_lines="$1" ;;
     -*)          echo "regen-static-lists: unknown option $1" >&2; exit 1 ;;
     *)           if [ -z "${staging_dir}" ]; then staging_dir="$1"
                  elif [ -z "${static_dir}" ]; then static_dir="$1"
@@ -83,6 +84,12 @@ if [ -z "${staging_dir}" ] || [ -z "${static_dir}" ] || [ -z "${dead_file}" ]; t
 fi
 
 # Fail-closed guards BEFORE any write
+case "${min_lines}" in
+  ''|*[!0-9]*)
+    echo "regen-static-lists: --min-lines must be a non-negative integer (got ${min_lines})" >&2
+    exit 1
+    ;;
+esac
 catalog_file="${staging_dir}/update-ids-and-locations-all.txt"
 if [ ! -f "${catalog_file}" ]; then
   echo "regen-static-lists: staging file missing: ${catalog_file}" >&2
@@ -95,6 +102,17 @@ if [ "${catalog_lines}" -lt "${min_lines}" ]; then
 fi
 if [ ! -f "${dead_file}" ]; then
   echo "regen-static-lists: dead file missing: ${dead_file}" >&2
+  exit 1
+fi
+# static-dir guard: no list to fuse — abort before any write (CISC-09, mirror
+# of the validate-links list_count check); the fusion loop is fail-open by
+# construction (glob + continue) so the empty case must be caught here
+list_count=0
+for list_file in "${static_dir}"/*.txt; do
+  [ -e "${list_file}" ] && list_count=$(( list_count + 1 ))
+done
+if [ "${list_count}" -eq 0 ]; then
+  echo "regen-static-lists: no lists under ${static_dir}" >&2
   exit 1
 fi
 

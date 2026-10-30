@@ -8,7 +8,10 @@
 # mid-transfer failure (CISC-04: exit != 0, NO bin/mkisofs.exe, no residue),
 # non-PE stream refused even with a consistent pin (exit != 0, refusal),
 # wrong mkisofs stream refused BEFORE install (WR-04: exit != 0, NO
-# bin/mkisofs.exe, no residue — the pin gates the temp, not the install).
+# bin/mkisofs.exe, no residue — the pin gates the temp, not the install),
+# Authenticode tier-2 refuses an "Unsigned" verdict (WR-02: the anchored
+# Verified-line match must not launder what tier 1 just refused; needs a
+# Windows-side bash host — documented capability skip elsewhere)
 set -u
 STUB="$(mktemp -d)"
 mkdir -p "$STUB"
@@ -75,7 +78,17 @@ done
 [ -f bin/unzip.exe ] || printf 'vendored-unzip-stub\n' > bin/unzip.exe
 case "$(basename "$zip")" in
     AutoLogon.zip) printf 'Autologon.exe-fixture' > "$dest/Autologon.exe" ;;
-    Sigcheck.zip)  printf 'sigcheck64.exe-fixture' > "$dest/sigcheck64.exe" ;;
+    Sigcheck.zip)
+        # case l knob (WR-02): serve an MZ-qualified sigcheck64 stand-in whose
+        # -vt leg refuses and whose -q leg prints the real tool's UTF-16
+        # unsigned verdict. Default stays the plain non-PE fixture: the tier
+        # then takes its documented skip line.
+        if [ -n "${SIGCHECK_STUB_FILE:-}" ]; then
+            cat "${SIGCHECK_STUB_FILE}" > "$dest/sigcheck64.exe"
+            chmod +x "$dest/sigcheck64.exe" 2>/dev/null || true
+        else
+            printf 'sigcheck64.exe-fixture' > "$dest/sigcheck64.exe"
+        fi ;;
     Streams.zip)   printf 'streams64.exe-fixture' > "$dest/streams64.exe" ;;
     *) : ;;
 esac
@@ -457,5 +470,59 @@ set -- "${T}/bin/odt/"*.XXXXXX
 [ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT missing-extractor case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
 rm -rf "$T" "$STUB_K"
 
+# ---- case l: Authenticode tier-2 must NOT launder an unsigned binary (WR-02) ----
+# The MZ-qualified sigcheck64 stand-in refuses tier 1 (-vt) and answers tier 2
+# (-q) with the real tool's UTF-16 "Verified: <TAB> Unsigned" verdict: the
+# script must refuse (rc != 0, refusal line, nothing integrated, no residue).
+# Pre-fix the unanchored `grep -iq signed` matched the "signed" SUBSTRING of
+# "Unsigned" and tier 2 blessed exactly the binaries tier 1 had refused.
+# Windows-side bash hosts only (the tier needs WINDIR + cygpath): elsewhere
+# the case takes a documented capability skip. The stand-in's executability is
+# PROBED, not assumed (an MSYS-class host that no-ops non-PE .exe files would
+# silently pass tier 1 and turn this case into a false red).
+T="$(mktemp -d)"
+scaffold "$T"
+mkdir -p "${T}/tmp"
+cat > "${STUB}/fixture-sigcheck-unsigned.exe" <<'SIGCHECK_L_EOF'
+MZ() { :; }
+# fake sigcheck64 (WR-02 case): MZ stays the first two bytes - the script's
+# MZ guard is what qualifies the stand-in for the tier at all. Call shapes to
+# model: tier 1 "-accepteula -q -vt <target>" (verify mode, rc 1 on unsigned),
+# tier 2 "-accepteula -q <target>" (quiet dump of the UTF-16 verdict text).
+vt=""
+for a in "$@"; do
+  case "$a" in
+    -vt) vt=1 ;;
+    -probe) echo PROBE-OK; exit 0 ;;
+  esac
+done
+if [ -n "${vt}" ]; then
+  exit 1
+fi
+printf 'Signing Certificate Chain:\0\n\0Verified:\tUnsigned\r\0\n\0'
+exit 0
+SIGCHECK_L_EOF
+chmod +x "${STUB}/fixture-sigcheck-unsigned.exe" 2>/dev/null || true
+probe_out="$("${STUB}/fixture-sigcheck-unsigned.exe" -accepteula -probe 2>/dev/null || true)"
+if [ -z "${WINDIR:-}" ] || ! command -v cygpath >/dev/null 2>&1; then
+    echo "SKIP case l: Authenticode tier needs a Windows-side bash host (WINDIR + cygpath) - documented host skip"
+    rm -rf "${T}"
+elif [ "${probe_out}" != "PROBE-OK" ]; then
+    echo "SKIP case l: host cannot execute the MZ-prefixed stand-in (silent no-op class) - documented host skip"
+    rm -rf "${T}"
+else
+    SIGCHECK_STUB_FILE="${STUB}/fixture-sigcheck-unsigned.exe" TMPDIR="${T}/tmp" PATH="$STUB:$PATH" \
+        bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+    rc=$?
+    [ "$rc" -ne 0 ] || { echo "FAIL: ODT unsigned-binary case exited 0 - tier 2 laundered what tier 1 refused (WR-02)"; cat "${T}/out.log"; rm -rf "${T}" "$STUB"; exit 1; }
+    grep -qF 'signature verification failed' "${T}/out.log" \
+        || { echo "FAIL: ODT unsigned-binary case missing the tier refusal line"; cat "${T}/out.log"; rm -rf "${T}" "$STUB"; exit 1; }
+    [ ! -f "${T}/bin/odt/setup.exe" ] \
+        || { echo "FAIL: ODT unsigned-binary case integrated setup.exe despite the unsigned verdict"; cat "${T}/out.log"; rm -rf "${T}" "$STUB"; exit 1; }
+    residue="$(ls -A "${T}/bin/odt" 2>/dev/null || true)"
+    [ -z "${residue}" ] || { echo "FAIL: ODT unsigned-binary case left bin/odt residue: ${residue}"; cat "${T}/out.log"; rm -rf "${T}" "$STUB"; exit 1; }
+    rm -rf "${T}"
+fi
+
 rm -rf "$STUB"
-echo "PASS fetch-release-helpers fixtures (green 6 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list / mkisofs gate pre-install WR-04 / ODT green offline + tier skip / ODT tampered payload pin / ODT no-MSCF carve refusal / ODT missing extractor, offline via stubs)"
+echo "PASS fetch-release-helpers fixtures (green 6 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list / mkisofs gate pre-install WR-04 / ODT green offline + tier skip / ODT tampered payload pin / ODT no-MSCF carve refusal / ODT missing extractor / ODT unsigned verdict refused WR-02, offline via stubs)"

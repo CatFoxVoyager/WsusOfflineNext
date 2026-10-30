@@ -47,8 +47,12 @@
 # merely downloaded it takes the documented skip line instead of a false red.
 # -accepteula is added so a fresh CI host is never stuck on the EULA prompt
 # (deviation from the CMD flags, which rely on a dev machine's EULA state), and
-# the fallback tier strips NUL bytes before grepping "Signed" (sigcheck emits
-# UTF-16 output; the CMD's findstr matches it natively). A sigcheck64.exe that
+# the fallback tier strips NUL bytes then greps the Verified line ANCHORED on
+# "Signed" (sigcheck emits UTF-16 output; the CMD's findstr matches it
+# natively). The anchor is load-bearing: an "Unsigned" verdict embeds the
+# substring "signed", so the unanchored grep blessed exactly the binaries
+# tier 1 had refused (WR-02, inherited from the CMD's findstr and fixed here
+# only — the CMD gets its own pass). A sigcheck64.exe that
 # is absent or not a PE logs ONE skip line and the SHA256 pins remain the sole
 # integrity authority: MSYS executes any existing .exe as a silent rc=0 no-op,
 # so the MZ check is what keeps the tier honest offline. The metadata files the
@@ -312,7 +316,7 @@ if [ ! -f bin/odt/setup.exe ]; then
     sig_target="$(cygpath -w "${odt_setup_tmp}")"
     if "${repo_root}/bin/sigcheck64.exe" -accepteula -q -vt "${sig_target}" >/dev/null 2>&1; then
       :
-    elif "${repo_root}/bin/sigcheck64.exe" -accepteula -q "${sig_target}" 2>/dev/null | tr -d '\0' | grep -iq signed; then
+    elif "${repo_root}/bin/sigcheck64.exe" -accepteula -q "${sig_target}" 2>/dev/null | tr -d '\0' | grep -iqE 'Verified:[[:space:]]*Signed[[:space:]]*$'; then
       :
     else
       echo "fetch-release-helpers: odt: signature verification failed" >&2

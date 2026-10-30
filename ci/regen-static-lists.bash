@@ -12,17 +12,25 @@
 #   REMOVE — a URL proven dead (dead-file from ci/validate-links.bash) is removed,
 #            even when the catalog still lists it
 #
+#   PRESERVE — non-URL lines (comments, blank lines) pass through the rewrite
+#   verbatim: the hand-curated lists carry inline documentation a rewrite must
+#   not raze (client/static files carry ~192 non-URL lines each).
+#
 #   The dead-file is CR-normalised before use (one cat_dos site, after work_dir):
 #   .gitattributes materialises *.txt as CRLF on a fresh checkout and a strict
 #   awk keeps that CR in the record, which silently disabled REMOVE and lied to
 #   the report (ubuntu-latest, run 40991443841).
+#
+#   The report only exists in the tree on a real run: it is written to the
+#   work dir and moved to ${static_dir}/../.regen-report.md at the end, so a
+#   --dry-run leaves no file behind (the work dir dies with the EXIT trap).
 #
 # <staging-dir> must hold update-ids-and-locations-all.txt ("<id>,<url>" pairs),
 # produced by the catalog XSLT chain (see ExtractDownloadLinks-all.cmd). A
 # missing or implausibly small staging file aborts before any write.
 
 # ===== Configuration =====
-readonly script_version="1.1"
+readonly script_version="1.2"
 min_lines="1000"
 dry_run="disabled"
 add_policy="disabled"
@@ -102,7 +110,7 @@ fi
 
 # ===== Fusion, one list at a time =====
 
-report_file="${static_dir}/../.regen-report.md"
+report_file="${work_dir}/regen-report.md"
 {
   printf '# Static lists regeneration report\n\n'
   if [ "${add_policy}" = "enabled" ]; then
@@ -124,9 +132,11 @@ for list_file in "${static_dir}"/*.txt; do
   name="$(basename "${list_file}")"
   list_lines_file="${work_dir}/lines-${name}"
   list_urls_file="${work_dir}/urls-${name}"
-  # full lines ("url" or "url,alias"), and the URL field of each
-  cat_dos "${list_file}" | grep -E '^https?://' | sed 's/[[:space:]]*$//' > "${list_lines_file}"
-  cut -d',' -f1 "${list_lines_file}" | sort -u > "${list_urls_file}"
+  # full lines ("url" or "url,alias", plus any non-URL line: comments and
+  # blank lines must survive the rewrite verbatim), and the URL field of the
+  # URL lines only — familles and disposition must never see a non-URL line
+  cat_dos "${list_file}" | sed 's/[[:space:]]*$//' > "${list_lines_file}"
+  grep -E '^https?://' "${list_lines_file}" | cut -d',' -f1 | sort -u > "${list_urls_file}"
 
   # REMOVE: lines whose URL is proven dead
   awk -F',' 'FILENAME==ARGV[1] { dead[$1]=1; next } ($1 in dead)' \
@@ -152,9 +162,11 @@ for list_file in "${static_dir}"/*.txt; do
     : > "${work_dir}/candidates.txt"
   fi
 
-  kept_n="$(grep -c . "${work_dir}/kept.txt" || true)"
-  added_n="$(grep -c . "${work_dir}/candidates.txt" || true)"
-  removed_n="$(grep -c . "${work_dir}/removed.txt" || true)"
+  # kept counts EVERY preserved line, non-URL lines included (CISC-01): a
+  # blank line is kept content, not an absence
+  kept_n="$(wc -l < "${work_dir}/kept.txt" | tr -d ' ')"
+  added_n="$(wc -l < "${work_dir}/candidates.txt" | tr -d ' ')"
+  removed_n="$(wc -l < "${work_dir}/removed.txt" | tr -d ' ')"
   total_added=$(( total_added + added_n ))
   total_removed=$(( total_removed + removed_n ))
   cat "${work_dir}/candidates.txt" >> "${added_urls_file}"
@@ -166,7 +178,7 @@ for list_file in "${static_dir}"/*.txt; do
   fi
 
   if [ "${added_n}" -gt 0 ] || [ "${removed_n}" -gt 0 ]; then
-    cat "${work_dir}/kept.txt" "${work_dir}/candidates.txt" | awk '{ printf "%s\r\n", $0 }' > "${list_file}"
+    cat "${work_dir}/kept.txt" "${work_dir}/candidates.txt" | unix_to_dos > "${list_file}"
   fi
 done
 
@@ -181,6 +193,13 @@ ignored=$(( catalog_total - added_unique - already_n - dead_excl_n ))
 {
   printf '\n**Total:** %d added, %d removed. Catalog disposition: %d already listed, %d dead-excluded, %d no matching family.\n' "${total_added}" "${total_removed}" "${already_n}" "${dead_excl_n}" "${ignored}"
 } >> "${report_file}"
+
+# CISC-03: the report only reaches the tree on a real run — in dry-run it
+# stays in the work dir and dies with the EXIT trap.
+if [ "${dry_run}" != "enabled" ]; then
+  mv "${report_file}" "${static_dir}/../.regen-report.md"
+  report_file="${static_dir}/../.regen-report.md"
+fi
 
 echo "regen-static-lists: ${total_added} added, ${total_removed} removed, ${ignored} no-family — report: ${report_file}"
 [ "${dry_run}" = "enabled" ] && echo "regen-static-lists: dry-run — no list was written"

@@ -6,9 +6,14 @@ F="ci/tests/fixtures-regen"
 printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$F/static-test/listA.txt"
 printf 'https://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$F/static-test/listB.txt"
 rm -f "$F/.regen-report.md"
+hDRY="$(cat "$F"/static-test/*.txt | md5sum)"
 bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2 --dry-run; rc=$?
 [ "$rc" -eq 0 ] || { echo "FAIL: fixture dry-run exited $rc"; exit 1; }
-# dry-run: listes INCHANGÉES
+# dry-run: listes INCHANGÉES (hash avant/après)
+hDRY2="$(cat "$F"/static-test/*.txt | md5sum)"
+[ "$hDRY" = "$hDRY2" ] || { echo "FAIL: dry-run a modifié les listes (hash avant/après)"; exit 1; }
+# dry-run: AUCUN fichier dans l'arbre — le rapport n'existe pas (CISC-03)
+[ ! -f "$F/.regen-report.md" ] || { echo "FAIL: dry-run a créé .regen-report.md (CISC-03)"; exit 1; }
 grep -q "prod-v2.0" "$F/static-test/listA.txt" && { echo "FAIL: dry-run modified listA"; exit 1; }
 # run réel
 bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 2 --add; rc=$?
@@ -26,7 +31,8 @@ bash ci/regen-static-lists.bash "$F" "$F/static-test" "$F/dead.txt" --min-lines 
 [ "$rc" -eq 0 ] || { echo "FAIL: run sans --add exited $rc"; exit 1; }
 grep -q "prod-v2.0" "$F/static-test/listA.txt" && { echo "FAIL: ADD écrit sans --add"; exit 1; }
 grep -q "prod-dead" "$F/static-test/listA.txt" && { echo "FAIL: REMOVE cassé sans --add"; exit 1; }
-CRLF=$(head -1 "$F/static-test/listA.txt" | od -c | grep -c '\r') || true
+# instrument de comptage CRLF (obs #5790) : tr, pas od|grep
+CRLF=$(head -1 "$F/static-test/listA.txt" | tr -dc '\r' | wc -c)
 [ "$CRLF" -ge 1 ] || { echo "FAIL: sortie pas en CRLF"; exit 1; }
 # dead-file VIDE : la liste doit survivre integralement (garde awk FILENAME==ARGV[1])
 T="$(mktemp -d)"
@@ -88,5 +94,28 @@ bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead-crlf.txt" --mi
 [ "$rc" -eq 0 ] || { echo "FAIL: no-shim run exited $rc"; rm -rf "$T"; exit 1; }
 grep -q 'prod-dead' "$T/static/listE.txt" && { echo "FAIL: REMOVE no-shim — dead CRLF encore dans la liste"; rm -rf "$T"; exit 1; }
 grep -qE '\| listE\.txt *\| *1 *\| *1 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport no-shim mensonger (attendu 1 kept, 1 added, 1 removed)"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
+# CISC-01 : un fichier mixte (URL + commentaire + ligne vide) traverse la
+# réécriture verbatim — la doc inline ne peut plus être rasée. CISC-03 : le
+# run réel écrit toujours le rapport à l'emplacement du contrat
+# (monthly-updates.yml).
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+cp "$F/dead.txt" "$T/dead.txt"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\n# hand-curated\r\n\r\nhttps://download.example/a/prod-v1.5.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$T/static/listM.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: mixed-file run exited $rc"; rm -rf "$T"; exit 1; }
+grep -qF '# hand-curated' "$T/static/listM.txt" || { echo "FAIL: commentaire détruit par la réécriture (CISC-01)"; rm -rf "$T"; exit 1; }
+grep -qF 'prod-v1.0.exe,alias1.exe' "$T/static/listM.txt" || { echo "FAIL: URL vivante + alias détruites (CISC-01)"; rm -rf "$T"; exit 1; }
+grep -qF 'prod-v1.5.exe' "$T/static/listM.txt" || { echo "FAIL: 2e URL vivante détruite (CISC-01)"; rm -rf "$T"; exit 1; }
+grep -qF 'prod-v2.0.exe' "$T/static/listM.txt" || { echo "FAIL: ajout même-famille manquant sur fichier mixte"; rm -rf "$T"; exit 1; }
+grep -qF 'prod-dead' "$T/static/listM.txt" && { echo "FAIL: dead non retiré sur fichier mixte"; rm -rf "$T"; exit 1; }
+# la ligne vide est préservée : census = 5 lignes CRLF (2 URL vivantes +
+# commentaire + ligne vide + ajout) ; instrument de comptage tr (obs #5790)
+[ "$(tr -dc '\r' < "$T/static/listM.txt" | wc -c)" -eq 5 ] || { echo "FAIL: census fichier mixte != 5 lignes — ligne vide non préservée (CISC-01)"; rm -rf "$T"; exit 1; }
+# la colonne kept compte AUSSI les lignes non-URL (4 = 2 URL + commentaire + vide)
+grep -qE '\| listM\.txt *\| *4 *\| *1 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport mixte mensonger (attendu 4 kept, 1 added, 1 removed)"; rm -rf "$T"; exit 1; }
+[ -f "$T/.regen-report.md" ] || { echo "FAIL: run réel sans rapport (CISC-03)"; rm -rf "$T"; exit 1; }
 rm -rf "$T"
 echo "PASS regen fixtures (KEEP/ADD/famille/REMOVE multi-listes/CRLF/dry-run/abort)"

@@ -116,7 +116,12 @@ while IFS= read -r url; do
   esac
   "${unzip_bin}" -o -q "bin/${zip_name}" -x "Eula.txt" -d "${dest}" \
     || { echo "fetch-release-helpers: unzip failed: ${zip_name}" >&2; exit 1; }
-done < <(grep -E '^https?://' static/StaticDownloadLinks-sysinternals.txt | cut -d',' -f1)
+# The URL list is read CR-normalised at this one site: .gitattributes
+# materialises *.txt as CRLF on a fresh checkout, and a CR surviving in the
+# URL corrupts zip_name (the download would even land as a CR-named file in
+# bin/) and silently misses every SHA256 pin ("refusing an unpinned helper")
+# under a strict (Linux) grep - ubuntu-latest, run 41012438351.
+done < <(tr -d '\r' < static/StaticDownloadLinks-sysinternals.txt | grep -E '^https?://' | cut -d',' -f1)
 
 # The client installer unpacks zip-packaged updates with its own unzip copy
 if [ -f bin/unzip.exe ] && [ ! -f client/bin/unzip.exe ]; then

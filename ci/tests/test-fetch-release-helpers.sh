@@ -229,5 +229,30 @@ residue="$(cd "${T}/bin" && ls mkisofs.exe.* 2>/dev/null || true)"
 [ -z "${residue}" ] || { echo "FAIL: PE-refusal case left temp residue: ${residue}"; cat "${T}/out.log"; rm -rf "$T" "$STUB_E" "$STUB"; exit 1; }
 rm -rf "$T" "$STUB_E"
 
+# ---- case f: URL list materialised CRLF (fresh checkout) must fuse cleanly ----
+# .gitattributes materialise *.txt en CRLF : un CR survivant dans l'URL corrompt
+# zip_name (le telechargement atterrit meme dans un fichier nomme avec CR dans
+# bin/) et rate chaque pin SHA256 sous un grep strict (Linux) — run ubuntu
+# 41012438351 refusait AutoLogon.zip comme unpinned. En local, le grep MSYS avale
+# le CR a la lecture : ce cas mord sur ubuntu seulement (miroir 15-01 sans shim —
+# il epingle que le fix ne depend pas de l'hote).
+T="$(mktemp -d)"
+scaffold "$T"
+printf 'https://download.sysinternals.com/files/AutoLogon.zip,alias\r\nhttps://download.sysinternals.com/files/Sigcheck.zip\r\nhttps://download.sysinternals.com/files/Streams.zip\r\n' > "${T}/static/StaticDownloadLinks-sysinternals.txt"
+PATH="$STUB:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: CRLF URL-list case exited $rc"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'SHA256 OK AutoLogon.zip' "${T}/out.log" \
+    || { echo "FAIL: CRLF URL-list - pin AutoLogon non verifie (zip_name corrompu ?)"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+[ -f "${T}/bin/AutoLogon.zip" ] \
+    || { echo "FAIL: CRLF URL-list - bin/AutoLogon.zip absent (fichier nomme avec CR ?)"; ls -b "${T}/bin"; rm -rf "$T" "$STUB"; exit 1; }
+# instrument CR-safe : le glob bash pur, pas ls|grep (le ls MSYS emet des fins
+# de ligne CRLF — tout nom matcherait, classe « instruments emit CRLF »)
+set -- "${T}/bin/"*$'\r'*
+cr_named=0
+[ -f "$1" ] && cr_named=$#
+[ "${cr_named}" -eq 0 ] || { echo "FAIL: CRLF URL-list - ${cr_named} fichier(s) nomme(s) avec CR dans bin/"; ls -b "${T}/bin"; rm -rf "$T" "$STUB"; exit 1; }
+rm -rf "$T"
+
 rm -rf "$STUB"
-echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal, offline via stubs)"
+echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list, offline via stubs)"

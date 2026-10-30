@@ -6,7 +6,9 @@
 # Covered behaviors: green fetch (4 pins verified), tampered pin (exit != 0,
 # expected + observed digests printed), unpinned helper (exit != 0, refusal),
 # mid-transfer failure (CISC-04: exit != 0, NO bin/mkisofs.exe, no residue),
-# non-PE stream refused even with a consistent pin (exit != 0, refusal).
+# non-PE stream refused even with a consistent pin (exit != 0, refusal),
+# wrong mkisofs stream refused BEFORE install (WR-04: exit != 0, NO
+# bin/mkisofs.exe, no residue — the pin gates the temp, not the install).
 set -u
 STUB="$(mktemp -d)"
 mkdir -p "$STUB"
@@ -254,5 +256,55 @@ cr_named=0
 [ "${cr_named}" -eq 0 ] || { echo "FAIL: CRLF URL-list - ${cr_named} fichier(s) nomme(s) avec CR dans bin/"; ls -b "${T}/bin"; rm -rf "$T" "$STUB"; exit 1; }
 rm -rf "$T"
 
+# ---- case g: hash gate BEFORE install (WR-04) - a wrong mkisofs stream must
+# never reach bin/. The scaffold's pin still describes the REAL bytes while
+# the stub serves tampered ones: the served bytes pass the MZ check but NOT
+# the pin, so the SHA256 gate is the only refusal left (mirror of case e,
+# which isolated the MZ check with a consistent pin). Pre-fix the mv ran
+# first and the unpinned binary stayed installed (header invariant violated),
+# and the next run's existence guard blessed it forever.
+T="$(mktemp -d)"
+STUB_G="$(mktemp -d)"
+cat > "$STUB_G/wget" <<'WGET_G_EOF'
+#!/usr/bin/env bash
+# fake wget (WR-04 case): zips behave normally, mkisofs.exe serves bytes that
+# pass the MZ check but not the pin
+set -u
+dir=""
+out=""
+url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -N|-q) shift ;;
+    -P) dir="$2"; shift 2 ;;
+    -O) out="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+[ -n "$url" ] || { echo "fake-wget: no URL" >&2; exit 1; }
+name="$(basename "$url")"
+if [ "$name" = "mkisofs.exe" ]; then
+  printf 'MZtampered' > "$out"
+  exit 0
+fi
+if [ -n "$out" ]; then
+  printf 'MZ%s' "$name" > "$out"
+else
+  printf '%s' "$name" > "$dir/$name"
+fi
+WGET_G_EOF
+chmod +x "$STUB_G/wget"
+cp "$STUB/unzip" "$STUB_G/unzip"
+scaffold "$T"
+PATH="$STUB_G:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: mkisofs tamper case exited 0"; cat "${T}/out.log"; rm -rf "$T" "$STUB_G" "$STUB"; exit 1; }
+grep -qF 'SHA256 MISMATCH for mkisofs.exe' "${T}/out.log" \
+    || { echo "FAIL: mkisofs tamper case missing MISMATCH line"; cat "${T}/out.log"; rm -rf "$T" "$STUB_G" "$STUB"; exit 1; }
+[ ! -f "${T}/bin/mkisofs.exe" ] || { echo "FAIL: mkisofs tamper left the UNPINNED binary installed in bin/ (WR-04 bite)"; cat "${T}/out.log"; rm -rf "$T" "$STUB_G" "$STUB"; exit 1; }
+residue="$(cd "${T}/bin" && ls mkisofs.exe.* 2>/dev/null || true)"
+[ -z "${residue}" ] || { echo "FAIL: mkisofs tamper left temp residue: ${residue}"; cat "${T}/out.log"; rm -rf "$T" "$STUB_G" "$STUB"; exit 1; }
+rm -rf "$T" "$STUB_G"
+
 rm -rf "$STUB"
-echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list, offline via stubs)"
+echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list / mkisofs gate pre-install WR-04, offline via stubs)"

@@ -27,10 +27,11 @@
 # unpacked or integrated. The pins were seeded from fresh upstream downloads
 # (2026-10-29); the mkisofs pin was cross-checked with certutil.
 #
-# Atomic download (CISC-04, finding WR-12): bin/mkisofs.exe is fetched into a
-# temp file and moved into place only after the transfer succeeded - a
-# mid-transfer failure never leaves a partial that the existence guard would
-# bless on the next run.
+# Atomic download (CISC-04, findings WR-12 and WR-04): bin/mkisofs.exe is
+# fetched into a temp file and moved into place only after the transfer
+# succeeded AND the SHA256 gate passed on the temp - a mid-transfer failure
+# never leaves a partial, and a content mismatch never leaves an unpinned
+# binary that the existence guard would bless on the next run.
 #
 # Refresh procedure: when verification fails the script exits 1 and prints
 # both the expected pin and the observed digest. Verify the new build's
@@ -66,12 +67,20 @@ function resolve_tools ()
   [ -n "${sha256_bin}" ] || { echo "fetch-release-helpers: no sha256sum found" >&2; exit 1; }
 }
 
-# CIWF-06: fail-closed integrity gate. One argument: the artifact basename as
-# pinned in the sidecar. A missing sidecar and a missing pin take the same
-# failure path: the helper is refused, never shipped unverified.
+# CIWF-06: fail-closed integrity gate. First argument: the artifact basename
+# as pinned in the sidecar. Optional second argument: the path to hash —
+# defaults to the installed location bin/<basename>; a caller verifying a
+# NOT-YET-INSTALLED temp file passes that path (WR-04: the pin is keyed by
+# basename, so the temp can be gated before the atomic move into bin/). A
+# missing sidecar and a missing pin take the same failure path: the helper
+# is refused, never shipped unverified. On any refusal a non-canonical
+# (temp) path is removed from the tree — no failure path leaves a residue
+# (CISC-04 discipline); an installed artifact is left in place for diagnosis,
+# since the post-install gate owns that case.
 function verify_helper_hash ()
 {
   local artifact_name="$1"
+  local artifact_path="${2:-bin/${artifact_name}}"
   local hashes_path="${repo_root}/${hashes_file}"
   local expected_pin=""
   local observed_hash=""
@@ -81,14 +90,16 @@ function verify_helper_hash ()
   fi
   if [ -z "${expected_pin}" ]; then
     echo "fetch-release-helpers: no SHA256 pin for ${artifact_name} - refusing an unpinned helper" >&2
+    [ "${artifact_path}" = "bin/${artifact_name}" ] || rm -f "${artifact_path}"
     exit 1
   fi
-  observed_hash="$("${sha256_bin}" "bin/${artifact_name}" | cut -d' ' -f1)"
+  observed_hash="$("${sha256_bin}" "${artifact_path}" | cut -d' ' -f1)"
   if [ "${observed_hash}" != "${expected_pin}" ]; then
     echo "fetch-release-helpers: SHA256 MISMATCH for ${artifact_name}" >&2
     echo "  expected: ${expected_pin}" >&2
     echo "  observed: ${observed_hash}" >&2
     echo "  if upstream rotated this helper, verify the new build's provenance from the official source, then update the pin in a dedicated commit" >&2
+    [ "${artifact_path}" = "bin/${artifact_name}" ] || rm -f "${artifact_path}"
     exit 1
   fi
   echo "fetch-release-helpers: SHA256 OK ${artifact_name}"
@@ -152,11 +163,18 @@ if [ ! -f bin/mkisofs.exe ]; then
     echo "fetch-release-helpers: mkisofs: not a PE binary (missing MZ header)" >&2
     exit 1
   fi
+  # CIWF-06 (WR-04): gate the TEMP file on the pin BEFORE the move — on a
+  # mismatch the unpinned binary must never reach bin/ (header invariant:
+  # verified BEFORE anything is unpacked or integrated). The gate removes
+  # the temp itself on refusal (fail-closed, no residue).
+  verify_helper_hash "mkisofs.exe" "${tmp_bin}"
   mv -f "${tmp_bin}" bin/mkisofs.exe
 fi
 
-# CIWF-06: hash-gate mkisofs.exe in BOTH cases - freshly downloaded above or
-# previously cached (the existence-only guard would otherwise bless the cache).
+# CIWF-06: hash-gate mkisofs.exe in BOTH cases - freshly downloaded above
+# (gated pre-install since WR-04; this second gate re-verifies the installed
+# bytes) or previously cached (the existence-only guard would otherwise bless
+# the cache).
 verify_helper_hash "mkisofs.exe"
 
 echo "fetch-release-helpers: done — client/bin/Autologon.exe: $([ -f client/bin/Autologon.exe ] && echo OK || echo MISSING), client/bin/unzip.exe: $([ -f client/bin/unzip.exe ] && echo OK || echo MISSING), bin/mkisofs.exe: $([ -f bin/mkisofs.exe ] && echo OK || echo MISSING)"

@@ -27,7 +27,7 @@ Aujourd'hui tout est manuel : les dépendances npm portent des vulnérabilités 
 - Repo **public** : le self-hosted runner exécute du code sur la machine de dev — surface d'attaque à verrouiller.
 - Toolchain du runner en **service Windows** : le PATH de session interactive (scoop shims) n'existe pas. 7-Zip installé machine-wide (`%ProgramFiles%\7-Zip`), node/dotnet/git sur le PATH machine.
 - Style projet : pas de PowerShell, scripts CMD/VBS/bash ; tools vendus dans `bin/`.
-- Version : schéma `YYYY.MM.P` (2026.10.1 courante), 17 fichiers portent la version (référence : commit `339f600`).
+- Version : schéma `YYYY.MM.P`, 17 fichiers portent la version (référence : commit `339f600`) — la valeur courante fait foi dans `cmd/DownloadUpdates.cmd` (`set WSUSOFFLINE_VERSION=`).
 - Les événements créés via `GITHUB_TOKEN` ne déclenchent pas d'autres workflows : le workflow mensuel **valide lui-même** le build (tsc + vite ×2) avant tout commit sur `main`.
 
 ## Architecture

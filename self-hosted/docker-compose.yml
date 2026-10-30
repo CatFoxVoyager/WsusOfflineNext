@@ -5,7 +5,6 @@ services:
     build: ./runner
     image: wsusofflinenext-gh-runner:local
     restart: unless-stopped
+    # 40 s (défaut docker : 10 s) : laisse finir la chaîne de cleanup de l'entrypoint (arrêt du listener + 2 appels API + config.sh remove) avant le SIGKILL d'un docker stop — c'est cette valeur qui fait survivre le cleanup vivant (CISH-01).
+    stop_grace_period: 40s
     env_file: compose.env
-    environment:
-      RUNNER_NAME: wson-catalog-1
-      REPO_SLUG: CatFoxVoyager/WsusOfflineNext

@@ -58,13 +58,19 @@ elif [ -n "${RUNNER_PAT:-}" ]; then
   # listener) : l'authentification passe désormais par le fichier ci-dessus.
   unset RUNNER_PAT
   cleanup() {
-    rt=$(api actions/runners/remove-token | jq -r .token) || return 0
-    # Résidu accepté (décision 16-01) : ce jeton est à usage unique et vient
-    # d'être généré — exposition argv ~1 s ; même analyse pour le configure
-    # du mode par défaut, laissé tel quel (décision verrouillée).
-    ./config.sh remove --token "$rt" --unattended || true
-    # le fichier d'en-têtes est supprimé en DERNIER : le cleanup s'authentifie
-    # encore avec après la disparition de la variable.
+    # Un échec de l'appel (réseau tombé au docker stop, PAT expirée/révoquée,
+    # rate limit) saute la jambe config.sh remove mais ne doit JAMAIS empêcher
+    # la suppression du fichier d'en-têtes : le PAT n'a plus aucune raison de
+    # vivre ici (WR-01 — le `|| return 0` historique laissait le fichier
+    # Bearer sur le disque jusqu'à la fin de vie du conteneur).
+    if rt="$(api actions/runners/remove-token | jq -r .token 2>/dev/null)"; then
+      # Résidu accepté (décision 16-01) : ce jeton est à usage unique et vient
+      # d'être généré — exposition argv ~1 s ; même analyse pour le configure
+      # du mode par défaut, laissé tel quel (décision verrouillée).
+      ./config.sh remove --token "$rt" --unattended || true
+    fi
+    # suppression inconditionnelle : l'appel ci-dessus est terminé (réussi ou
+    # non), le cleanup ne s'authentifie plus avec ce fichier.
     rm -f -- "${PAT_HEADER_FILE}"
   }
   trap cleanup EXIT

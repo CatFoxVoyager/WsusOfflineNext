@@ -21,6 +21,10 @@
 #      cleanup ran first
 #   e. fail-closed - no credential variable: French refusal, zero API calls,
 #      no header file residue
+#   f. remove-token API failure (WR-01) - network down at docker stop: the
+#      cleanup skips the config.sh remove leg but removes the Authorization
+#      header file UNCONDITIONALLY (pre-fix, `|| return 0` left the Bearer
+#      file on disk; bite-proofed against the HEAD bytes before the fix)
 # Host note (mode-600 tier): MSYS stat reports 644 even after chmod 600, so
 # the strong "600" assertion runs only on hosts where a control file proves
 # the mode is representable; elsewhere the battery asserts equality with that
@@ -93,7 +97,11 @@ done
 printf '%s\n' "${url}" >> "${REC}/curl-requests.txt"
 case "${url}" in
   *"/actions/runners/registration-token") body="{\"token\":\"${STUB_REG_TOKEN}\"}" ;;
-  *"/actions/runners/remove-token")       body="{\"token\":\"${STUB_REMOVE_TOKEN}\"}" ;;
+  *"/actions/runners/remove-token")
+    # case f knob: the API is unreachable at docker stop (curl rc 56) - the
+    # request above is still recorded, no body is served
+    [ -n "${STUB_CURL_FAIL_REMOVE:-}" ] && exit 56
+    body="{\"token\":\"${STUB_REMOVE_TOKEN}\"}" ;;
   *)                                      body="{}" ;;
 esac
 printf '%s\n' "${body}"
@@ -385,10 +393,35 @@ done < <(find "${T}" -type f ! -name '*.sh' ! -name 'out.log' ! -name 'rc.txt' -
 [ -z "${residue}" ] || fail_case "case e - residu Authorization apres la sortie :${residue}" "${T}" "${STUB}"
 rm -rf "${T}"
 
+# ---- case f: remove-token API failure - the header file must still die ----
+# WR-01: the stub curl exits 56 on remove-token (network down at docker stop).
+# The cleanup may skip the config.sh remove leg (no token came back) but must
+# remove the Authorization header file UNCONDITIONALLY - pre-fix, the
+# `|| return 0` short-circuit left the Bearer file on disk for the rest of
+# the container's life, silently (the entrypoint still exited 0).
+T="$(mktemp -d)"
+scaffold "${T}"
+export STUB_REC="${T}/rec" STUB_CONTRACT=pat STUB_RUN_EXIT=0 STUB_RUN_SLEEP=0
+export STUB_CURL_FAIL_REMOVE=1
+export RUNNER_PAT="${PATVAL}"
+( cd "${T}" && bash entrypoint.sh > out.log 2>&1 < /dev/null; printf '%s\n' "$?" > rc.txt )
+rc="$(cat "${T}/rc.txt")"
+[ "${rc}" -eq 0 ] || { cat "${T}/out.log"; fail_case "case f - exit ${rc}, attendu 0 (l'echec de l'API ne doit pas casser le cycle)" "${T}" "${STUB}"; }
+[ "$(count_requests "${T}/rec" "actions/runners/remove-token")" -eq 1 ] \
+    || fail_case "case f - remove-token pas tente (l'appel API reste tente)" "${T}" "${STUB}"
+[ ! -f "${T}/rec/remove-ran.marker" ] \
+    || fail_case "case f - config.sh remove execute alors que l'API a echoue (jambe a sauter)" "${T}" "${STUB}"
+[ -f "${T}/rec/curl-header-path.txt" ] || fail_case "case f - le stub curl n'a recu aucun @file" "${T}" "${STUB}"
+hdr_path="$(cat "${T}/rec/curl-header-path.txt")"
+[ ! -f "${hdr_path}" ] \
+    || fail_case "case f - le fichier d'en-tetes PAT survit a l'echec API remove-token (WR-01 bite)" "${T}" "${STUB}"
+unset RUNNER_PAT STUB_CURL_FAIL_REMOVE
+rm -rf "${T}"
+
 rm -rf "${STUB}"
 if [ "${CTL_MODE}" = "600" ]; then
     tier="mode-600 assure strictement"
 else
     tier="mode-600 assure relativement au controle (${CTL_MODE}) - hote MSYS"
 fi
-echo "PASS runner-entrypoint fixtures (PAT stdin + header-file hygiene + cleanup vivant / TERM 143 + cleanup / branche token forme HEAD preservee / propagation exit 7 / refus fail-closed, offline via stubs [${tier}])"
+echo "PASS runner-entrypoint fixtures (PAT stdin + header-file hygiene + cleanup vivant / TERM 143 + cleanup / branche token forme HEAD preservee / propagation exit 7 / refus fail-closed / echec API remove-token: fichier d'en-tetes quand meme supprime WR-01, offline via stubs [${tier}])"

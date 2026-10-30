@@ -14,7 +14,7 @@
 # unless the inputs are unusable (missing directory, no URLs found at all).
 
 # ===== Configuration =====
-readonly script_version="1.0"
+readonly script_version="1.1"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) WSUSOfflineNext-linkcheck"
 PROBES_IN_PARALLEL=10
 PROBE_TIMEOUT=20
@@ -101,12 +101,34 @@ if [ "${list_count}" -eq 0 ] || [ "${total_urls}" -eq 0 ]; then
   exit 1
 fi
 
-# Parallel probes; a probe prints the URL back only when dead
+# Expected probe set: the DEDUPLICATED url count, i.e. what the pipeline
+# below actually probes. Deliberately distinct from the raw all-urls line
+# count above (inter-list duplicates are probed once, not once per list).
+unique_expected="$(sort -u "${work_dir}/all-urls.txt" | grep -c . || true)"
+
+# Parallel probes; a probe prints the URL back only when dead. Every
+# attempted URL appends one mark, dead or alive, so a broken stage
+# (sort/xargs/inner sh) can be told apart from "everything is alive".
+PROBED_MARKS="${work_dir}/probed-marks.txt"
+: > "${PROBED_MARKS}"
 WGET_BIN="${wget_bin}"
-export WGET_BIN PROBE_TIMEOUT PROBE_TRIES UA
+export WGET_BIN PROBE_TIMEOUT PROBE_TRIES UA PROBED_MARKS
+set -o pipefail
 sort -u "${work_dir}/all-urls.txt" | xargs -P "${PROBES_IN_PARALLEL}" -I '{}' sh -c '
   "${WGET_BIN}" --spider -S -T "${PROBE_TIMEOUT}" -t "${PROBE_TRIES}" -U "${UA}" -q "$1" 2>/dev/null || echo "$1"
-' _ '{}' > "${work_dir}/dead-urls.txt" 2>/dev/null
+  printf "p\n" >> "${PROBED_MARKS}"
+' _ '{}' > "${work_dir}/dead-urls.txt"
+probe_rc=$?
+set +o pipefail
+if [ "${probe_rc}" -ne 0 ]; then
+  echo "validate-links: probe pipeline failed (rc ${probe_rc}) — refusing to write a dead-file from a broken stage" >&2
+  exit 1
+fi
+probed_total="$(grep -c . "${PROBED_MARKS}" || true)"
+if [ "${probed_total}" -ne "${unique_expected}" ]; then
+  echo "validate-links: probe stage incomplete (${probed_total}/${unique_expected} URLs probed)" >&2
+  exit 1
+fi
 sort -u "${work_dir}/dead-urls.txt" -o "${work_dir}/dead-now.txt"
 
 # Two-pass removal: with a cache, only URLs dead now AND already cached are

@@ -27,4 +27,20 @@ printf 'https://www.microsoft.com/
 bash ci/validate-links.bash ci/tests/fixtures-links "$rep" "$dead" --cache "$cache" || exit 1
 grep -q "microsoft" "$dead" && { echo "FAIL: vivant en cache retire a tort"; exit 1; }
 grep -q "microsoft" "$cache" && { echo "FAIL: vivant doit sortir du cache"; exit 1; }
+# etage casse (stub PATH sort -> exit 1): le script doit aborter bruyamment au
+# lieu de lire "0 dead" en faux vert (WR-06). Cas auto-portable: le stub est
+# confine a ce run puis retire; re-run nominal pour prouver que la suite locale
+# n'a pas ete empoisonnee. Morsure: sur un script sans pipefail le rc du
+# pipeline est celui de xargs (0 sur entree vide) -> rc 0 + "0 dead of".
+rep2="$W/rep2.md"; dead2="$W/dead2.txt"; stub_bin="$W/stub-bin"; mkdir -p "$stub_bin"
+printf '#!/bin/sh\necho "stub sort: probe stage broken (test injection)" >&2\nexit 1\n' > "$stub_bin/sort"
+chmod +x "$stub_bin/sort"
+PATH="$stub_bin:$PATH" bash ci/validate-links.bash ci/tests/fixtures-links "$rep2" "$dead2" > "$W/out2.log" 2> "$W/err2.log"; rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: etage casse doit aborter, pas lire 0 dead (rc=0)"; exit 1; }
+grep -q "probe" "$W/err2.log" || { echo "FAIL: etage casse doit nommer le stage probe sur stderr"; exit 1; }
+grep -q "0 dead of" "$W/out2.log" "$W/err2.log" && { echo "FAIL: etage casse ne doit pas annoncer 0 dead"; exit 1; }
+[ -e "$dead2" ] && { echo "FAIL: etage casse ne doit pas ecrire de dead-file"; exit 1; }
+bash ci/validate-links.bash ci/tests/fixtures-links "$rep" "$dead"; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: re-run nominal apres stub exited $rc"; exit 1; }
+[ "$(wc -l < "$dead")" -eq 1 ] || { echo "FAIL: re-run nominal: dead-file doit rester a 1 URL"; exit 1; }
 echo "PASS validate-links fixtures (dead-file, CRLF cleaning, report row, strict exit)"

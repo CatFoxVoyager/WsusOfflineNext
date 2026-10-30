@@ -9,9 +9,12 @@
 # 17-file matrix is the one committed in 339f600. The build tag "(b2026.10)"
 # is version-independent and must not move. Exits 1 unless exactly 32
 # substitutions land in exactly 17 files.
+#
+# Counting/substitution logic lives in ci/lib-bump-version.bash: occurrences
+# are COUNTED and the pattern is bounded at digit boundaries (CISC-08).
 
 # ===== Configuration =====
-readonly script_version="1.0"
+readonly script_version="1.1"
 VERSION_FILES="
 cmd/DownloadUpdates.cmd
 client/cmd/DoUpdate.cmd
@@ -37,18 +40,9 @@ new_version=""
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 old_version=""
 
-# ===== Functions =====
+. "${repo_root}/ci/lib-bump-version.bash"
 
-# Old version from the single source of truth
-function read_old_version ()
-{
-  old_version="$(grep -oE 'WSUSOFFLINE_VERSION=[0-9]+\.[0-9]+\.[0-9]+' "${repo_root}/cmd/DownloadUpdates.cmd" \
-    | head -1 | cut -d'=' -f2)"
-  if [ -z "${old_version}" ]; then
-    echo "bump-version: cannot read current version from cmd/DownloadUpdates.cmd" >&2
-    exit 1
-  fi
-}
+# ===== Functions =====
 
 # ===== Main program =====
 
@@ -65,7 +59,7 @@ if [ "${old_version}" = "${new_version}" ]; then
 fi
 
 cd "${repo_root}" || exit 1
-old_re="${old_version//./\\.}"
+old_esc="${old_version//./\\.}"
 total_before=0
 total_after=0
 files_touched=0
@@ -76,11 +70,11 @@ for f in ${VERSION_FILES}; do
     echo "bump-version: MISSING file in version matrix: ${f}" >&2
     exit 1
   fi
-  before="$(grep -c "${old_re}" "${f}" || true)"
+  before="$(count_occurrences "(^|[^0-9])${old_esc}([^0-9]|\$)" "${f}")"
   if [ "${before}" -gt 0 ]; then
-    sed -i "s/${old_re}/${new_version}/g" "${f}"
+    substitute_bounded "${old_esc}" "${new_version}" "${f}"
   fi
-  after="$(grep -c "${new_version}" "${f}" || true)"
+  after="$(count_occurrences "(^|[^0-9])${new_version//./\\.}([^0-9]|\$)" "${f}")"
   total_before=$(( total_before + before ))
   total_after=$(( total_after + after ))
   if [ "${before}" -gt 0 ]; then

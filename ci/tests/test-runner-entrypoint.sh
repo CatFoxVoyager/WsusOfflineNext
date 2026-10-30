@@ -35,7 +35,7 @@
 #      against a DISPOSABLE repo;
 #   2. start the runner container once with a temporary override
 #      (docker compose run -e RUNNER_PAT=<pat> -e REPO_SLUG=<disposable repo>
-#      runner) - the override is never written to compose.env or .env;
+#      catalog-runner) - the override is never written to compose.env or .env;
 #   3. confirm the promptless stdin registration: configure output reports
 #      success and the runner is listed in the disposable repo's settings;
 #   4. docker stop the container: the runner disappears (remove-token leg) and

@@ -248,3 +248,5 @@ Connect with the maintainer on [LinkedIn](https://www.linkedin.com/in/jeremieduf
 WSUS Offline Next builds on **WSUS Offline Update**, originally developed by **Torsten Wittrock**, and the work of the **WSUS Offline Update Community Edition** contributors. This independent continuation is maintained in [CatFoxVoyager/WsusOfflineNext](https://github.com/CatFoxVoyager/WsusOfflineNext).
 
 The repository includes the **GNU General Public License, version 3**. See [the license text](doc/license.txt) and [upstream history](doc/history.txt). Third-party tools retain their respective licenses. This project is not a Microsoft product.
+
+> Phase 17 canary (17-01): disposable proof branch - the merged action majors (checkout@v7, setup-node@v7, setup-dotnet@v6) run green on CI. Not for merge.

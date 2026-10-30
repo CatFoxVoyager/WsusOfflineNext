@@ -133,6 +133,32 @@ grep -qF '20261029' "$T/static/listN.txt" && { echo "FAIL: famille vide — URL 
 grep -qF '20261001.exe' "$T/static/listN.txt" || { echo "FAIL: URL tout-chiffres de la liste détruite"; rm -rf "$T"; exit 1; }
 grep -qF 'prod-v2.0.exe' "$T/static/listN.txt" || { echo "FAIL: ajout famille prod-v cassé par le cas tout-chiffres"; rm -rf "$T"; exit 1; }
 rm -rf "$T"
+# CISC-07 + WR-05 (obs #5797) : la morsure doit mordre à CHAQUE classe de
+# position que le mécanisme ordonne — l'URL tout-chiffres du catalogue triant
+# PREMIER (0/), au MILIEU (a/mid/) et en DERNIER (n/). Le bloc listN
+# ci-dessus n'échantillonne que le dernier, ordre favorable où la
+# désynchronisation du paste (CR-01 : family_of supprimait la ligne vide)
+# retombe sur la ligne terminale perdue au lieu de décaler les paires. À
+# chaque position : l'URL tout-chiffres n'est PAS ajoutée, les ajouts de même
+# famille survivent (other-x1, prod-v2.0), le dead est retiré, l'URL
+# tout-chiffres de la liste est préservée. Fins de ligne CRLF mixtes.
+for pos in 0/20261029.exe a/mid/20261029.exe n/20261029.exe; do
+  T="$(mktemp -d)"
+  mkdir -p "$T/staging" "$T/static"
+  cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+  printf 'guid-7,https://download.example/%s\n' "$pos" >> "$T/staging/update-ids-and-locations-all.txt"
+  cp "$F/dead.txt" "$T/dead.txt"
+  printf 'https://download.example/a/b/other-x2.exe,alias2.exe\r\nhttps://download.example/a/prod-v1.0.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\nhttps://download.example/n/20261001.exe\n' > "$T/static/listP.txt"
+  bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+  [ "$rc" -eq 0 ] || { echo "FAIL: all-digits pos=$pos run exited $rc"; rm -rf "$T"; exit 1; }
+  grep -qF '20261029' "$T/static/listP.txt" && { echo "FAIL: famille vide pos=$pos — URL tout-chiffres du catalogue ajoutée (CISC-07/CR-01)"; rm -rf "$T"; exit 1; }
+  grep -qF 'other-x1.exe' "$T/static/listP.txt" || { echo "FAIL: pos=$pos — ajout même-famille other-x manquant (CR-01)"; rm -rf "$T"; exit 1; }
+  grep -qF 'prod-v2.0.exe' "$T/static/listP.txt" || { echo "FAIL: pos=$pos — prod-v2.0 perdu (désynchronisation paste, CR-01)"; rm -rf "$T"; exit 1; }
+  grep -qF 'prod-dead' "$T/static/listP.txt" && { echo "FAIL: pos=$pos — dead non retiré (REMOVE cassé)"; rm -rf "$T"; exit 1; }
+  grep -qF '20261001.exe' "$T/static/listP.txt" || { echo "FAIL: pos=$pos — URL tout-chiffres de la liste détruite"; rm -rf "$T"; exit 1; }
+  grep -qE '\| listP\.txt *\| *3 *\| *2 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: pos=$pos — rapport mensonger (attendu 3 kept, 2 added, 1 removed)"; rm -rf "$T"; exit 1; }
+  rm -rf "$T"
+done
 # CISC-07 morsure dernier bloc de chiffres : kb4012215 et kb4012218 sont deux
 # familles DIFFÉRENTES (windows6.1-kb4012215-v vs windows6.1-kb4012218-v).
 # Pré-fix, la troncature au premier bloc donnait famille "windows" commune →

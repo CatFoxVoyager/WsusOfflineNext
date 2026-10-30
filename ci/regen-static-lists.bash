@@ -53,12 +53,16 @@ report_file=""
 # truncation is anchored at the END of the name, not at its first digit, so
 # windows6.1-kb4012215-v2 and windows6.1-kb4012218-v2 are DIFFERENT families
 # while prod-v1.0 and prod-v2.0 are the same one). A name that becomes empty
-# (all-digit file name) has NO family and emits nothing: an empty family must
-# never join the matching set (CISC-07). Reads stdin, writes stdout — the one
+# (all-digit file name) has NO family: family_of emits an empty LINE for it —
+# not nothing — so the line-aligned streams stay line-aligned on both matching
+# sides (CR-01: the catalog sidecar is built with paste, and one deleted line
+# used to shift every later pair). The empty family is filtered at the
+# MATCHING points, never inside this function (CISC-07: an empty family must
+# never join the matching set). Reads stdin, writes stdout — the one
 # implementation of the family semantics, used on both matching sides (CISC-06).
 function family_of ()
 {
-  sed -e 's|.*/||' -e 's/\.[^.]*$//' -e 's/[0-9][0-9.]*$//' -e '/^$/d'
+  sed -e 's|.*/||' -e 's/\.[^.]*$//' -e 's/[0-9][0-9.]*$//'
 }
 
 # ===== Main program =====
@@ -134,7 +138,10 @@ if [ "${catalog_total}" -eq 0 ]; then
 fi
 
 # Catalog families, precomputed once: "<family>\t<url>" for every catalog URL,
-# entries with no family omitted — the ADD side of the family matching (CISC-06)
+# entries with no family omitted — the ADD side of the family matching (CISC-06).
+# CR-01: family_of emits one line PER catalog URL (an empty line when the name
+# has no family), so paste pairs line i with line i; the '$1 != ""' filter
+# below drops the family-less pairs AFTER the paste, never before it.
 if [ "${add_policy}" = "enabled" ]; then
   family_of < "${work_dir}/catalog-urls.txt" > "${work_dir}/catalog-family-names.txt"
   paste "${work_dir}/catalog-family-names.txt" "${work_dir}/catalog-urls.txt" \
@@ -183,8 +190,10 @@ for list_file in "${static_dir}"/*.txt; do
   # never a URL from the dead set — the list side of the family matching
   # (families of this list via the one family_of implementation), matched
   # against the precomputed catalog families with the FILENAME==ARGV[1]
-  # idiom: an empty families file can no longer match everything
-  family_of < "${list_urls_file}" | sort -u > "${work_dir}/families.txt"
+  # idiom: an empty families file can no longer match everything. CR-01/CISC-07:
+  # the empty family emitted by family_of for an all-digit name is filtered
+  # HERE, at the matching point — it must never join the matching set.
+  family_of < "${list_urls_file}" | grep -v '^$' | sort -u > "${work_dir}/families.txt"
   if [ "${add_policy}" = "disabled" ]; then
     : > "${work_dir}/candidates.txt"
   elif [ -s "${work_dir}/families.txt" ]; then

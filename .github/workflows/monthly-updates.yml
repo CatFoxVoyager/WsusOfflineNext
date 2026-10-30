@@ -265,6 +265,7 @@ jobs:
           fi
           unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe manquant"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe manquant"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/bin/odt/setup.exe > /dev/null || { echo "FAIL: bin/odt/setup.exe manquant"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -q "WSUSOFFLINE_VERSION=${VER}" || { echo "FAIL: version ${VER} non embarquée"; exit 1; }
           echo "verify-release-archive: contenu OK"
 

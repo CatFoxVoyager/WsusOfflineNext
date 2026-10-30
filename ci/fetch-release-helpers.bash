@@ -27,6 +27,11 @@
 # unpacked or integrated. The pins were seeded from fresh upstream downloads
 # (2026-10-29); the mkisofs pin was cross-checked with certutil.
 #
+# Atomic download (CISC-04, finding WR-12): bin/mkisofs.exe is fetched into a
+# temp file and moved into place only after the transfer succeeded - a
+# mid-transfer failure never leaves a partial that the existence guard would
+# bless on the next run.
+#
 # Refresh procedure: when verification fails the script exits 1 and prints
 # both the expected pin and the observed digest. Verify the new build's
 # provenance from the official source (download.sysinternals.com for the
@@ -37,7 +42,7 @@
 # corrupted or unpinned helper never enters the published zip.
 
 # ===== Configuration =====
-readonly script_version="1.2"
+readonly script_version="1.3"
 MKISOFS_URL="https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/mkisofs.exe"
 readonly hashes_file="ci/release-helper-hashes.sha256"
 
@@ -121,8 +126,28 @@ fi
 
 if [ ! -f bin/mkisofs.exe ]; then
   echo "fetch-release-helpers: mkisofs.exe"
-  "${wget_bin}" -q -O bin/mkisofs.exe "${MKISOFS_URL}" \
-    || { echo "fetch-release-helpers: mkisofs download failed" >&2; exit 1; }
+  # CISC-04 (WR-12): wget -O truncates the target BEFORE the transfer, so a
+  # mid-transfer failure used to leave a partial that the [ ! -f ] guard would
+  # bless forever. Download into a sibling temp file and move atomically; every
+  # failure path removes the temp BEFORE exiting (fail-closed).
+  tmp_bin="$(mktemp "${repo_root}/bin/mkisofs.exe.XXXXXX")" \
+    || { echo "fetch-release-helpers: mkisofs: cannot create temp file" >&2; exit 1; }
+  "${wget_bin}" -q -O "${tmp_bin}" "${MKISOFS_URL}" \
+    || { rm -f "${tmp_bin}"; echo "fetch-release-helpers: mkisofs download failed" >&2; exit 1; }
+  # early-detection net: an empty or non-PE stream is refused before the move.
+  # The SHA256 pin below stays the integrity authority (CIWF-06) - these checks
+  # catch a dead or wrong-content stream before it is ever installed.
+  if [ ! -s "${tmp_bin}" ]; then
+    rm -f "${tmp_bin}"
+    echo "fetch-release-helpers: mkisofs: empty download" >&2
+    exit 1
+  fi
+  if [ "$(head -c 2 "${tmp_bin}")" != "MZ" ]; then
+    rm -f "${tmp_bin}"
+    echo "fetch-release-helpers: mkisofs: not a PE binary (missing MZ header)" >&2
+    exit 1
+  fi
+  mv -f "${tmp_bin}" bin/mkisofs.exe
 fi
 
 # CIWF-06: hash-gate mkisofs.exe in BOTH cases - freshly downloaded above or

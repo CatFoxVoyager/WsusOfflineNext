@@ -4,7 +4,9 @@
 # the script invocations only, and the sidecar is recomputed by this test from
 # the same fixture bytes, so no hash is hardcoded.
 # Covered behaviors: green fetch (4 pins verified), tampered pin (exit != 0,
-# expected + observed digests printed), unpinned helper (exit != 0, refusal).
+# expected + observed digests printed), unpinned helper (exit != 0, refusal),
+# mid-transfer failure (CISC-04: exit != 0, NO bin/mkisofs.exe, no residue),
+# non-PE stream refused even with a consistent pin (exit != 0, refusal).
 set -u
 STUB="$(mktemp -d)"
 mkdir -p "$STUB"
@@ -27,7 +29,9 @@ done
 [ -n "$url" ] || { echo "fake-wget: no URL" >&2; exit 1; }
 name="$(basename "$url")"
 if [ -n "$out" ]; then
-  printf '%s' "$name" > "$out"
+  # the -O path serves mkisofs.exe only: bytes carry a PE header because the
+  # script refuses a non-PE stream before the atomic move (CISC-04)
+  printf 'MZ%s' "$name" > "$out"
 else
   printf '%s' "$name" > "$dir/$name"
 fi
@@ -79,7 +83,14 @@ function scaffold ()
     # plain stand-in mid-run (see the stub), so resolve_tools falls through to
     # the PATH stub on every host and the vendored-copy branch still runs
     for n in AutoLogon.zip Sigcheck.zip Streams.zip mkisofs.exe; do
-        h="$(printf '%s' "${n}" | sha256sum | cut -d' ' -f1)"
+        # the mkisofs pin is recomputed over the SAME bytes the stub wget -O
+        # writes (MZ + basename): scaffold and stub must move together or the
+        # green case would test the hash gate against the wrong bytes
+        if [ "${n}" = "mkisofs.exe" ]; then
+            h="$(printf 'MZ%s' "${n}" | sha256sum | cut -d' ' -f1)"
+        else
+            h="$(printf '%s' "${n}" | sha256sum | cut -d' ' -f1)"
+        fi
         printf '%s  %s\n' "${h}" "${n}"
     done > "${t}/ci/release-helper-hashes.sha256"
 }
@@ -123,5 +134,100 @@ grep -qF 'no SHA256 pin for Sigcheck.zip' "${T}/out.log" \
     || { echo "FAIL: unpinned case missing refusal"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
 rm -rf "$T"
 
+# ---- case d: atomicity - mid-transfer failure leaves NO mkisofs and NO residue ----
+# CISC-04 (WR-12): the -O form truncates the FINAL path before transferring, so
+# a dead download used to leave a partial that the existence guard then blessed
+# forever. The next run must re-download, never adopt the partial.
+T="$(mktemp -d)"
+STUB_D="$(mktemp -d)"
+cat > "$STUB_D/wget" <<'WGET_D_EOF'
+#!/usr/bin/env bash
+# fake wget (atomicity case): zips behave normally, mkisofs.exe writes a
+# partial then dies mid-transfer
+set -u
+dir=""
+out=""
+url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -N|-q) shift ;;
+    -P) dir="$2"; shift 2 ;;
+    -O) out="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+[ -n "$url" ] || { echo "fake-wget: no URL" >&2; exit 1; }
+name="$(basename "$url")"
+if [ "$name" = "mkisofs.exe" ]; then
+  printf 'MZpartial' > "$out"
+  exit 1
+fi
+if [ -n "$out" ]; then
+  printf 'MZ%s' "$name" > "$out"
+else
+  printf '%s' "$name" > "$dir/$name"
+fi
+WGET_D_EOF
+chmod +x "$STUB_D/wget"
+cp "$STUB/unzip" "$STUB_D/unzip"
+scaffold "$T"
+PATH="$STUB_D:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: atomicity case exited 0"; cat "${T}/out.log"; rm -rf "$T" "$STUB_D" "$STUB"; exit 1; }
+[ ! -f "${T}/bin/mkisofs.exe" ] || { echo "FAIL: atomicity case left the partial at bin/mkisofs.exe (CISC-04 bite)"; cat "${T}/out.log"; rm -rf "$T" "$STUB_D" "$STUB"; exit 1; }
+residue="$(cd "${T}/bin" && ls mkisofs.exe.* 2>/dev/null || true)"
+[ -z "${residue}" ] || { echo "FAIL: atomicity case left temp residue: ${residue}"; cat "${T}/out.log"; rm -rf "$T" "$STUB_D" "$STUB"; exit 1; }
+rm -rf "$T" "$STUB_D"
+
+# ---- case e: PE refusal - a non-PE stream is refused EVEN WITH a consistent pin ----
+# Isolates the PE check: the sidecar pin is recomputed over the notape bytes, so
+# the hash gate would PASS - only the MZ check can refuse the download.
+T="$(mktemp -d)"
+STUB_E="$(mktemp -d)"
+cat > "$STUB_E/wget" <<'WGET_E_EOF'
+#!/usr/bin/env bash
+# fake wget (PE-refusal case): zips behave normally, mkisofs.exe serves a
+# non-PE payload and succeeds
+set -u
+dir=""
+out=""
+url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -N|-q) shift ;;
+    -P) dir="$2"; shift 2 ;;
+    -O) out="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+[ -n "$url" ] || { echo "fake-wget: no URL" >&2; exit 1; }
+name="$(basename "$url")"
+if [ "$name" = "mkisofs.exe" ]; then
+  printf 'notape' > "$out"
+  exit 0
+fi
+if [ -n "$out" ]; then
+  printf 'MZ%s' "$name" > "$out"
+else
+  printf '%s' "$name" > "$dir/$name"
+fi
+WGET_E_EOF
+chmod +x "$STUB_E/wget"
+cp "$STUB/unzip" "$STUB_E/unzip"
+scaffold "$T"
+NOTAPE_H="$(printf 'notape' | sha256sum | cut -d' ' -f1)"
+grep -v '  mkisofs.exe$' "${T}/ci/release-helper-hashes.sha256" > "${T}/pins.tmp"
+printf '%s  mkisofs.exe\n' "${NOTAPE_H}" >> "${T}/pins.tmp"
+mv "${T}/pins.tmp" "${T}/ci/release-helper-hashes.sha256"
+PATH="$STUB_E:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: PE-refusal case exited 0 (non-PE blessed)"; cat "${T}/out.log"; rm -rf "$T" "$STUB_E" "$STUB"; exit 1; }
+[ ! -f "${T}/bin/mkisofs.exe" ] || { echo "FAIL: PE-refusal case left bin/mkisofs.exe in place"; cat "${T}/out.log"; rm -rf "$T" "$STUB_E" "$STUB"; exit 1; }
+grep -qF 'not a PE binary' "${T}/out.log" \
+    || { echo "FAIL: PE-refusal case missing PE refusal message"; cat "${T}/out.log"; rm -rf "$T" "$STUB_E" "$STUB"; exit 1; }
+residue="$(cd "${T}/bin" && ls mkisofs.exe.* 2>/dev/null || true)"
+[ -z "${residue}" ] || { echo "FAIL: PE-refusal case left temp residue: ${residue}"; cat "${T}/out.log"; rm -rf "$T" "$STUB_E" "$STUB"; exit 1; }
+rm -rf "$T" "$STUB_E"
+
 rm -rf "$STUB"
-echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal, offline via stubs)"
+echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal, offline via stubs)"

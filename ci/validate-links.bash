@@ -60,7 +60,8 @@ function list_urls ()
 while [ $# -gt 0 ]; do
   case "$1" in
     --strict) strict="enabled" ;;
-    --cache)  shift; cache_file="$1" ;;
+    --cache)  [ $# -ge 2 ] || { echo "validate-links: --cache requires a file argument" >&2; exit 1; }
+              shift; cache_file="$1" ;;
     -*)       echo "validate-links: unknown option $1" >&2; exit 1 ;;
     *)        if [ -z "${static_dir}" ]; then static_dir="$1"
               elif [ -z "${report_file}" ]; then report_file="$1"
@@ -71,7 +72,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${static_dir}" ] || [ -z "${report_file}" ] || [ -z "${dead_file}" ]; then
-  echo "usage: bash ci/validate-links.bash <static-dir> <report-file> <dead-file> [--strict]" >&2
+  echo "usage: bash ci/validate-links.bash <static-dir> <report-file> <dead-file> [--strict] [--cache <file>]" >&2
   exit 1
 fi
 if [ ! -d "${static_dir}" ]; then
@@ -135,7 +136,10 @@ sort -u "${work_dir}/dead-urls.txt" -o "${work_dir}/dead-now.txt"
 # confirmed dead; the cache always converges to this pass's dead set.
 if [ -n "${cache_file}" ]; then
   touch "${cache_file}"
-  grep -Fx -f "${cache_file}" "${work_dir}/dead-now.txt" > "${dead_file}" || true
+  # The cache is operator-materialized (editor may write CRLF): normalize CR
+  # at one site so the two-pass confirmation cannot be silently disabled.
+  cat_dos "${cache_file}" > "${work_dir}/cache-clean.txt"
+  grep -Fx -f "${work_dir}/cache-clean.txt" "${work_dir}/dead-now.txt" > "${dead_file}" || true
   cp "${work_dir}/dead-now.txt" "${cache_file}"
 else
   cp "${work_dir}/dead-now.txt" "${dead_file}"
@@ -150,6 +154,7 @@ fi
 } > "${report_file}"
 
 dead_total=0
+lists_entries=0
 for list_file in "${static_dir}"/*.txt; do
   [ -e "${list_file}" ] || continue
   name="$(basename "${list_file}")"
@@ -162,15 +167,22 @@ for list_file in "${static_dir}"/*.txt; do
     fi
   done < "${work_dir}/urls-${name}"
   list_ok=$(( list_total - list_dead ))
+  lists_entries=$(( lists_entries + list_total ))
   dead_total=$(( dead_total + list_dead ))
   printf '| %s | %d | %d |\n' "${name}" "${list_ok}" "${list_dead}" >> "${report_file}"
 done
 
+# Two denominators, labeled: the deduplicated probe set vs the per-list sum.
+unique_dead="$(grep -c . "${dead_file}" || true)"
 {
-  printf '\n**Total:** %d URLs, %d dead.\n' "${total_urls}" "${dead_total}"
+  printf '\n**Total (unique):** %d URLs probed (unique), %d dead (unique).\n' "${unique_expected}" "${unique_dead}"
+  printf '**Somme des listes:** %d entrées, %d dead.\n' "${lists_entries}" "${dead_total}"
+  if [ "${lists_entries}" -ne "${unique_expected}" ]; then
+    printf '%d doublon(s) inter-listes.\n' "$(( lists_entries - unique_expected ))"
+  fi
 } >> "${report_file}"
 
-echo "validate-links: ${dead_total} dead of ${total_urls} URLs — report: ${report_file}"
+echo "validate-links: ${unique_dead} dead of ${unique_expected} unique URLs (${dead_total} dead of ${lists_entries} list entries) — report: ${report_file}"
 
 if [ "${strict}" = "enabled" ] && [ "${dead_total}" -gt 0 ]; then
   exit 1

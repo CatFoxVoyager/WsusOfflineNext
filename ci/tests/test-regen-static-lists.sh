@@ -118,4 +118,38 @@ grep -qF 'prod-dead' "$T/static/listM.txt" && { echo "FAIL: dead non retiré sur
 grep -qE '\| listM\.txt *\| *4 *\| *1 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport mixte mensonger (attendu 4 kept, 1 added, 1 removed)"; rm -rf "$T"; exit 1; }
 [ -f "$T/.regen-report.md" ] || { echo "FAIL: run réel sans rapport (CISC-03)"; rm -rf "$T"; exit 1; }
 rm -rf "$T"
+# CISC-07 morsure : un nom de fichier tout-chiffres n'a PAS de famille — il ne
+# peut ni en fournir (côté liste) ni en recevoir (côté catalogue). Pré-fix, la
+# famille vide "" matchait "" et l'URL tout-chiffres du catalogue était ajoutée.
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+printf 'guid-5,https://download.example/n/20261029.exe\n' >> "$T/staging/update-ids-and-locations-all.txt"
+cp "$F/dead.txt" "$T/dead.txt"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/n/20261001.exe\r\n' > "$T/static/listN.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: all-digits run exited $rc"; rm -rf "$T"; exit 1; }
+grep -qF '20261029' "$T/static/listN.txt" && { echo "FAIL: famille vide — URL tout-chiffres du catalogue ajoutée (CISC-07)"; rm -rf "$T"; exit 1; }
+grep -qF '20261001.exe' "$T/static/listN.txt" || { echo "FAIL: URL tout-chiffres de la liste détruite"; rm -rf "$T"; exit 1; }
+grep -qF 'prod-v2.0.exe' "$T/static/listN.txt" || { echo "FAIL: ajout famille prod-v cassé par le cas tout-chiffres"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
+# CISC-07 morsure dernier bloc de chiffres : kb4012215 et kb4012218 sont deux
+# familles DIFFÉRENTES (windows6.1-kb4012215-v vs windows6.1-kb4012218-v).
+# Pré-fix, la troncature au premier bloc donnait famille "windows" commune →
+# l'URL du catalogue était ajoutée.
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+printf 'guid-6,https://download.example/w/windows6.1-kb4012218-v2.msu\n' >> "$T/staging/update-ids-and-locations-all.txt"
+cp "$F/dead.txt" "$T/dead.txt"
+printf 'https://download.example/w/windows6.1-kb4012215-v2.msu\r\n' > "$T/static/listK.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: last-digit-block run exited $rc"; rm -rf "$T"; exit 1; }
+grep -qF 'kb4012218' "$T/static/listK.txt" && { echo "FAIL: dernier bloc — kb4012218 ajouté via la famille kb4012215 (CISC-07)"; rm -rf "$T"; exit 1; }
+grep -qF 'kb4012215' "$T/static/listK.txt" || { echo "FAIL: URL de la liste détruite (dernier bloc)"; rm -rf "$T"; exit 1; }
+grep -qE '\| listK\.txt *\| *1 *\| *0 *\| *0 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport dernier bloc mensonger (attendu 1 kept, 0 added)"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
+# CISC-06 : UNE seule implémentation de la sémantique de famille — la fonction
+# morte url_family a disparu au profit de family_of(), appelée des deux côtés
+grep -qF 'url_family' ci/regen-static-lists.bash && { echo "FAIL: url_family subsiste (CISC-06)"; exit 1; }
 echo "PASS regen fixtures (KEEP/ADD/famille/REMOVE multi-listes/CRLF/dry-run/abort)"

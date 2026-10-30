@@ -8,7 +8,10 @@
 #   KEEP   — a live URL stays, even when the catalog extraction does not produce it
 #   ADD    — OFF by default (calibration proved name-family matching floods the
 #            lists with every catalog variant: 237k candidates). Enable with
-#            --add only after product/language scoping exists.
+#            --add only after product/language scoping exists. A family is the
+#            file name minus its extension minus its final digit-run
+#            (last-version-block semantics); an all-digit file name has no
+#            family and matches nothing.
 #   REMOVE — a URL proven dead (dead-file from ci/validate-links.bash) is removed,
 #            even when the catalog still lists it
 #
@@ -45,13 +48,17 @@ report_file=""
 
 # ===== Functions =====
 
-# Family of a URL: file name truncated at its first version digit-run
-function url_family ()
+# Family of a URL: the file name with its extension removed, then its final
+# digit-run removed — last-version-block semantics (IN-07 settled here: the
+# truncation is anchored at the END of the name, not at its first digit, so
+# windows6.1-kb4012215-v2 and windows6.1-kb4012218-v2 are DIFFERENT families
+# while prod-v1.0 and prod-v2.0 are the same one). A name that becomes empty
+# (all-digit file name) has NO family and emits nothing: an empty family must
+# never join the matching set (CISC-07). Reads stdin, writes stdout — the one
+# implementation of the family semantics, used on both matching sides (CISC-06).
+function family_of ()
 {
-  local url="$1"
-  local name
-  name="$(printf '%s\n' "${url}" | sed 's/^.+\///')"
-  printf '%s\n' "${name}" | sed 's/[0-9][0-9.].*$//'
+  sed -e 's|.*/||' -e 's/\.[^.]*$//' -e 's/[0-9][0-9.]*$//' -e '/^$/d'
 }
 
 # ===== Main program =====
@@ -108,6 +115,15 @@ if [ "${catalog_total}" -eq 0 ]; then
   exit 1
 fi
 
+# Catalog families, precomputed once: "<family>\t<url>" for every catalog URL,
+# entries with no family omitted — the ADD side of the family matching (CISC-06)
+if [ "${add_policy}" = "enabled" ]; then
+  family_of < "${work_dir}/catalog-urls.txt" > "${work_dir}/catalog-family-names.txt"
+  paste "${work_dir}/catalog-family-names.txt" "${work_dir}/catalog-urls.txt" \
+    | awk -F'\t' '$1 != ""' > "${work_dir}/catalog-families.txt" \
+    || { echo "regen-static-lists: catalog family precompute failed" >&2; exit 1; }
+fi
+
 # ===== Fusion, one list at a time =====
 
 report_file="${work_dir}/regen-report.md"
@@ -146,15 +162,16 @@ for list_file in "${static_dir}"/*.txt; do
     "${work_dir}/dead-clean.txt" "${list_lines_file}" > "${work_dir}/kept.txt" || true
 
   # ADD: catalog URLs of a live family of this list, unknown to the list,
-  # never a URL from the dead set
-  awk -F/ '{ print $NF }' "${list_urls_file}" \
-    | sed 's/[0-9][0-9.].*$//' | sort -u > "${work_dir}/families.txt"
+  # never a URL from the dead set — the list side of the family matching
+  # (families of this list via the one family_of implementation), matched
+  # against the precomputed catalog families with the FILENAME==ARGV[1]
+  # idiom: an empty families file can no longer match everything
+  family_of < "${list_urls_file}" | sort -u > "${work_dir}/families.txt"
   if [ "${add_policy}" = "disabled" ]; then
     : > "${work_dir}/candidates.txt"
   elif [ -s "${work_dir}/families.txt" ]; then
-    awk -F/ '{ print $NF "\t" $0 }' "${work_dir}/catalog-urls.txt" \
-      | awk -F'\t' 'NR==FNR { fam[$1]=1; next } { n=$1; sub(/[0-9][0-9.].*$/, "", n); if (n in fam) print $2 }' \
-        "${work_dir}/families.txt" - \
+    awk -F'\t' 'FILENAME==ARGV[1] { fam[$1]=1; next } ($1 in fam) { print $2 }' \
+      "${work_dir}/families.txt" "${work_dir}/catalog-families.txt" \
       | grep -Fx -v -f "${list_urls_file}" \
       | grep -Fx -v -f "${work_dir}/dead-clean.txt" \
       | sort -u > "${work_dir}/candidates.txt" || true

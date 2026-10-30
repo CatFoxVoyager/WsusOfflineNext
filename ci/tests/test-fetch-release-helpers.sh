@@ -399,7 +399,11 @@ grep -qF 'Authenticode tier skipped' "${T}/out.log" \
     || { echo "FAIL: ODT green case - non-PE sigcheck stand-in did not take the skip line"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
 [ -f "${T}/bin/odt/EULA" ] \
     || { echo "FAIL: ODT green case - metadata payload not integrated"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
-set -- "${T}/bin/odt/"*.XXXXXX
+# residue guards (WR-03): mktemp REPLACES the template's XXXXXX with six random
+# characters (probed: …exe.OsxEmz), so the old literal `*.XXXXXX` glob never
+# matched anything and the assertion was vacuous in four cases; match the real
+# post-mktemp shape instead (probe: bites on residue, silent on a clean tree)
+set -- "${T}/bin/odt/"officedeploymenttool_20430-20146.exe.??????
 [ -f "$1" ] && { echo "FAIL: ODT green case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB"; exit 1; }
 [ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT green case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB"; exit 1; }
 rm -rf "$T"
@@ -418,7 +422,7 @@ rc=$?
 grep -qF 'SHA256 MISMATCH for setup.exe' "${T}/out.log" \
     || { echo "FAIL: ODT tamper case missing MISMATCH line"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
 [ ! -f "${T}/bin/odt/setup.exe" ] || { echo "FAIL: ODT tamper case left bin/odt/setup.exe installed"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
-set -- "${T}/bin/odt/"*.XXXXXX
+set -- "${T}/bin/odt/"officedeploymenttool_20430-20146.exe.??????
 [ -f "$1" ] && { echo "FAIL: ODT tamper case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB"; exit 1; }
 [ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT tamper case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB"; exit 1; }
 rm -rf "$T"
@@ -443,7 +447,7 @@ rc=$?
 grep -qF 'no MSCF offset in the installer' "${T}/out.log" \
     || { echo "FAIL: ODT no-MSCF case missing carve refusal"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
 [ ! -f "${T}/bin/odt/setup.exe" ] || { echo "FAIL: ODT no-MSCF case left bin/odt/setup.exe installed"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
-set -- "${T}/bin/odt/"*.XXXXXX
+set -- "${T}/bin/odt/"officedeploymenttool_20430-20146.exe.??????
 [ -f "$1" ] && { echo "FAIL: ODT no-MSCF case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB"; exit 1; }
 [ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT no-MSCF case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB"; exit 1; }
 rm -rf "$T"
@@ -465,7 +469,7 @@ rc=$?
 grep -qF 'no cab extractor' "${T}/out.log" \
     || { echo "FAIL: ODT missing-extractor case missing extractor refusal"; cat "${T}/out.log"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
 [ ! -f "${T}/bin/odt/setup.exe" ] || { echo "FAIL: ODT missing-extractor case left bin/odt/setup.exe installed"; cat "${T}/out.log"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
-set -- "${T}/bin/odt/"*.XXXXXX
+set -- "${T}/bin/odt/"officedeploymenttool_20430-20146.exe.??????
 [ -f "$1" ] && { echo "FAIL: ODT missing-extractor case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
 [ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT missing-extractor case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
 rm -rf "$T" "$STUB_K"

@@ -9,9 +9,10 @@
 # <work-dir>/update-ids-and-locations-all.txt ("<id>,<url>" pairs).
 #
 # The final sort is guarded like the Windows variant (extract-catalog.bash:81-85)
-# and ids-and-locations-unsorted.txt is only deleted AFTER the sort succeeded -
-# a failed stage keeps the minutes of XSLT output available for diagnosis
-# (CISC-05, finding WR-13).
+# and ids-and-locations-unsorted.txt is only deleted AFTER the sort succeeded
+# AND the extraction is proven non-empty - a failed or empty stage keeps the
+# minutes of XSLT output available for diagnosis (CISC-05, findings WR-13
+# and WR-03).
 
 # ===== Configuration =====
 readonly script_version="1.1"
@@ -68,10 +69,12 @@ xsltproc -o "${work_dir}/ids-and-locations-unsorted.txt" \
 sort -u -T "${work_dir}" -o "${work_dir}/update-ids-and-locations-all.txt" "${work_dir}/ids-and-locations-unsorted.txt" \
   || { echo "extract-catalog-linux: sort failed" >&2; exit 1; }
 
-# Diagnose BEFORE destroying the intermediate: count and report first, so a
-# failed or empty sort leaves ids-and-locations-unsorted.txt on disk
+# Diagnose BEFORE destroying the intermediate: count and abort FIRST (WR-03 —
+# the rm used to run before this check, so the "sort succeeded but empty"
+# case destroyed the minutes of XSLT output it exists to diagnose), then
+# remove the intermediate only once the extraction is proven non-empty
 lines="$(grep -c . "${work_dir}/update-ids-and-locations-all.txt" || true)"
+[ "${lines}" -gt 0 ] || { echo "extract-catalog-linux: empty extraction — intermediate kept for diagnosis: ${work_dir}/ids-and-locations-unsorted.txt" >&2; exit 1; }
 echo "extract-catalog-linux: done — ${lines} id/url pairs in ${work_dir}/update-ids-and-locations-all.txt"
 rm -f "${work_dir}/ids-and-locations-unsorted.txt"
-[ "${lines}" -gt 0 ] || exit 1
 exit 0

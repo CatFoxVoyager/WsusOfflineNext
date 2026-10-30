@@ -12,12 +12,17 @@
 #   REMOVE — a URL proven dead (dead-file from ci/validate-links.bash) is removed,
 #            even when the catalog still lists it
 #
+#   The dead-file is CR-normalised before use (one cat_dos site, after work_dir):
+#   .gitattributes materialises *.txt as CRLF on a fresh checkout and a strict
+#   awk keeps that CR in the record, which silently disabled REMOVE and lied to
+#   the report (ubuntu-latest, run 40991443841).
+#
 # <staging-dir> must hold update-ids-and-locations-all.txt ("<id>,<url>" pairs),
 # produced by the catalog XSLT chain (see ExtractDownloadLinks-all.cmd). A
 # missing or implausibly small staging file aborts before any write.
 
 # ===== Configuration =====
-readonly script_version="1.0"
+readonly script_version="1.1"
 min_lines="1000"
 dry_run="disabled"
 add_policy="disabled"
@@ -83,6 +88,10 @@ fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 
+# The dead file is read exactly once, here, CR-normalised: every reader below
+# consumes the clean copy, never the raw file.
+cat_dos "${dead_file}" > "${work_dir}/dead-clean.txt"
+
 # Catalog URL set (column 2 of "<id>,<url>"), deduplicated
 cut -d ',' -f '2' "${catalog_file}" | grep -E '^https?://' | sed 's/[[:space:]]*$//' | sort -u > "${work_dir}/catalog-urls.txt"
 catalog_total="$(grep -c . "${work_dir}/catalog-urls.txt" || true)"
@@ -121,10 +130,10 @@ for list_file in "${static_dir}"/*.txt; do
 
   # REMOVE: lines whose URL is proven dead
   awk -F',' 'FILENAME==ARGV[1] { dead[$1]=1; next } ($1 in dead)' \
-    "${dead_file}" "${list_lines_file}" > "${work_dir}/removed.txt" || true
+    "${work_dir}/dead-clean.txt" "${list_lines_file}" > "${work_dir}/removed.txt" || true
   # KEEP: the other lines, alias field preserved
   awk -F',' 'FILENAME==ARGV[1] { dead[$1]=1; next } !($1 in dead)' \
-    "${dead_file}" "${list_lines_file}" > "${work_dir}/kept.txt" || true
+    "${work_dir}/dead-clean.txt" "${list_lines_file}" > "${work_dir}/kept.txt" || true
 
   # ADD: catalog URLs of a live family of this list, unknown to the list,
   # never a URL from the dead set
@@ -137,7 +146,7 @@ for list_file in "${static_dir}"/*.txt; do
       | awk -F'\t' 'NR==FNR { fam[$1]=1; next } { n=$1; sub(/[0-9][0-9.].*$/, "", n); if (n in fam) print $2 }' \
         "${work_dir}/families.txt" - \
       | grep -Fx -v -f "${list_urls_file}" \
-      | grep -Fx -v -f "${dead_file}" \
+      | grep -Fx -v -f "${work_dir}/dead-clean.txt" \
       | sort -u > "${work_dir}/candidates.txt" || true
   else
     : > "${work_dir}/candidates.txt"
@@ -166,7 +175,7 @@ cat "${work_dir}"/urls-*.txt > "${work_dir}/all-listed.txt" || true
 sort -u "${work_dir}/all-listed.txt" -o "${work_dir}/all-listed.txt"
 added_unique="$(sort -u "${added_urls_file}" | grep -c . || true)"
 already_n="$(grep -Fx -f "${work_dir}/all-listed.txt" "${work_dir}/catalog-urls.txt" | grep -c . || true)"
-dead_excl_n="$(grep -Fx -f "${dead_file}" "${work_dir}/catalog-urls.txt" | grep -c . || true)"
+dead_excl_n="$(grep -Fx -f "${work_dir}/dead-clean.txt" "${work_dir}/catalog-urls.txt" | grep -c . || true)"
 ignored=$(( catalog_total - added_unique - already_n - dead_excl_n ))
 [ "${ignored}" -lt 0 ] && ignored=0
 {

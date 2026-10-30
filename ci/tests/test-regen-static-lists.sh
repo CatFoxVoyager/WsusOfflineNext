@@ -56,4 +56,25 @@ bash ci/regen-static-lists.bash ci/tests/empty-dir "$F/static-test" "$F/dead.txt
 h2="$(cat "$F"/static-test/*.txt | md5sum)"
 [ "$h1" = "$h2" ] || { echo "FAIL: abort a écrit quelque chose"; exit 1; }
 [ ! -f "$F/.regen-report.md" ] || { echo "FAIL: abort a écrit un rapport"; exit 1; }
+# bite strict-awk : un dead-file materialise CRLF au checkout (.gitattributes
+# eol=crlf) doit etre REMOVE meme quand l'awk preserve le CR du record. Le shim
+# gawk -v BINMODE=1 reproduit en local la semantique de record Linux ; sur
+# ubuntu mawk est deja strict — le cas tourne aussi sans shim (jamais masque).
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\nhttps://download.example/a/prod-dead.exe,aliasd.exe\r\n' > "$T/static/listE.txt"
+printf 'https://download.example/a/prod-dead.exe\r\n' > "$T/dead-crlf.txt"
+STUB="$(mktemp -d)"
+PATHSHIM=""
+if command -v gawk > /dev/null 2>&1; then
+  printf '#!/usr/bin/env bash\nexec gawk -v BINMODE=1 "$@"\n' > "$STUB/awk"
+  chmod +x "$STUB/awk"
+  PATHSHIM="${STUB}:"
+fi
+PATH="${PATHSHIM}${PATH}" bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead-crlf.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: strict-awk run exited $rc"; rm -rf "$T" "$STUB"; exit 1; }
+grep -q 'prod-dead' "$T/static/listE.txt" && { echo "FAIL: REMOVE strict-awk — dead CRLF encore dans la liste"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qE '\| listE\.txt *\| *1 *\| *1 *\| *1 *\|' "$T/.regen-report.md" || { echo "FAIL: rapport strict-awk mensonger (attendu 1 kept, 1 added, 1 removed)"; rm -rf "$T" "$STUB"; exit 1; }
+rm -rf "$T" "$STUB"
 echo "PASS regen fixtures (KEEP/ADD/famille/REMOVE multi-listes/CRLF/dry-run/abort)"

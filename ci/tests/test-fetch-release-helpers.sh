@@ -31,9 +31,20 @@ done
 [ -n "$url" ] || { echo "fake-wget: no URL" >&2; exit 1; }
 name="$(basename "$url")"
 if [ -n "$out" ]; then
-  # the -O path serves mkisofs.exe only: bytes carry a PE header because the
-  # script refuses a non-PE stream before the atomic move (CISC-04)
-  printf 'MZ%s' "$name" > "$out"
+  # the -O path serves mkisofs.exe and the ODT installer: bytes carry a PE
+  # header because the script refuses a non-PE stream before the atomic move
+  # (CISC-04); the ODT installer fixture embeds the MSCF marker at a fixed
+  # offset so the carve has something to find, and the marker-less variant
+  # (served only when FAKE_WGET_ODT_VARIANT=nomscf) drives the carve refusal
+  if [ "$name" = "officedeploymenttool_20430-20146.exe" ] && [ -n "${ODT_FIXTURE_INSTALLER:-}" ]; then
+    if [ "${FAKE_WGET_ODT_VARIANT:-}" = "nomscf" ] && [ -n "${ODT_FIXTURE_INSTALLER_NOMSCF:-}" ]; then
+      cat "${ODT_FIXTURE_INSTALLER_NOMSCF}" > "$out"
+    else
+      cat "${ODT_FIXTURE_INSTALLER}" > "$out"
+    fi
+  else
+    printf 'MZ%s' "$name" > "$out"
+  fi
 else
   printf '%s' "$name" > "$dir/$name"
 fi
@@ -71,7 +82,43 @@ esac
 exit 0
 UNZIP_EOF
 
-chmod +x "$STUB/wget" "$STUB/unzip"
+cat > "$STUB/cabextract" <<'CAB_EOF'
+#!/usr/bin/env bash
+# fake cabextract: implements the -q -d <dest> <cab> call shape of the ODT
+# block and writes the fixture setup.exe (MZ bytes + fixed text, so the
+# script's MZ check passes) plus a metadata file the real extractor produces
+# alongside it; cab contents are irrelevant in the stub world
+set -u
+dest=""
+want_dest=0
+for a in "$@"; do
+  case "$a" in
+    -q) ;;
+    -d) want_dest=1 ;;
+    *)  if [ "$want_dest" -eq 1 ]; then dest="$a"; want_dest=0; fi ;;
+  esac
+done
+[ -n "$dest" ] || { echo "fake-cabextract: need -d dest" >&2; exit 1; }
+mkdir -p "$dest"
+cat "${ODT_FIXTURE_SETUP:?}" > "$dest/setup.exe"
+printf 'odt-eula-fixture' > "$dest/EULA"
+exit 0
+CAB_EOF
+
+chmod +x "$STUB/wget" "$STUB/unzip" "$STUB/cabextract"
+
+# ODT fixtures: ONE source of truth for both the stub bytes and the scaffold
+# pins (house invariant: scaffold and stub must move together, or the green
+# case gates the wrong bytes). The installer fixture embeds the MSCF marker at
+# offset 98 (MZ + 96 filler bytes); the marker-less variant drives the
+# carve-refusal case.
+ODT_FILLER="$(printf 'x%.0s' {1..96})"
+printf 'MZ%sMSCFcab-content-irrelevant' "${ODT_FILLER}" > "$STUB/fixture-odt-installer.bin"
+printf 'MZ%sno-cab-marker-inside' "${ODT_FILLER}" > "$STUB/fixture-odt-installer-nomscf.bin"
+printf 'MZodt-setup-exe-fixture' > "$STUB/fixture-odt-setup.bin"
+export ODT_FIXTURE_INSTALLER="$STUB/fixture-odt-installer.bin"
+export ODT_FIXTURE_INSTALLER_NOMSCF="$STUB/fixture-odt-installer-nomscf.bin"
+export ODT_FIXTURE_SETUP="$STUB/fixture-odt-setup.bin"
 
 function scaffold ()
 {
@@ -84,12 +131,17 @@ function scaffold ()
     # bin/unzip.exe is intentionally absent here: the fake unzip creates the
     # plain stand-in mid-run (see the stub), so resolve_tools falls through to
     # the PATH stub on every host and the vendored-copy branch still runs
-    for n in AutoLogon.zip Sigcheck.zip Streams.zip mkisofs.exe; do
+    for n in AutoLogon.zip Sigcheck.zip Streams.zip mkisofs.exe officedeploymenttool_20430-20146.exe setup.exe; do
         # the mkisofs pin is recomputed over the SAME bytes the stub wget -O
-        # writes (MZ + basename): scaffold and stub must move together or the
+        # writes (MZ + basename), and the two ODT pins over the SAME fixture
+        # files the stubs copy: scaffold and stub must move together or the
         # green case would test the hash gate against the wrong bytes
         if [ "${n}" = "mkisofs.exe" ]; then
             h="$(printf 'MZ%s' "${n}" | sha256sum | cut -d' ' -f1)"
+        elif [ "${n}" = "officedeploymenttool_20430-20146.exe" ]; then
+            h="$(sha256sum "${ODT_FIXTURE_INSTALLER:?}" | cut -d' ' -f1)"
+        elif [ "${n}" = "setup.exe" ]; then
+            h="$(sha256sum "${ODT_FIXTURE_SETUP:?}" | cut -d' ' -f1)"
         else
             h="$(printf '%s' "${n}" | sha256sum | cut -d' ' -f1)"
         fi
@@ -306,5 +358,104 @@ residue="$(cd "${T}/bin" && ls mkisofs.exe.* 2>/dev/null || true)"
 [ -z "${residue}" ] || { echo "FAIL: mkisofs tamper left temp residue: ${residue}"; cat "${T}/out.log"; rm -rf "$T" "$STUB_G" "$STUB"; exit 1; }
 rm -rf "$T" "$STUB_G"
 
+# ---- case h: ODT green - the full chain offline ----
+# The stub wget serves the marker-embedded installer fixture, the stub
+# cabextract writes the fixture setup.exe and the scaffold pins describe
+# exactly those bytes: download -> installer pin -> carve -> extract -> MZ ->
+# sigcheck tier -> payload pin -> integrate must run green OFFLINE. The
+# plain-text sigcheck64.exe stand-in (not MZ) must take the documented skip
+# line - the tier's MZ guard is what keeps the Authenticode check honest when
+# only a stand-in exists (MSYS executes any existing .exe as a silent rc=0
+# no-op). TMPDIR is pinned inside the temp tree so the mktemp -d work dir is
+# residue-assertable like the bin/odt sibling temp.
+T="$(mktemp -d)"
+scaffold "$T"
+mkdir -p "${T}/tmp"
+TMPDIR="${T}/tmp" PATH="$STUB:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: ODT green case exited $rc"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+cmp -s "${T}/bin/odt/setup.exe" "${ODT_FIXTURE_SETUP}" \
+    || { echo "FAIL: ODT green case - bin/odt/setup.exe != fixture bytes"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'SHA256 OK officedeploymenttool_20430-20146.exe' "${T}/out.log" \
+    || { echo "FAIL: ODT green case missing installer SHA256 OK"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'SHA256 OK setup.exe' "${T}/out.log" \
+    || { echo "FAIL: ODT green case missing setup.exe SHA256 OK"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'bin/odt/setup.exe: OK' "${T}/out.log" \
+    || { echo "FAIL: ODT green case missing summary OK entry"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'Authenticode tier skipped' "${T}/out.log" \
+    || { echo "FAIL: ODT green case - non-PE sigcheck stand-in did not take the skip line"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+[ -f "${T}/bin/odt/EULA" ] \
+    || { echo "FAIL: ODT green case - metadata payload not integrated"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+set -- "${T}/bin/odt/"*.XXXXXX
+[ -f "$1" ] && { echo "FAIL: ODT green case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB"; exit 1; }
+[ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT green case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB"; exit 1; }
+rm -rf "$T"
+
+# ---- case i: tampered setup.exe pin - refusal on the TEMP, never integrated ----
+# The zeroed pin (same shape as case b) must fail the temp-path gate BEFORE the
+# move: exit nonzero, MISMATCH names setup.exe, no bin/odt/setup.exe, and the
+# EXIT trap leaves no installer temp and no work dir behind.
+T="$(mktemp -d)"
+scaffold "$T"
+mkdir -p "${T}/tmp"
+sed -i 's/^\([0-9a-f]\)[0-9a-f]\{63\}  setup.exe/0000000000000000000000000000000000000000000000000000000000000000  setup.exe/' "${T}/ci/release-helper-hashes.sha256"
+TMPDIR="${T}/tmp" PATH="$STUB:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: ODT tamper case exited 0"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'SHA256 MISMATCH for setup.exe' "${T}/out.log" \
+    || { echo "FAIL: ODT tamper case missing MISMATCH line"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+[ ! -f "${T}/bin/odt/setup.exe" ] || { echo "FAIL: ODT tamper case left bin/odt/setup.exe installed"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+set -- "${T}/bin/odt/"*.XXXXXX
+[ -f "$1" ] && { echo "FAIL: ODT tamper case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB"; exit 1; }
+[ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT tamper case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB"; exit 1; }
+rm -rf "$T"
+
+# ---- case j: marker-less installer - the carve refuses ----
+# CI never executes the upstream installer (deliberate divergence from the
+# CMD's silent-installer fallback), so a served stream without the MSCF marker
+# must exit nonzero with the carve refusal and leave no residue. The installer
+# pin is recomputed over the marker-less fixture bytes so the hash gate PASSES
+# and only the carve check can refuse (same isolation as case e, which
+# recomputes the mkisofs pin over notape bytes).
+T="$(mktemp -d)"
+scaffold "$T"
+mkdir -p "${T}/tmp"
+NOMSCF_H="$(sha256sum "${ODT_FIXTURE_INSTALLER_NOMSCF}" | cut -d' ' -f1)"
+grep -v '  officedeploymenttool_20430-20146.exe$' "${T}/ci/release-helper-hashes.sha256" > "${T}/pins.tmp"
+printf '%s  officedeploymenttool_20430-20146.exe\n' "${NOMSCF_H}" >> "${T}/pins.tmp"
+mv "${T}/pins.tmp" "${T}/ci/release-helper-hashes.sha256"
+TMPDIR="${T}/tmp" FAKE_WGET_ODT_VARIANT=nomscf PATH="$STUB:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: ODT no-MSCF case exited 0"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+grep -qF 'no MSCF offset in the installer' "${T}/out.log" \
+    || { echo "FAIL: ODT no-MSCF case missing carve refusal"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+[ ! -f "${T}/bin/odt/setup.exe" ] || { echo "FAIL: ODT no-MSCF case left bin/odt/setup.exe installed"; cat "${T}/out.log"; rm -rf "$T" "$STUB"; exit 1; }
+set -- "${T}/bin/odt/"*.XXXXXX
+[ -f "$1" ] && { echo "FAIL: ODT no-MSCF case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB"; exit 1; }
+[ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT no-MSCF case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB"; exit 1; }
+rm -rf "$T"
+
+# ---- case k: no cab extractor - resolution refusal on every host ----
+# PATH without the cabextract stub AND WINDIR pointing outside any System32:
+# the script never consults the bare `expand` name (GNU coreutils trap on
+# git-bash hosts), so both resolution legs collapse to the same refusal on
+# either host family - Linux has no cygpath, git-bash misses the stub dir.
+T="$(mktemp -d)"
+STUB_K="$(mktemp -d)"
+cp "$STUB/wget" "$STUB/unzip" "$STUB_K/"
+chmod +x "$STUB_K/wget" "$STUB_K/unzip"
+scaffold "$T"
+mkdir -p "${T}/tmp" "${T}/nowin"
+TMPDIR="${T}/tmp" WINDIR="${T}/nowin" PATH="$STUB_K:$PATH" bash "${T}/ci/fetch-release-helpers.bash" > "${T}/out.log" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: ODT missing-extractor case exited 0"; cat "${T}/out.log"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
+grep -qF 'no cab extractor' "${T}/out.log" \
+    || { echo "FAIL: ODT missing-extractor case missing extractor refusal"; cat "${T}/out.log"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
+[ ! -f "${T}/bin/odt/setup.exe" ] || { echo "FAIL: ODT missing-extractor case left bin/odt/setup.exe installed"; cat "${T}/out.log"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
+set -- "${T}/bin/odt/"*.XXXXXX
+[ -f "$1" ] && { echo "FAIL: ODT missing-extractor case left installer temp residue"; ls -A "${T}/bin/odt"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
+[ -z "$(ls -A "${T}/tmp")" ] || { echo "FAIL: ODT missing-extractor case left work-dir residue in TMPDIR"; ls -A "${T}/tmp"; rm -rf "$T" "$STUB_K" "$STUB"; exit 1; }
+rm -rf "$T" "$STUB_K"
+
 rm -rf "$STUB"
-echo "PASS fetch-release-helpers fixtures (green 4 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list / mkisofs gate pre-install WR-04, offline via stubs)"
+echo "PASS fetch-release-helpers fixtures (green 6 pins / tamper mismatch + observed digest / unpinned refusal / atomicity no-partial / PE refusal / CRLF URL list / mkisofs gate pre-install WR-04 / ODT green offline + tier skip / ODT tampered payload pin / ODT no-MSCF carve refusal / ODT missing extractor, offline via stubs)"

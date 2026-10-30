@@ -96,4 +96,16 @@ fi
 printf 'https://bad.invalid.example/nope\r\n' > "$cache2"
 PATH="$SHIM_PATH" bash ci/validate-links.bash ci/tests/fixtures-links "$rep" "$dead" --cache "$cache2" || exit 1
 grep -q "bad.invalid" "$dead" || { echo "FAIL: cache CRLF sous grep strict: mort non confirmee a la passe 1"; exit 1; }
+# chemin de cache inutilisable (WR-02): touch/cat_dos/cp non gardes rendaient
+# rc 0 avec un "0 dead" mensonger — la confirmation deux-passes se desactivait
+# en silence (meme famille que la cause racine CRLF de 15-01). Fail-closed:
+# rc 1 + message nomme + avertissement cache-absent (premiere passe /
+# persistance perdue, cf. WR-01) + aucun dead-file ecrit.
+rep3="$W/rep3.md"; dead3="$W/dead3.txt"
+bash ci/validate-links.bash ci/tests/fixtures-links "$rep3" "$dead3" --cache "$W/no-such-dir/cache.txt" > "$W/out3.log" 2> "$W/err3.log"; rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: cache inutilisable doit aborter, pas mentir 0 dead (rc=0)"; exit 1; }
+grep -q "cache unusable" "$W/err3.log" || { echo "FAIL: message 'cache unusable' absent de stderr"; exit 1; }
+grep -q "cache absent" "$W/err3.log" || { echo "FAIL: avertissement 'cache absent' (premiere passe) absent de stderr"; exit 1; }
+grep -q "0 dead of" "$W/out3.log" "$W/err3.log" && { echo "FAIL: cache inutilisable ne doit pas annoncer 0 dead"; exit 1; }
+[ ! -e "$dead3" ] || { echo "FAIL: cache inutilisable ne doit pas ecrire de dead-file"; exit 1; }
 echo "PASS validate-links fixtures (dead-file, CRLF cleaning, report row, strict exit)"

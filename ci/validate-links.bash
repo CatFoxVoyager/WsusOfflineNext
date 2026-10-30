@@ -9,7 +9,9 @@
 # now but absent from the cache is only recorded as a candidate (dead-file stays
 # empty for it); a URL dead in this pass AND already in the cache lands in the
 # dead-file. A cached URL found alive leaves the cache. The cache file must
-# persist between runs to make the two-pass contract meaningful.
+# persist between runs to make the two-pass contract meaningful. An unusable
+# cache path aborts fail-closed (WR-02); an absent cache warns (first run or
+# lost persistence) and defers the confirmation by one pass.
 # Exits 1 with --strict if at least one URL is dead. Non-strict always exits 0
 # unless the inputs are unusable (missing directory, no URLs found at all).
 
@@ -134,13 +136,33 @@ sort -u "${work_dir}/dead-urls.txt" -o "${work_dir}/dead-now.txt"
 
 # Two-pass removal: with a cache, only URLs dead now AND already cached are
 # confirmed dead; the cache always converges to this pass's dead set.
+# WR-02: every cache stage is fail-closed — an unusable cache path must abort
+# with a named message, never degrade into a silent "0 dead" that disables
+# REMOVE. A cache ABSENT at run start is not an abort: it is the legitimate
+# first-run state (and the lost-persistence symptom, WR-01) — warn loudly and
+# defer the confirmation by one pass.
 if [ -n "${cache_file}" ]; then
-  touch "${cache_file}"
+  if [ -f "${cache_file}" ]; then
+    cache_preexisting="yes"
+  else
+    cache_preexisting="no"
+    echo "validate-links: cache absent at run start: ${cache_file} — no two-pass confirmation this pass (check cache persistence)" >&2
+  fi
+  touch "${cache_file}" || { echo "validate-links: cache unusable: ${cache_file}" >&2; exit 1; }
   # The cache is operator-materialized (editor may write CRLF): normalize CR
   # at one site so the two-pass confirmation cannot be silently disabled.
   cat_dos "${cache_file}" > "${work_dir}/cache-clean.txt"
+  # cat_dos swallows a cat failure (the pipeline's rc is tr's, which always
+  # succeeds): a pre-existing NON-EMPTY cache must yield a non-empty clean
+  # copy — an empty one means the read failed, and confirmation must not
+  # proceed on a silently emptied cache (WR-02). A genuinely empty cache
+  # (first pass) stays legitimate.
+  if [ "${cache_preexisting}" = "yes" ] && [ -s "${cache_file}" ] && [ ! -s "${work_dir}/cache-clean.txt" ]; then
+    echo "validate-links: cache unreadable: ${cache_file}" >&2
+    exit 1
+  fi
   grep -Fx -f "${work_dir}/cache-clean.txt" "${work_dir}/dead-now.txt" > "${dead_file}" || true
-  cp "${work_dir}/dead-now.txt" "${cache_file}"
+  cp "${work_dir}/dead-now.txt" "${cache_file}" || { echo "validate-links: cache write-back failed: ${cache_file}" >&2; exit 1; }
 else
   cp "${work_dir}/dead-now.txt" "${dead_file}"
 fi

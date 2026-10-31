@@ -85,6 +85,38 @@ cmp -s "${SANDBOX}/edges.expected" "${SANDBOX}/edges.txt" \
 next_full_version "bogus" "2026.12" "" >/dev/null 2>&1
 [ "$?" -ne 0 ] \
     || { echo "FAIL: probe 8 — tag bogus doit être refusé (exit non nul)"; rm -rf "${SANDBOX}"; exit 1; }
+
+# ---- probe 9: argv matrix is_valid_version_arg (accepte ET refuse) ----
+is_valid_version_arg "5.0.0+2026.11" \
+    || { echo "FAIL: probe 9 — 5.0.0+2026.11 doit être accepté"; rm -rf "${SANDBOX}"; exit 1; }
+is_valid_version_arg "5.0.0" \
+    || { echo "FAIL: probe 9 — 5.0.0 (cœur nu) doit être accepté"; rm -rf "${SANDBOX}"; exit 1; }
+is_valid_version_arg "5.0.0+26.1" \
+    && { echo "FAIL: probe 9 — année 2 chiffres doit être refusée"; rm -rf "${SANDBOX}"; exit 1; }
+is_valid_version_arg "5.0.0+2026.11.0" \
+    && { echo "FAIL: probe 9 — composant 4 doit être refusé"; rm -rf "${SANDBOX}"; exit 1; }
+is_valid_version_arg "5.0.0+2026.1" \
+    && { echo "FAIL: probe 9 — mois 1 chiffre doit être refusé"; rm -rf "${SANDBOX}"; exit 1; }
+is_valid_version_arg "abc" \
+    && { echo "FAIL: probe 9 — non-numérique doit être refusé"; rm -rf "${SANDBOX}"; exit 1; }
+
+# ---- probe 10: bornes du motif FULL-FORM, dans les deux sens ----
+# Le motif borné d'une forme complète matche exactement une fois dans
+# "v5.0.0+2026.11.txt" et ne matche PAS dans "5.0.0+2026.110" (voisin droit
+# digit — refus structurel CISC-08, pas une absence accidentelle).
+printf 'v5.0.0+2026.11.txt' > "${SANDBOX}/full-ok.txt"
+[ "$(count_occurrences "(^|[^0-9])5\.0\.0\+2026\.11([^0-9]|\$)" "${SANDBOX}/full-ok.txt")" -eq 1 ] \
+    || { echo "FAIL: probe 10 — la forme complète doit matcher exactement 1 fois"; rm -rf "${SANDBOX}"; exit 1; }
+printf '5.0.0+2026.110' > "${SANDBOX}/full-collide.txt"
+[ "$(count_occurrences "(^|[^0-9])5\.0\.0\+2026\.11([^0-9]|\$)" "${SANDBOX}/full-collide.txt")" -eq 0 ] \
+    || { echo "FAIL: probe 10 — la forme complète a matché dans un mois plus long"; rm -rf "${SANDBOX}"; exit 1; }
+# Le motif CORE est volontairement plus permissif : il compte le préfixe
+# borné porté AU SEIN de la forme complète ("5.0.0" dans "5.0.0+2026.11" —
+# le '+' est un non-digit). C'est la base de comptage before/after du moteur
+# (32 sites des deux côtés) : disposition délibérée du hazard 1, épinglée
+# côté arbre réel par les assertions 32/20/12 de la sonde ci-dessous.
+[ "$(count_occurrences "(^|[^0-9])5\.0\.0([^0-9]|\$)" "${SANDBOX}/full-ok.txt")" -eq 1 ] \
+    || { echo "FAIL: probe 10 — le motif CORE doit compter le préfixe de la forme complète"; rm -rf "${SANDBOX}"; exit 1; }
 rm -rf "${SANDBOX}"
 
 # Les blobs d'index portant du CR contre .gitattributes sont renormalisés :
@@ -111,13 +143,39 @@ MONTH="$(date -u +%Y.%m)"
 case "${OLD}" in *+*) MONTH="${OLD#*+}" ;; esac
 NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
 [ -n "${NEW}" ] || { echo "FAIL: résolution de NEW impossible depuis ${OLD}"; exit 1; }
+BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
 echo "$STAT" | grep -q "17 files changed" || { echo "FAIL: attends 17 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
 echo "$STAT" | grep -q "32 insertions" || { echo "FAIL: attends 32 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
+# Comptage de lanes sur l'arbre réel — les tripwire du moteur (32 cœurs /
+# 20 full-form / 12 numériques, split 4 csproj + 8 au3) re-mesurés ici
+# indépendamment via count_occurrences, jamais un grep -c brut. Le
+# partitionnement 20/12 n'est PAS l'invariant (il dépend de la forme) : le
+# TOTAL des sites à token de version = 32 l'est, dans les deux formes.
+MATRIX="$(bash ci/bump-version.bash --print-files)"
+[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 17 ] || { echo "FAIL: --print-files ne rend pas 17 chemins"; git checkout -- .; exit 1; }
+new_esc="${NEW//./\\.}"; new_esc="${new_esc//+/\\+}"
+new_core="${NEW%%+*}"; new_core_esc="${new_core//./\\.}"
+full_after=0; num_csproj=0; num_au3=0; core_after=0
+for f in ${MATRIX}; do
+  full_after=$(( full_after + $(count_occurrences "(^|[^0-9])${new_esc}([^0-9]|\$)" "${f}") ))
+  core_after=$(( core_after + $(count_occurrences "(^|[^0-9])${new_core_esc}([^0-9]|\$)" "${f}") ))
+  case "${f}" in
+    *.csproj) num_csproj=$(( num_csproj + $(count_occurrences "${new_core_esc}\.0</(FileVersion|AssemblyVersion)>" "${f}") )) ;;
+    *.au3)    num_au3=$(( num_au3 + $(count_occurrences "${new_core_esc}\)" "${f}") )) ;;
+  esac
+done
+[ "${core_after}" -eq 32 ] || { echo "FAIL: attendu 32 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
+[ "${full_after}" -eq 20 ] || { echo "FAIL: attendu 20 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
+[ "${num_csproj}" -eq 4 ] || { echo "FAIL: attendu 4 ancres csproj, obtenu ${num_csproj}"; git checkout -- .; exit 1; }
+[ "${num_au3}" -eq 8 ] || { echo "FAIL: attendu 8 ancres au3, obtenu ${num_au3}"; git checkout -- .; exit 1; }
 grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
 grep -q "${NEW}" cmd/DownloadUpdates.cmd || { echo "FAIL: nouvelle version absente du moteur"; git checkout -- .; exit 1; }
-grep -q "(b2026.10)" cmd/DownloadUpdates.cmd || { echo "FAIL: le build tag b2026.10 ne doit pas bouger"; git checkout -- .; exit 1; }
+# Invariant capture/compare (le littéral figé pourrit à chaque changement de
+# mois) : la capture du build tag doit être byte-identique avant/après.
+BT_AFTER="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
+[ "${BT_AFTER}" = "${BT_BEFORE}" ] || { echo "FAIL: le build tag a bougé (${BT_BEFORE} -> ${BT_AFTER})"; git checkout -- .; exit 1; }
 grep -q "${NEW},release" static/SelfUpdateVersion-this.txt || { echo "FAIL: marqueur selfupdate non bumpé"; git checkout -- .; exit 1; }
 git checkout -- .
 [ -z "$(git diff --name-only --ignore-cr-at-eol)" ] || { echo "FAIL: revert incomplet"; exit 1; }

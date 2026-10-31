@@ -42,6 +42,49 @@ substitute_bounded '2026\.10\.2' '9.9.9' "${SANDBOX}/edges.txt"
 printf '9.9.9a\nb9.9.9\n9.9.9\n' > "${SANDBOX}/edges.expected"
 cmp -s "${SANDBOX}/edges.expected" "${SANDBOX}/edges.txt" \
     || { echo "FAIL: probe 4 — substitution début/fin de ligne incorrecte"; rm -rf "${SANDBOX}"; exit 1; }
+
+# ---- probe 5: classification conventional-commits (D-02) — MAJOR > MINOR > PATCH ----
+[ "$(classify_next_version "$(printf 'feat(generator): add x\nfix: y')")" = "MINOR" ] \
+    || { echo "FAIL: probe 5 — feat+fix doit classer MINOR"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(classify_next_version "$(printf 'fix(core): y\ndocs: z')")" = "PATCH" ] \
+    || { echo "FAIL: probe 5 — fix+docs doit classer PATCH"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(classify_next_version "chore(release): bump")" = "PATCH" ] \
+    || { echo "FAIL: probe 5 — chore doit classer PATCH"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(classify_next_version "feat!: drop w60")" = "MAJOR" ] \
+    || { echo "FAIL: probe 5 — bang non scopé doit classer MAJOR"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(classify_next_version "fix(gui)!: rewrite")" = "MAJOR" ] \
+    || { echo "FAIL: probe 5 — bang scopé doit classer MAJOR"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(classify_next_version "$(printf 'feat: api\n\nBREAKING CHANGE: removed option')")" = "MAJOR" ] \
+    || { echo "FAIL: probe 5 — footer BREAKING CHANGE doit classer MAJOR"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(classify_next_version "")" = "PATCH" ] \
+    || { echo "FAIL: probe 5 — log vide doit classer PATCH (train sans commit)"; rm -rf "${SANDBOX}"; exit 1; }
+
+# ---- probe 6: bump_core sur les trois classes ----
+[ "$(bump_core "5.0.0" "PATCH")" = "5.0.1" ] \
+    || { echo "FAIL: probe 6 — bump_core PATCH"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(bump_core "5.0.0" "MINOR")" = "5.1.0" ] \
+    || { echo "FAIL: probe 6 — bump_core MINOR"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(bump_core "5.0.0" "MAJOR")" = "6.0.0" ] \
+    || { echo "FAIL: probe 6 — bump_core MAJOR"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(bump_core "4.9.9" "MINOR")" = "4.10.0" ] \
+    || { echo "FAIL: probe 6 — bump_core MINOR doit propager 9->10"; rm -rf "${SANDBOX}"; exit 1; }
+
+# ---- probe 7: strip_version_metadata ----
+[ "$(strip_version_metadata "5.0.0+2026.11")" = "5.0.0" ] \
+    || { echo "FAIL: probe 7 — strip full-form"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(strip_version_metadata "5.0.0")" = "5.0.0" ] \
+    || { echo "FAIL: probe 7 — strip bare-core"; rm -rf "${SANDBOX}"; exit 1; }
+
+# ---- probe 8: next_full_version — branche CalVer legacy, classes, refus ----
+[ "$(next_full_version "v2026.10.2" "2026.11" "")" = "5.0.0+2026.11" ] \
+    || { echo "FAIL: probe 8 — tag CalVer legacy doit résoudre 5.0.0+month (D-01)"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(next_full_version "v5.0.0" "2026.12" "feat: x")" = "5.1.0+2026.12" ] \
+    || { echo "FAIL: probe 8 — tag SemVer + feat doit résoudre MINOR+month"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(next_full_version "v5.1.0" "2026.12" "fix: y")" = "5.1.1+2026.12" ] \
+    || { echo "FAIL: probe 8 — tag SemVer + fix doit résoudre PATCH+month"; rm -rf "${SANDBOX}"; exit 1; }
+next_full_version "bogus" "2026.12" "" >/dev/null 2>&1
+[ "$?" -ne 0 ] \
+    || { echo "FAIL: probe 8 — tag bogus doit être refusé (exit non nul)"; rm -rf "${SANDBOX}"; exit 1; }
 rm -rf "${SANDBOX}"
 
 # Les blobs d'index portant du CR contre .gitattributes sont renormalisés :

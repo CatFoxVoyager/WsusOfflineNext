@@ -53,7 +53,7 @@ if "%http_proxy%" NEQ "" (call CheckOUVersion.cmd /mode:newer /proxy %http_proxy
 if not "%errorlevel%"=="1" goto NoNewVersion
 if not exist ..\static\SelfUpdateVersion-recent.txt goto DownloadError
 echo Downloading most recent released version of WSUS Offline Next...
-%WGET_PATH% -N -P ..\static https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/StaticDownloadLink-recent.txt
+%WGET_PATH% -N -P ..\static https://raw.githubusercontent.com/CatFoxVoyager/WsusOfflineNext/main/ci/StaticDownloadLink-recent.txt
 if errorlevel 1 goto DownloadError
 if not exist ..\static\StaticDownloadLink-recent.txt goto DownloadError
 set FILENAME_ZIP=

@@ -48,9 +48,9 @@ if exist UpdateOU.new (
 )
 :justCheckForUpdates
 if "%QUIET_MODE%"=="1" (
-  %WGET_PATH% -q -N -P ..\static https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/SelfUpdateVersion-recent.txt
+  %WGET_PATH% -q -N -P ..\static https://raw.githubusercontent.com/CatFoxVoyager/WsusOfflineNext/main/static/SelfUpdateVersion-recent.txt
 ) else (
-  %WGET_PATH% -N -P ..\static https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/SelfUpdateVersion-recent.txt
+  %WGET_PATH% -N -P ..\static https://raw.githubusercontent.com/CatFoxVoyager/WsusOfflineNext/main/static/SelfUpdateVersion-recent.txt
 )
 if errorlevel 1 goto DownloadError
 if not exist ..\static\SelfUpdateVersion-recent.txt goto DownloadError
@@ -121,7 +121,7 @@ goto Error
 :DownloadError
 if not "%QUIET_MODE%"=="1" (
   echo.
-  echo ERROR: Download failure for https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/SelfUpdateVersion-recent.txt.
+  echo ERROR: Download failure for https://raw.githubusercontent.com/CatFoxVoyager/WsusOfflineNext/main/static/SelfUpdateVersion-recent.txt.
   echo.
 )
 goto Error

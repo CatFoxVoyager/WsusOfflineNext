@@ -84,7 +84,6 @@ client/office/
 client/bin/Autologon*.exe
 client/bin/unzip.exe
 Windows10Versions.ini
-static/SelfUpdateVersion-recent.txt
 
 # Logs & temporary files
 log/*.log

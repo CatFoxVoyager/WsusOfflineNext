@@ -44,9 +44,12 @@
 
 # ========== Configuration ================================================
 
-# URLs for the "master" development version
-self_update_index="https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/SelfUpdateVersion-recent.txt"
-self_update_links="https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/StaticDownloadLink-recent.txt"
+# Self-update channel = this fork's own tracked files. The fork is the
+# release source of truth since the SemVer switch: the upstream index
+# carries a stale 12.6.x marker that numerically dominates 5.x and would
+# trigger a self-update that installs the upstream release over this fork.
+self_update_index="https://raw.githubusercontent.com/CatFoxVoyager/WsusOfflineNext/main/static/SelfUpdateVersion-recent.txt"
+self_update_links="https://raw.githubusercontent.com/CatFoxVoyager/WsusOfflineNext/main/ci/StaticDownloadLink-recent.txt"
 
 # ========== Global variables =============================================
 

@@ -2,19 +2,46 @@
 #
 # ci/bump-version.bash — substitute the application version across the repo
 #
-# Usage: bash ci/bump-version.bash <new-version>   (e.g. 2026.11.0)
+# Usage: bash ci/bump-version.bash <new-version>   (e.g. 5.0.0+2026.11)
+#        bash ci/bump-version.bash --print-files
 #
 # The old version is read from the single source of truth
-# (cmd/DownloadUpdates.cmd, "set WSUSOFFLINE_VERSION=X.Y.Z (b...)"). The
-# 17-file matrix is the one committed in 339f600. The build tag "(b2026.10)"
-# is version-independent and must not move. Exits 1 unless exactly 32
-# substitutions land in exactly 17 files.
+# (cmd/DownloadUpdates.cmd, "set WSUSOFFLINE_VERSION=X.Y.Z" — with or without
+# the "+YYYY.MM" metadata). The 17-file matrix is the one committed in
+# 339f600. The build tag "(b2026.10)" is version-independent and must not
+# move. Exits 1 unless exactly 32 version-token sites land in exactly 17
+# files.
+#
+# The engine runs TWO LANES over the 32 matrix occurrences (phase 19, D-01):
+# a bounded full-form lane (20 sites: source of truth, headers, captions,
+# marker, <Version>, package.json, App.tsx) and a numeric-anchored core lane
+# (12 build contexts: csproj <FileVersion>/<AssemblyVersion> "X.Y.Z.0",
+# AutoIt "#pragma compile(..., X.Y.Z)" — a '+' metadata there breaks
+# CompileModernApps.cmd and Aut2Exe).
+#
+# The before-accounting is SHAPE-CONDITIONAL — the binding invariant in BOTH
+# shapes is TOTAL version-token sites = 32 across the 17 files, never a
+# per-lane number alone:
+#   STEADY STATE (old carries "+YYYY.MM"): the two before-motifs enumerate
+#     DISJOINT site sets (20 full-form + 12 numeric); the before gate asserts
+#     sum(before_full) + sum(before_num) = 32.
+#   MIGRATION (old is a bare core): the bounded bare-core motif matches ALL
+#     32 sites, so the full-form lane already enumerates every site; the
+#     before gate asserts sum(before_full) = 32 and sum(before_num) is
+#     INFORMATIVE only (printed, never gate-binding) — those 12 are the
+#     numeric subset of the 32 that the numeric lane re-repairs after the
+#     full lane carried the "+YYYY.MM" form there.
+#   The shape branch is selected by whether the old version carries '+' —
+#   picking the wrong branch produces a wrong TOTAL and aborts, so the gate
+#   stays fail-closed in both shapes. The after-gates (20 full-form + 12
+#   numeric + 32 core sites) are binding in both shapes because the
+#   after-state is identical whichever shape produced it.
 #
 # Counting/substitution logic lives in ci/lib-bump-version.bash: occurrences
 # are COUNTED and the pattern is bounded at digit boundaries (CISC-08).
 
 # ===== Configuration =====
-readonly script_version="1.1"
+readonly script_version="1.2"
 VERSION_FILES="
 cmd/DownloadUpdates.cmd
 client/cmd/DoUpdate.cmd
@@ -46,8 +73,16 @@ old_version=""
 
 # ===== Main program =====
 
-if [ $# -ne 1 ] || ! printf '%s' "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  echo "usage: bash ci/bump-version.bash <new-version>   (e.g. 2026.11.0)" >&2
+# --print-files: the workflow consumes the single matrix definition from
+# here (phase 19 plan 03). Prints and exits before any validation or
+# mutation — exactly one matrix definition exists in the repo.
+if [ "${1:-}" = "--print-files" ]; then
+  printf '%s\n' ${VERSION_FILES}
+  exit 0
+fi
+
+if [ $# -ne 1 ] || ! is_valid_version_arg "$1"; then
+  echo "usage: bash ci/bump-version.bash <new-version>   (e.g. 5.0.0+2026.11)" >&2
   exit 1
 fi
 new_version="$1"
@@ -59,9 +94,30 @@ if [ "${old_version}" = "${new_version}" ]; then
 fi
 
 cd "${repo_root}" || exit 1
-old_esc="${old_version//./\\.}"
-total_before=0
-total_after=0
+old_esc="$(escape_ere "${old_version}")"
+new_esc="$(escape_ere "${new_version}")"
+new_core="$(strip_version_metadata "${new_version}")"
+new_core_esc="$(escape_ere "${new_core}")"
+old_core="$(strip_version_metadata "${old_version}")"
+old_core_esc="$(escape_ere "${old_core}")"
+
+# Engine shape (see header). The numeric lane's SUBSTITUTION source differs:
+# the old core in steady state (the anchors already carry the bare core),
+# the new FULL form in migration (lane B re-repairs the 12 numeric sites
+# that lane A just carried the '+' form into).
+if printf '%s' "${old_version}" | grep -q '+'; then
+  bump_shape="steady"
+  numeric_src_esc="${old_core_esc}"
+else
+  bump_shape="migration"
+  numeric_src_esc="${new_esc}"
+fi
+
+full_before_total=0
+num_before_total=0
+full_after_total=0
+num_after_total=0
+core_after_total=0
 files_touched=0
 
 printf '%-55s %s -> %s\n' "file" "${old_version}" "${new_version}"
@@ -70,23 +126,49 @@ for f in ${VERSION_FILES}; do
     echo "bump-version: MISSING file in version matrix: ${f}" >&2
     exit 1
   fi
-  before="$(count_occurrences "(^|[^0-9])${old_esc}([^0-9]|\$)" "${f}")"
-  if [ "${before}" -gt 0 ]; then
+  before_full="$(count_occurrences "(^|[^0-9])${old_esc}([^0-9]|\$)" "${f}")"
+  before_num="$(count_numeric_anchored "${old_core_esc}" "${f}")"
+  if [ "${before_full}" -gt 0 ]; then
     substitute_bounded "${old_esc}" "${new_version}" "${f}"
   fi
-  after="$(count_occurrences "(^|[^0-9])${new_version//./\\.}([^0-9]|\$)" "${f}")"
-  total_before=$(( total_before + before ))
-  total_after=$(( total_after + after ))
-  if [ "${before}" -gt 0 ]; then
+  substitute_numeric_versions "${numeric_src_esc}" "${new_core}" "${f}"
+  after_full="$(count_occurrences "(^|[^0-9])${new_esc}([^0-9]|\$)" "${f}")"
+  after_num="$(count_numeric_anchored "${new_core_esc}" "${f}")"
+  core_after="$(count_occurrences "(^|[^0-9])${new_core_esc}([^0-9]|\$)" "${f}")"
+  full_before_total=$(( full_before_total + before_full ))
+  num_before_total=$(( num_before_total + before_num ))
+  full_after_total=$(( full_after_total + after_full ))
+  num_after_total=$(( num_after_total + after_num ))
+  core_after_total=$(( core_after_total + core_after ))
+  if [ "${before_full}" -gt 0 ] || [ "${before_num}" -gt 0 ]; then
     files_touched=$(( files_touched + 1 ))
   fi
-  printf '%-55s %4d -> %4d\n' "${f}" "${before}" "${after}"
+  printf '%-55s %4d -> %4d\n' "${f}" "$(( before_full + before_num ))" "$(( after_full + after_num ))"
 done
 
-echo "TOTAL: ${total_before} -> ${total_after} substitutions in ${files_touched} files"
-if [ "${total_before}" -ne 32 ] || [ "${total_after}" -ne 32 ] || [ "${files_touched}" -ne 17 ]; then
-  echo "bump-version: EXPECTED 32 substitutions across 17 files — aborting (tree modified, run git checkout -- .)" >&2
+# Shape-conditional before-accounting: the invariant is TOTAL sites = 32.
+if [ "${bump_shape}" = "steady" ]; then
+  before_gate_total=$(( full_before_total + num_before_total ))
+else
+  before_gate_total="${full_before_total}"
+fi
+echo "TOTAL: ${before_gate_total} -> $(( full_after_total + num_after_total )) substitutions in ${files_touched} files"
+echo "shape: ${bump_shape} | before lanes full/num: ${full_before_total}/${num_before_total} | after: full ${full_after_total}, numeric ${num_after_total}, core ${core_after_total}"
+
+if [ "${before_gate_total}" -ne 32 ] || [ "${files_touched}" -ne 17 ]; then
+  echo "bump-version: EXPECTED 32 version-token sites across 17 files — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
-echo "bump-version: OK — version ${old_version} -> ${new_version}"
+# After-gates — binding in BOTH shapes (the after-state is identical
+# whichever shape produced it): 20 full-form + 12 numeric, 32 core sites.
+if [ "${full_after_total}" -ne 20 ] || [ "${num_after_total}" -ne 12 ] \
+   || [ "${core_after_total}" -ne 32 ]; then
+  echo "bump-version: EXPECTED after-state 20 full-form + 12 numeric = 32 core sites — aborting (tree modified, run git checkout -- .)" >&2
+  exit 1
+fi
+if [ $(( full_after_total + num_after_total )) -ne "${core_after_total}" ]; then
+  echo "bump-version: lane split ${full_after_total}+${num_after_total} disagrees with core count ${core_after_total} — aborting (tree modified, run git checkout -- .)" >&2
+  exit 1
+fi
+echo "bump-version: OK — version ${old_version} -> ${new_version} (${bump_shape})"
 exit 0

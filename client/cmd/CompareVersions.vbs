@@ -4,6 +4,7 @@ Option Explicit
 
 Dim strVersion1, strVersion2, arrayVersion1, arrayVersion2, intMaxIndex
 Dim i
+Dim intPlusPos
 
 If WScript.Arguments.Count < 2 Then
   WScript.Echo("ERROR: Missing argument.")
@@ -27,6 +28,30 @@ If strVersion2 = "" Then
   WScript.Echo("ERROR: Invalid second argument.")
   WScript.Echo("Usage: " & WScript.ScriptName & " <version 1> <version 2>")
   WScript.Quit(1)
+End If
+
+' Build metadata (the "+..." suffix of a SemVer version) never affects
+' precedence (Semantic Versioning 2.0.0, section 10), so it is stripped
+' before the numeric comparison below: "5.0.0+2026.11" must compare
+' exactly like "5.0.0". The exit protocol stays unchanged:
+' errorlevel 0 equal / 1 parser error / 2 v1 > v2 / 3 v1 < v2.
+intPlusPos = InStr(strVersion1, "+")
+If intPlusPos > 0 Then
+  strVersion1 = Left(strVersion1, intPlusPos - 1)
+  If strVersion1 = "" Then
+    WScript.Echo("ERROR: Invalid first argument.")
+    WScript.Echo("Usage: " & WScript.ScriptName & " <version 1> <version 2>")
+    WScript.Quit(1)
+  End If
+End If
+intPlusPos = InStr(strVersion2, "+")
+If intPlusPos > 0 Then
+  strVersion2 = Left(strVersion2, intPlusPos - 1)
+  If strVersion2 = "" Then
+    WScript.Echo("ERROR: Invalid second argument.")
+    WScript.Echo("Usage: " & WScript.ScriptName & " <version 1> <version 2>")
+    WScript.Quit(1)
+  End If
 End If
 
 arrayVersion1 = Split(strVersion1, ".")

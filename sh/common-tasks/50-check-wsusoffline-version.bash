@@ -295,11 +295,12 @@ function compare_wsusoffline_versions ()
 # Convert version strings like 12.0 and 11.9.1 to decimal numbers,
 # which are easier to compare. The results would be, for example:
 #
-# 11.9.1  ->  110901
-# 11.9.2  ->  110902
-# 12.0    ->  120000
-# 12.1    ->  120100
-# 12.1.1  ->  120101
+# 11.9.1        ->  110901
+# 11.9.2        ->  110902
+# 12.0          ->  120000
+# 12.1          ->  120100
+# 12.1.1        ->  120101
+# 5.0.0+2026.11 ->  50000 (build metadata stripped)
 
 function version_string_to_number ()
 {
@@ -312,8 +313,15 @@ function version_string_to_number ()
     local third="0"
     local -i version_number="0"
 
+    # Build metadata (the "+..." suffix of a SemVer version) never
+    # affects precedence, so it is stripped before the numeric
+    # conversion: "5.0.0+2026.11" must convert exactly like "5.0.0".
+    # Without this strip, the metadata leaks into the "third" number
+    # ("1+2026.11") and corrupts the padded result.
+    local core="${version_string%%+*}"
+
     # Split the version string into three numbers
-    IFS="." read -r first second third <<< "${version_string}"
+    IFS="." read -r first second third <<< "${core}"
 
     # Pad the second and third number with leading zeroes to two digits
     second="$( printf '%02d\n' "${second}" )"

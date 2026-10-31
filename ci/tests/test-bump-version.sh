@@ -44,13 +44,13 @@ cmp -s "${SANDBOX}/edges.expected" "${SANDBOX}/edges.txt" \
     || { echo "FAIL: probe 4 — substitution début/fin de ligne incorrecte"; rm -rf "${SANDBOX}"; exit 1; }
 rm -rf "${SANDBOX}"
 
-# L'arbre stocke des blobs CRLF contre .gitattributes text=eol=crlf (blobs non
-# renormalisés — un checkout frais est donc PERMANEMENT « sale » pour
-# git status/git diff : ~337 fichiers M, 222 fichiers dans diff --stat, alors
-# que le contenu est identique au blob). C'est la classe documentée du dépôt
-# (« blobs CRLF → diff --ignore-cr-at-eol ») : l'instrument du garde ignore les
-# seules fins de ligne — une vraie édition de contenu reste détectée (contrôle
-# positif mesuré : une édition réelle -> 1 fichier).
+# Les blobs d'index portant du CR contre .gitattributes sont renormalisés :
+# la procédure, la règle d'atomicité et les instruments EOL vivent dans
+# WINDOWS.md (racine du dépôt). La classe documentée du dépôt reste
+# (« blobs CRLF → diff --ignore-cr-at-eol ») : l'instrument du garde ignore
+# les seules fins de ligne — une vraie édition de contenu reste détectée
+# (contrôle positif mesuré : une édition réelle -> 1 fichier). Ne pas figer
+# ici de comptage de blobs : état périmissable, le record vit dans le commit.
 if [ -n "$(git diff --name-only --ignore-cr-at-eol)" ] || [ -n "$(git diff --cached --name-only)" ]; then
   echo "SKIP: arbre sale — revert d'abord"
   exit 2

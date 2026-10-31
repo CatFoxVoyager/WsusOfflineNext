@@ -139,3 +139,68 @@ function substitute_numeric_versions ()
   esac
   return 0
 }
+
+# Classify the next bump class from a conventional-commit log TEXT (the full
+# "git log --format=%s%n%b" output as ONE argument — pure function, the
+# caller shells git). Precedence is deliberate: MAJOR wins over everything,
+# MINOR wins over PATCH. An empty log resolves PATCH — a train with no
+# commits since the tag still bumps PATCH (pinned edge).
+function classify_next_version ()
+{
+  local log_text="$1"
+  if printf '%s\n' "${log_text}" | grep -qE 'BREAKING[ -]CHANGE[[:space:]]*:'; then
+    printf 'MAJOR\n'
+  elif printf '%s\n' "${log_text}" | grep -qE '^[A-Za-z]+(\([^)]*\))?!:'; then
+    printf 'MAJOR\n'
+  elif printf '%s\n' "${log_text}" | grep -qE '^feat(\([^)]*\))?(!)?:'; then
+    printf 'MINOR\n'
+  else
+    printf 'PATCH\n'
+  fi
+  return 0
+}
+
+# Bump a bare M.m.p core by one class. Non-integer components or an unknown
+# class return 1 without printing.
+function bump_core ()
+{
+  local core="$1"
+  local class="$2"
+  local major="" minor="" patch=""
+  IFS="." read -r major minor patch <<< "${core}"
+  case "${class}" in
+    MAJOR) major=$(( major + 1 )); minor=0; patch=0 ;;
+    MINOR) minor=$(( minor + 1 )); patch=0 ;;
+    PATCH) patch=$(( patch + 1 )) ;;
+    *)
+      echo "bump-version: unknown bump class '${class}'" >&2
+      return 1
+      ;;
+  esac
+  printf '%s.%s.%s\n' "${major}" "${minor}" "${patch}"
+  return 0
+}
+
+# Resolve the next full version from the last tag, the train month and the
+# conventional-commit log text. A legacy CalVer tag (YYYY.M.P) resolves to
+# 5.0.0+<month> — the one-time migration branch: the schema change IS the
+# MAJOR (D-01 first migration). A SemVer tag resolves to
+# <classified-core>+<month>: the calendar metadata is regenerated from the
+# train month on every resolution and never classified.
+function next_full_version ()
+{
+  local last_tag="$1"
+  local month="$2"
+  local log_text="$3"
+  local core="${last_tag#v}"
+  if printf '%s' "${core}" | grep -qE '^20[0-9]{2}\.[0-9]{1,2}\.[0-9]+$'; then
+    printf '5.0.0+%s\n' "${month}"
+    return 0
+  fi
+  if printf '%s' "${core}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    printf '%s+%s\n' "$(bump_core "${core}" "$(classify_next_version "${log_text}")")" "${month}"
+    return 0
+  fi
+  echo "bump-version: cannot resolve next version from tag '${last_tag}'" >&2
+  return 1
+}

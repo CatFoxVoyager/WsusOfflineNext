@@ -98,9 +98,19 @@ if [ -n "$(git diff --name-only --ignore-cr-at-eol)" ] || [ -n "$(git diff --cac
   echo "SKIP: arbre sale — revert d'abord"
   exit 2
 fi
-OLD="$(grep -oE 'WSUSOFFLINE_VERSION=[0-9]+\.[0-9]+\.[0-9]+' cmd/DownloadUpdates.cmd | head -1 | cut -d'=' -f2)"
+# Derivation format-agnostic (fonctionne avant ET après le train de
+# migration) : OLD lu en forme complète, MONTH pris dans la metadata d'OLD
+# si présente sinon le mois courant, NEW résolu par la lib — toujours porteur
+# de metadata, forme que les gates after (20 pleines / 12 numériques / 32
+# cœurs) savent valider. Les after-gates du moteur avortent sur un NEW nu :
+# la dérivation arithmétique fixe d'origine (2026.10.2 -> 2026.10.3) est
+# restée bloquée sous les nouvelles gates.
+OLD="$(grep -oE 'WSUSOFFLINE_VERSION=[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]{4}\.[0-9]{2})?' cmd/DownloadUpdates.cmd | head -1 | cut -d'=' -f2)"
 [ -n "${OLD}" ] || { echo "FAIL: version introuvable dans cmd/DownloadUpdates.cmd"; exit 1; }
-NEW="${OLD%.*}.$(( ${OLD##*.} + 1 ))"
+MONTH="$(date -u +%Y.%m)"
+case "${OLD}" in *+*) MONTH="${OLD#*+}" ;; esac
+NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
+[ -n "${NEW}" ] || { echo "FAIL: résolution de NEW impossible depuis ${OLD}"; exit 1; }
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
 echo "$STAT" | grep -q "17 files changed" || { echo "FAIL: attends 17 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }

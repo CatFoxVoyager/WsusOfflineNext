@@ -6,10 +6,12 @@
 # attempted (the live-fleet docker stop / re-registration proof is the
 # operator checkpoint of plan 16-03, not this battery).
 # Covered behaviors (plan 16-01):
-#   a. PAT happy path - registration token travels to config.sh on stdin, the
-#      credential flag never reaches the configure argv, no Bearer literal in
-#      curl argv, no PAT in the run.sh environment, header file mode 600 then
-#      deleted by the cleanup, remove-token called exactly once
+#   a. PAT happy path - registration token travels to config.sh on the
+#      configure argv, NEVER on stdin (WR-04: the real Runner.Listener refuses
+#      redirected input), the remove leg carries no --unattended flag, no
+#      Bearer literal in curl argv, no PAT in the run.sh environment, header
+#      file mode 600 then deleted by the cleanup, remove-token called exactly
+#      once
 #   b. TERM forwarded - entrypoint exits 143 and the cleanup ran (both
 #      markers); the child-receipt marker is asserted where the host delivers
 #      signals from a trap context (ubuntu CI) and documented local-pass on
@@ -25,25 +27,42 @@
 #      cleanup skips the config.sh remove leg but removes the Authorization
 #      header file UNCONDITIONALLY (pre-fix, `|| return 0` left the Bearer
 #      file on disk; bite-proofed against the HEAD bytes before the fix)
-# WR-04 disposition (2026-10-30 fix round): the PAT-stdin registration contract
-# is exercised HERE only against the config.sh STUB - the live fleet runs token
-# mode, and automating a real registration would burn a registration token and
-# create a real runner on every battery run. One-off live validation procedure
-# (run manually when the PAT mode changes; record date + outcome in the phase
-# record):
+# WR-04 disposition (live validation 2026-11-01, runner 2.338.2 from the
+# ghcr.io/actions/actions-runner image, disposable PAT + repo): the piped-stdin
+# PAT registration contract is REFUTED and moved to the configure argv by this
+# fix round. Live outcome, three legs:
+#   (i) registration - the token piped on stdin died at the secret prompt with
+#       System.InvalidOperationException ("Cannot read keys when either
+#       application does not have a console or when console input has been
+#       redirected"): the stdin contract never existed at the real binary, so
+#       the token now travels on the configure argv (residue accepted: 1 h
+#       repo-scoped registration token, same analysis as the 16-01 token-mode
+#       decision and CIWF-02);
+#   (ii) remove leg - "Unrecognized command-line input arguments for command
+#       remove: 'unattended'": the flag belongs to configure; dropped from the
+#       remove leg, kept on the token-mode configure branch (byte-preserved);
+#   (iii) positive WR-01 proof - despite both failures the Authorization header
+#       file was deleted unconditionally (the exited container's /tmp was
+#       empty), which case f already guards.
+# Honest guard scope: the config.sh stub reads stdin as a plain file, which is
+# why this battery stayed green on a contract the real binary never honored.
+# It proves the FORM (argv shape, call order, file hygiene), never the
+# TTY/secret prompt semantics of the real Runner.Listener, and automating a
+# real registration would burn a registration token and create a real runner on
+# every battery run. One-off live revalidation procedure of the NEW argv
+# contract (run manually when the PAT mode changes; record date + outcome in
+# the phase record):
 #   1. mint a short-expiry fine-grained PAT (Administration: Read and write)
 #      against a DISPOSABLE repo;
 #   2. start the runner container once with a temporary override
 #      (docker compose run -e RUNNER_PAT=<pat> -e REPO_SLUG=<disposable repo>
 #      catalog-runner) - the override is never written to compose.env or .env;
-#   3. confirm the promptless stdin registration: configure output reports
-#      success and the runner is listed in the disposable repo's settings;
+#   3. confirm the argv registration completes WITHOUT any prompt - open
+#      question carried by the 2026-11-01 window: with --token on argv but no
+#      --unattended, does configure prompt for the runner group?;
 #   4. docker stop the container: the runner disappears (remove-token leg) and
 #      no Authorization header file remains in the container filesystem;
 #   5. revert the override (nothing to clean if step 2 used `compose run`).
-# The stub battery stays the automated guard for the contract's shape (argv,
-# stdin, header-file hygiene); this procedure covers the one thing stubs cannot
-# prove: the real Runner.Listener's stdin prompt semantics.
 # Host note (mode-600 tier): MSYS stat reports 644 even after chmod 600, so
 # the strong "600" assertion runs only on hosts where a control file proves
 # the mode is representable; elsewhere the battery asserts equality with that
@@ -131,8 +150,9 @@ cat > "${STUB}/config.sh" <<'CONF_EOF'
 #!/usr/bin/env bash
 # fake config.sh: one argv file + one stdin file per invocation; the remove
 # subcommand writes a marker; the per-mode contract writes violations the
-# battery treats as FAIL. stdin is always consumed (the PAT-mode caller pipes
-# the token into it; a blocking reader would hang the entrypoint).
+# battery treats as FAIL. stdin is always consumed to drain it (a blocking
+# reader would hang the entrypoint) but in PAT mode nothing may arrive there:
+# the WR-04 contract puts the registration token on the configure argv.
 set -u
 REC="${STUB_REC:?STUB_REC manquant}"
 contract="${STUB_CONTRACT:-none}"
@@ -150,9 +170,16 @@ if [ "${1:-}" = "remove" ]; then
   : > "${REC}/remove-ran.marker"
 else
   if [ "${contract}" = "pat" ]; then
-    # stdin contract: the PAT configure must not carry the credential flag
+    # argv contract (WR-04, live validation 2026-11-01): the PAT configure
+    # must carry the credential flag AND the token value on argv; the piped
+    # stdin form is banned (the real Runner.Listener prompts the token in
+    # secret mode and refuses redirected input)
     grep -qx -- '--token' "${REC}/config-argv-${n}.txt" \
-      && printf '%s\n' "configure PAT avec credential sur argv" >> "${REC}/contract-violations.txt"
+      || printf '%s\n' "configure PAT sans credential argument" >> "${REC}/contract-violations.txt"
+    grep -qF -- "${STUB_REG_TOKEN}" "${REC}/config-argv-${n}.txt" \
+      || printf '%s\n' "configure PAT sans la valeur du token d'enregistrement" >> "${REC}/contract-violations.txt"
+    [ -s "${REC}/config-stdin-${n}.txt" ] \
+      && printf '%s\n' "configure PAT avec un stdin non vide" >> "${REC}/contract-violations.txt"
   elif [ "${contract}" = "token" ]; then
     # byte-preservation contract: HEAD shape = credential argument +
     # non-interactive flag + replace present, no ephemeral flag
@@ -239,7 +266,7 @@ function scaffold ()
     chmod +x "${t}/config.sh" "${t}/run.sh"
 }
 
-# ---- case a: PAT happy path - stdin registration, header-file auth, cleanup ----
+# ---- case a: PAT happy path - argv registration, header-file auth, cleanup ----
 T="$(mktemp -d)"
 scaffold "${T}"
 export STUB_REC="${T}/rec" STUB_CONTRACT=pat STUB_RUN_EXIT=0 STUB_RUN_SLEEP=0
@@ -258,16 +285,20 @@ assert_no_violations "${T}/rec" "case a" "${T}" "${STUB}"
 [ "$(cat "${T}/rec/config-count.txt")" -eq 2 ] \
     || fail_case "case a - config.sh invoque $(cat "${T}/rec/config-count.txt") fois, attendu 2 (configure + remove)" "${T}" "${STUB}"
 argv="${T}/rec/config-argv-1.txt"
-tok_n="$(grep_count -- '--token' "${argv}")"
-[ "${tok_n}" -eq 0 ] || fail_case "case a - credential sur l'argv du configure PAT (${tok_n} occurrences, attendu 0)" "${T}" "${STUB}"
+grep -qx -- '--token' "${argv}" \
+    || fail_case "case a - credential argument absent de l'argv du configure PAT (contrat argv WR-04)" "${T}" "${STUB}"
+grep -qF "${REG_TOKEN}" "${argv}" \
+    || fail_case "case a - la valeur du token d'enregistrement n'est pas sur l'argv du configure PAT (contrat argv WR-04)" "${T}" "${STUB}"
 grep -qx -- '--ephemeral' "${argv}" || fail_case "case a - ephemeral absent de l'argv du configure PAT (position HEAD)" "${T}" "${STUB}"
 grep -qx -- '--replace' "${argv}" || fail_case "case a - replace absent de l'argv du configure PAT (position HEAD)" "${T}" "${STUB}"
 grep -qx -- '--unattended' "${argv}" \
-    && fail_case "case a - le configure PAT porte encore le mode non interactif (doit passer par stdin)" "${T}" "${STUB}"
-grep -qF "${REG_TOKEN}" "${T}/rec/config-stdin-1.txt" \
-    || fail_case "case a - le token d'enregistrement n'est pas arrive par stdin" "${T}" "${STUB}"
+    && fail_case "case a - le configure PAT porte encore le mode non interactif (la forme verrouillee n'en porte pas)" "${T}" "${STUB}"
+[ ! -s "${T}/rec/config-stdin-1.txt" ] \
+    || fail_case "case a - le configure PAT a consomme un stdin non vide (forme pipe bannie : WR-04, le vrai Listener refuse l'entree standard redirigee)" "${T}" "${STUB}"
 grep -qF "${REM_TOKEN}" "${T}/rec/config-argv-2.txt" \
     || fail_case "case a - le remove n'a pas consomme le token servi par le stub curl" "${T}" "${STUB}"
+grep -qx -- '--unattended' "${T}/rec/config-argv-2.txt" \
+    && fail_case "case a - la jambe remove porte encore --unattended (option du configure, non reconnue par remove : WR-04 vivant 2026-11-01)" "${T}" "${STUB}"
 bearer_n="$(grep_count 'Bearer' "${T}/rec/curl-argv.txt")"
 [ "${bearer_n}" -eq 0 ] || fail_case "case a - Bearer en clair dans l'argv du stub curl (${bearer_n} occurrences, attendu 0)" "${T}" "${STUB}"
 pat_n="$(grep_count 'RUNNER_PAT' "${T}/rec/run-env.txt")"
@@ -443,4 +474,4 @@ if [ "${CTL_MODE}" = "600" ]; then
 else
     tier="mode-600 assure relativement au controle (${CTL_MODE}) - hote MSYS"
 fi
-echo "PASS runner-entrypoint fixtures (PAT stdin + header-file hygiene + cleanup vivant / TERM 143 + cleanup / branche token forme HEAD preservee / propagation exit 7 / refus fail-closed / echec API remove-token: fichier d'en-tetes quand meme supprime WR-01, offline via stubs [${tier}])"
+echo "PASS runner-entrypoint fixtures (PAT: registration argv WR-04 + header-file hygiene + cleanup vivant / TERM 143 + cleanup / branche token forme HEAD preservee / propagation exit 7 / refus fail-closed / echec API remove-token: fichier d'en-tetes quand meme supprime WR-01, offline via stubs [${tier}])"

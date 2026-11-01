@@ -16,7 +16,11 @@
 #     pattern MermaidStudio (1 job = 1 registration, recycle par compose).
 #     Auth API par fichier d'en-têtes mode 600 (CISH-04 : le PAT ne transite
 #     ni par argv ni dans l'environnement des enfants) et registration par
-#     stdin (le configure de ce mode ne porte plus de credential).
+#     argv (WR-04, validation vivante 2026-11-01 : le vrai Listener prompte
+#     le token en mode secret et refuse l'entrée standard redirigée —
+#     System.InvalidOperationException). Le token d'enregistrement reste sur
+#     l'argv du configure : résidu accepté (jeton éphémère 1 h, repo-scoped,
+#     même analyse que la décision 16-01 et que CIWF-02).
 set -euo pipefail
 
 : "${REPO_SLUG:?REPO_SLUG manquant (ex. CatFoxVoyager/WsusOfflineNext)}"
@@ -66,8 +70,11 @@ elif [ -n "${RUNNER_PAT:-}" ]; then
     if rt="$(api actions/runners/remove-token | jq -r .token 2>/dev/null)"; then
       # Résidu accepté (décision 16-01) : ce jeton est à usage unique et vient
       # d'être généré — exposition argv ~1 s ; même analyse pour le configure
-      # du mode par défaut, laissé tel quel (décision verrouillée).
-      ./config.sh remove --token "$rt" --unattended || true
+      # du mode par défaut, laissé tel quel (décision verrouillée). Pas de
+      # --unattended ici : l'option appartient au configure, remove ne la
+      # reconnaît pas (preuve vivante 2026-11-01 — « Unrecognized
+      # command-line input arguments for command remove: 'unattended' »).
+      ./config.sh remove --token "$rt" || true
     fi
     # suppression inconditionnelle : l'appel ci-dessus est terminé (réussi ou
     # non), le cleanup ne s'authentifie plus avec ce fichier.
@@ -77,10 +84,13 @@ elif [ -n "${RUNNER_PAT:-}" ]; then
   echo "Registration éphémère de ${RUNNER_NAME} sur ${REPO_SLUG}..."
   token=$(api actions/runners/registration-token | jq -r .token)
   [ -n "$token" ] && [ "$token" != "null" ] || { echo "registration-token vide : PAT invalide ?" >&2; exit 1; }
-  # Registration PAT par stdin : sans mode non interactif ni credential sur
-  # argv, le Listener lit le token sur son prompt d'entrée standard.
-  printf '%s\n' "${token}" | ./config.sh \
+  # Registration PAT par argv (WR-04, validation vivante 2026-11-01) : le
+  # Listener prompte le token en mode secret et refuse l'entrée standard
+  # redirigée (System.InvalidOperationException) — le credential part donc
+  # sur l'argv du configure ; résidu accepté (cf. en-tête, décision 16-01).
+  ./config.sh \
     --url "https://github.com/${REPO_SLUG}" \
+    --token "${token}" \
     --name "${RUNNER_NAME}" --labels "self-hosted,Linux,X64,wson-docker" \
     --ephemeral --replace
 elif [ -n "${RUNNER_TOKEN:-}" ]; then

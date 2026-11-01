@@ -192,35 +192,57 @@ jobs:
           name: regen-report
           path: ${{ runner.temp }}
 
+      # One-time migration (phase 19, decision D-01): the first SemVer release
+      # is the first train that runs after this workflow lands — the monthly
+      # cron (0 6 15 * *) or a manual workflow_dispatch by the operator. A
+      # legacy CalVer last tag (vYYYY.MM.P) resolves to 5.0.0+<train month>:
+      # the schema change IS the major bump. The month is always derived from
+      # the train date; nothing in the repo hardcodes it.
       - name: Resolve next version
         id: version
         run: |
-          base="$(date -u +%Y.%m)"
-          patch=0
-          while git rev-parse -q --verify "refs/tags/v${base}.${patch}" >/dev/null; do
-            patch=$((patch + 1))
+          source ci/lib-bump-version.bash
+          last_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo none)"
+          month="$(date -u +%Y.%m)"
+          if [ "${last_tag}" = "none" ]; then
+            # First-release-ever edge: resolve directly as the migration target.
+            version_full="5.0.0+${month}"
+          else
+            log_text="$(git log --format=%s%n%b "${last_tag}..HEAD" 2>/dev/null || true)"
+            version_full="$(next_full_version "${last_tag}" "${month}" "${log_text}")"
+          fi
+          version_core="$(strip_version_metadata "${version_full}")"
+          # Bounded collision loop (T-19-02): the core-only tag is probed
+          # exactly like the historical gate; a collision bumps PATCH only,
+          # and the loop fails closed after 100 iterations instead of
+          # spinning the runner or silently skipping a release.
+          iterations=0
+          while git rev-parse -q --verify "refs/tags/v${version_core}" >/dev/null; do
+            iterations=$((iterations + 1))
+            if [ "${iterations}" -gt 100 ]; then
+              echo "FAIL: version-collision loop exceeded 100 iterations (v${version_core} always taken)" >&2
+              exit 1
+            fi
+            version_full="$(bump_core "${version_core}" PATCH)+${month}"
+            version_core="$(strip_version_metadata "${version_full}")"
           done
-          echo "version=${base}.${patch}" >> "$GITHUB_OUTPUT"
-          echo "version: ${base}.${patch}"
+          {
+            echo "version_full=${version_full}"
+            echo "version_core=${version_core}"
+          } >> "$GITHUB_OUTPUT"
+          echo "version_full: ${version_full}"
+          echo "version_core: ${version_core}"
 
       - name: Bump version
         run: |
-          bash ci/bump-version.bash "${{ steps.version.outputs.version }}"
-          git add cmd/DownloadUpdates.cmd client/cmd/DoUpdate.cmd \
-            client/UpdateInstaller.au3 client/UpdateInstallerLauncher.au3 \
-            UpdateGenerator.au3 UpdateGeneratorLauncher.au3 \
-            CompileModernApps.cmd README.md \
-            sh/download-updates.bash sh/update-generator.bash \
-            src-modern/generator/host/UpdateGenerator.csproj src-modern/installer/host/UpdateInstaller.csproj \
-            src-modern/generator/package.json src-modern/installer/package.json \
-            src-modern/generator/src/App.tsx src-modern/installer/src/App.tsx \
-            static/SelfUpdateVersion-this.txt
+          bash ci/bump-version.bash "${{ steps.version.outputs.version_full }}"
+          git add $(bash ci/bump-version.bash --print-files)
           git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
-            commit -m "chore(release): bump version to ${{ steps.version.outputs.version }}"
+            commit -m "chore(release): bump version to ${{ steps.version.outputs.version_full }}"
 
       - name: Append release notes
         run: |
-          VER="${{ steps.version.outputs.version }}"
+          VER_FULL="${{ steps.version.outputs.version_full }}"
           REPORT="${RUNNER_TEMP}/regen-report.md"
           [ -s "${REPORT}" ] || { echo "FAIL: rapport regen absent (transfert artifact manquant)"; exit 1; }
           ADDED="$(grep -oE '[0-9]+ added' "${REPORT}" | head -1 | cut -d' ' -f1)"
@@ -228,7 +250,7 @@ jobs:
           ADDED="${ADDED:-0}"; REMOVED="${REMOVED:-0}"
           {
             echo ""
-            echo "## ${VER}"
+            echo "## ${VER_FULL}"
             echo ""
             echo "**Status:** current release."
             echo ""
@@ -237,9 +259,16 @@ jobs:
             echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED} links added, ${REMOVED} retired links removed."
             echo ""
           } >> RELEASE_NOTES.md
+          # Extract this release's body for the publish step. The pattern runs
+          # under -E with '.' and '+' each escaped once: GNU BRE treats a
+          # backslashed plus as a quantifier, so the plain form matches nothing.
+          VER_ESC="${VER_FULL//./\\.}"
+          VER_ESC="${VER_ESC//+/\\+}"
+          sed -n -E "/^## ${VER_ESC}/,\$p" RELEASE_NOTES.md > "$TEMP/release-body.md"
+          [ -s "$TEMP/release-body.md" ] || { echo "FAIL: release-notes heading for ${VER_FULL} not found"; exit 1; }
           git add RELEASE_NOTES.md
           git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
-            commit -m "docs(release): add ${VER} release notes"
+            commit -m "docs(release): add ${VER_FULL} release notes"
 
       - name: Fetch runtime helpers
         run: bash ci/fetch-release-helpers.bash

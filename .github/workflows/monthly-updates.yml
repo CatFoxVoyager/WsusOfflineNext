@@ -186,6 +186,9 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      - name: Comparator battery (windows)
+        run: bash ci/tests/test-compare-versions.sh
+
       - name: Download regeneration report
         uses: actions/download-artifact@v4
         with:
@@ -282,12 +285,13 @@ jobs:
         run: cmd //c ".\\CompileModernApps.cmd" --no-pause
 
       - name: Create release archive
-        run: cmd //c ".\\MakeRelease.cmd" "${{ steps.version.outputs.version }}"
+        run: cmd //c ".\\MakeRelease.cmd" "${{ steps.version.outputs.version_core }}"
 
       - name: Verify release archive
         run: |
-          VER="${{ steps.version.outputs.version }}"
-          ZIP="$TEMP/wsusofflineCE${VER}.zip"
+          VER_CORE="${{ steps.version.outputs.version_core }}"
+          VER_FULL="${{ steps.version.outputs.version_full }}"
+          ZIP="$TEMP/wsusofflineCE${VER_CORE}.zip"
           [ -f "$ZIP" ] || { echo "FAIL: $ZIP absent"; exit 1; }
           if unzip -l "$ZIP" | grep -qE "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/)"; then
             echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/)"; exit 1
@@ -295,7 +299,7 @@ jobs:
           unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe manquant"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe manquant"; exit 1; }
           unzip -p "$ZIP" wsusoffline/bin/odt/setup.exe > /dev/null || { echo "FAIL: bin/odt/setup.exe manquant"; exit 1; }
-          unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -q "WSUSOFFLINE_VERSION=${VER}" || { echo "FAIL: version ${VER} non embarquée"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} non embarquée"; exit 1; }
           echo "verify-release-archive: contenu OK"
 
       - name: Tag and publish release
@@ -303,18 +307,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUTH_TOKEN: ${{ github.token }}
         run: |
-          VER="${{ steps.version.outputs.version }}"
-          REL="WsusOfflineNext-${VER}"
-          cp "$TEMP/wsusofflineCE${VER}.zip" "$TEMP/${REL}.zip"
-          cp "$TEMP/wsusofflineCE${VER}_hashes.txt" "$TEMP/${REL}_hashes.txt"
-          sed -n "/^## ${VER//./\\.}/,\$p" RELEASE_NOTES.md > "$TEMP/release-body.md"
-          git tag "v${VER}"
+          VER_FULL="${{ steps.version.outputs.version_full }}"
+          VER_CORE="${{ steps.version.outputs.version_core }}"
+          REL="WsusOfflineNext-${VER_CORE}"
+          cp "$TEMP/wsusofflineCE${VER_CORE}.zip" "$TEMP/${REL}.zip"
+          cp "$TEMP/wsusofflineCE${VER_CORE}_hashes.txt" "$TEMP/${REL}_hashes.txt"
+          git tag "v${VER_CORE}"
           REPO_URL="https://x-access-token:${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch -q "$REPO_URL" main
           git merge-base --is-ancestor FETCH_HEAD HEAD \
             || { echo "REFUS: main a avance pendant le run - push non fast-forward evite; relancer le train mensuel" >&2; exit 1; }
-          git push "$REPO_URL" HEAD:main "v${VER}"
-          gh release create "v${VER}" \
-            --title "WSUS Offline Next ${VER}" \
+          git push "$REPO_URL" HEAD:main "v${VER_CORE}"
+          gh release create "v${VER_CORE}" \
+            --title "WSUS Offline Next ${VER_FULL}" \
             --notes-file "$TEMP/release-body.md" \
             "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
+
+      - name: Publish self-update channel
+        env:
+          AUTH_TOKEN: ${{ github.token }}
+        run: |
+          VER_FULL="${{ steps.version.outputs.version_full }}"
+          VER_CORE="${{ steps.version.outputs.version_core }}"
+          printf '%s,release\r\n' "${VER_FULL}" > static/SelfUpdateVersion-recent.txt
+          {
+            printf 'https://github.com/CatFoxVoyager/WsusOfflineNext/releases/download/v%s/WsusOfflineNext-%s.zip\r\n' "${VER_CORE}" "${VER_CORE}"
+            printf 'https://github.com/CatFoxVoyager/WsusOfflineNext/releases/download/v%s/WsusOfflineNext-%s_hashes.txt\r\n' "${VER_CORE}" "${VER_CORE}"
+          } > ci/StaticDownloadLink-recent.txt
+          git add static/SelfUpdateVersion-recent.txt ci/StaticDownloadLink-recent.txt
+          git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
+            commit -m "chore(release): publish self-update channel ${VER_FULL}"
+          REPO_URL="https://x-access-token:${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q "$REPO_URL" main
+          git merge-base --is-ancestor FETCH_HEAD HEAD \
+            || { echo "REFUS: main a avance pendant le run - push non fast-forward evite; relancer le train mensuel" >&2; exit 1; }
+          git push "$REPO_URL" HEAD:main

@@ -98,3 +98,12 @@ Thanks to Torsten Wittrock and the WSUS Offline Update Community Edition contrib
 
 - Static download links refreshed from the 2026-10 WSUS catalog: 0 links added, 0 retired links removed.
 
+
+## 2026.11.0
+
+**Status:** current release.
+
+### Monthly update refresh
+
+- Static download links refreshed from the 2026-11 WSUS catalog: 0 links added, 0 retired links removed.
+

@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo =======================================================================
-echo [WSUS Offline Next] Compiling v2026.11.0 Executables
+echo [WSUS Offline Next] Compiling v5.0.0+2026.11 Executables
 echo =======================================================================
 echo.
 

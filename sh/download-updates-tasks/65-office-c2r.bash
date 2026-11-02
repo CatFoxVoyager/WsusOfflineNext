@@ -80,15 +80,34 @@ function stage_c2r_build() {
     echo "Info: Discovering latest build for ${prod} (${arch}) on channel ${channel_guid}..."
     local latest_build
     latest_build="$(resolve_c2r_latest_build "$channel_guid" "$bitness" "/tmp")"
-    
+
+    # CDN-resolution fallback baselines. These literals must ALWAYS carry the
+    # most recent verified build of each channel — audited against the live
+    # officecdn advertise (ci/office-frozen-revision-baseline.txt +
+    # OFFICE_C2R_BASELINE_LITERALS, November 2026 audit) — never a stale
+    # convenience pin:
+    #   o2k24 active        16.0.17932.21056 (current at the 2026-11-01 audit)
+    #   o2k21 terminal      16.0.14334.20974 (LTSC 2021 final build, EOL 2026-10)
+    #   o2k19 last publish  16.0.10417.20228 ("keep lane live" EOL decision
+    #                       OFC-03: EOL but still published case-by-case at
+    #                       Microsoft's sole discretion, so this fallback must
+    #                       track the newest publish, not a frozen build)
+    # SERIES-CHANGE TRAP: the LTSC 2021 advertise moved series 14332.x -> 14334.x
+    # in May 2025. Any baseline still carrying a 14332.x literal is
+    # stale AND MASKING: an o2k21 tree staged from it claims a build that was
+    # neither terminal nor real, and nothing else in the output betrays the
+    # failed resolution. The Warning below is the ONLY signal that the dynamic
+    # resolution failed — these literals must never be the reason nobody
+    # notices (OFC-02; coherence with the audit baseline is pinned by
+    # sh/tests/verify-office-servicing.bash Test 5).
     if [[ -z "$latest_build" ]]; then
         echo "Warning: Could not resolve latest build dynamically. Using baseline build."
         if [[ "$prod" == "o2k24" ]]; then
             latest_build="16.0.17932.21056"
         elif [[ "$prod" == "o2k21" ]]; then
-            latest_build="16.0.14332.20790"
+            latest_build="16.0.14334.20974"
         else
-            latest_build="16.0.10414.20002"
+            latest_build="16.0.10417.20228"
         fi
     fi
     

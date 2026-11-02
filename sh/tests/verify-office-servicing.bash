@@ -8,6 +8,7 @@
 #   Test 2: ODT XML Configuration Templates structure and channel contracts
 #   Test 3: Architecture isolation in main updates (ExcludeList-${arch}.txt)
 #   Test 4: C2R Metadata staging, format, and SHA256 hash database integrity
+#   Test 5: Audited C2R fallback baseline literals + audit-baseline coherence
 # =======================================================================
 
 set -e
@@ -28,7 +29,7 @@ echo "======================================================================="
 # -----------------------------------------------------------------------
 # Test 1: Microsoft CDN Audience GUID resolution
 # -----------------------------------------------------------------------
-echo "[Test 1/4] Verifying Microsoft CDN audience GUIDs in 65-office-c2r.bash..."
+echo "[Test 1/5] Verifying Microsoft CDN audience GUIDs in 65-office-c2r.bash..."
 
 c2r_task="${repo_root}/sh/download-updates-tasks/65-office-c2r.bash"
 if [[ ! -f "$c2r_task" ]]; then
@@ -64,7 +65,7 @@ echo "[PASS] Test 1: Microsoft CDN audience GUIDs accurately resolved for 2019, 
 # -----------------------------------------------------------------------
 # Test 2: ODT XML Configuration Templates structure and channel contracts
 # -----------------------------------------------------------------------
-echo "[Test 2/4] Verifying ODT XML configuration templates structure and contracts..."
+echo "[Test 2/5] Verifying ODT XML configuration templates structure and contracts..."
 
 templates_dir="${repo_root}/static/odt-templates"
 if [[ ! -d "$templates_dir" ]]; then
@@ -116,7 +117,7 @@ echo "[PASS] Test 2: ODT configuration templates validated with valid XML syntax
 # -----------------------------------------------------------------------
 # Test 3: Architecture isolation in main updates (ExcludeList-${arch}.txt)
 # -----------------------------------------------------------------------
-echo "[Test 3/4] Verifying architecture isolation in Linux main updates task..."
+echo "[Test 3/5] Verifying architecture isolation in Linux main updates task..."
 
 main_task="${repo_root}/sh/download-updates-tasks/60-main-updates.bash"
 if [[ ! -f "$main_task" ]]; then
@@ -139,7 +140,7 @@ echo "[PASS] Test 3: Dual-architecture isolation verified for Linux main updates
 # -----------------------------------------------------------------------
 # Test 4: C2R Metadata staging, format, and SHA256 hash database integrity
 # -----------------------------------------------------------------------
-echo "[Test 4/4] Verifying C2R metadata staging and hash database contracts..."
+echo "[Test 4/5] Verifying C2R metadata staging and hash database contracts..."
 
 sandbox_dir=$(mktemp -d /tmp/wou_test_c2r_XXXXXX)
 trap 'rm -rf "$sandbox_dir"' EXIT
@@ -184,7 +185,77 @@ fi
 
 echo "[PASS] Test 4: C2R metadata generation and SHA256 hash contract validated."
 
+# -----------------------------------------------------------------------
+# Test 5: Audited C2R fallback baseline literals + audit-baseline coherence
+# (OFC-02: a failed CDN resolution must fall back on the REAL latest build of
+#  each channel — never on a stale literal that masks the failure)
+# -----------------------------------------------------------------------
+echo "[Test 5/5] Verifying audited C2R baseline literals in 65-office-c2r.bash..."
+
+# The three CDN-audited fallback literals must be present verbatim
+# (November 2026 audit probes: o2k19 re-pinned to the live advertise
+# 16.0.10417.20228 — see ci/office-frozen-revision-baseline.txt).
+declare -A audited_literals=(
+    ["o2k19"]="16.0.10417.20228"
+    ["o2k21"]="16.0.14334.20974"
+    ["o2k24"]="16.0.17932.21056"
+)
+for prod in o2k19 o2k21 o2k24; do
+    lit="${audited_literals[$prod]}"
+    if ! grep -qF "$lit" "$c2r_task"; then
+        echo "FAIL: $c2r_task missing audited baseline literal for ${prod}: $lit"
+        exit 1
+    fi
+done
+
+# BITE: the stale pre-fix fallbacks must be GONE — zero occurrences. Against
+# the pre-fix bytes of the task these counts are non-zero and this test fails:
+# a stale baseline masks a failed CDN resolution behind a build that is
+# neither terminal nor real (the exact regression OFC-02 forbids).
+declare -A stale_literals=(
+    ["o2k21"]="16.0.14332.20790"
+    ["o2k19"]="16.0.10414.20002"
+)
+for prod in o2k21 o2k19; do
+    old="${stale_literals[$prod]}"
+    old_count="$(grep -cF "$old" "$c2r_task" || true)"
+    if [[ "$old_count" -ne 0 ]]; then
+        echo "FAIL: stale fallback literal for ${prod} still present ${old_count}x in $c2r_task: $old (stale baseline masks resolution failures)."
+        exit 1
+    fi
+done
+
+# The series-change trap must stay documented in the task comment: LTSC 2021
+# moved series 14332.x -> 14334.x in May 2025, so any old-series baseline is
+# stale AND masking; and o2k19 stays "keep lane live" (EOL but published).
+if ! grep -qF "14332.x -> 14334.x" "$c2r_task"; then
+    echo "FAIL: $c2r_task missing the 14332.x -> 14334.x series-change trap comment."
+    exit 1
+fi
+if ! grep -qF "keep lane live" "$c2r_task"; then
+    echo "FAIL: $c2r_task missing the o2k19 'keep lane live' rule."
+    exit 1
+fi
+
+# Coherence with the audit baseline (plan 20-01): the c2r_baseline_* keys of
+# ci/office-frozen-revision-baseline.txt must carry the SAME three literals
+# as this task — a divergence between the two sources is a regression. If the
+# baseline file is absent (plan 20-01 not executed), emit a documented SKIP
+# instead of a FAIL so this suite stays runnable standalone.
+baseline_file="${repo_root}/ci/office-frozen-revision-baseline.txt"
+if [[ ! -f "$baseline_file" ]]; then
+    echo "[SKIP] Test 5 coherence: ci/office-frozen-revision-baseline.txt absent (plan 20-01 not executed)."
+else
+    for prod in o2k19 o2k21 o2k24; do
+        if ! grep -qxF "c2r_baseline_${prod}=${audited_literals[$prod]}" "$baseline_file"; then
+            echo "FAIL: $baseline_file c2r_baseline_${prod} does not carry the audited literal ${audited_literals[$prod]} (baseline/code divergence)."
+            exit 1
+        fi
+    done
+    echo "[PASS] Test 5: audited baseline literals pinned; coherence with ci/office-frozen-revision-baseline.txt verified."
+fi
+
 echo "======================================================================="
-echo "ALL TESTS PASSED: Linux Office Servicing Regression Suite (4/4 green)"
+echo "ALL TESTS PASSED: Linux Office Servicing Regression Suite (5/5 green)"
 echo "======================================================================="
 exit 0

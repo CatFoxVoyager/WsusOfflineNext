@@ -1,0 +1,36 @@
+# ci/office-frozen-revision-baseline.txt — snapshot frozen du catalogue Office (audit novembre 2026)
+#
+# Source d'audit : .planning/phases/20-office-au-catalogue-courant-novembre-2026/20-AUDIT-OFFICE.md
+# (artefact de phase local, non-committé — chaque chiffre ci-dessous y est prouvé par des commandes
+# rejouables, jamais par présomption de KB)
+# Date d'audit : 2026-11-01 ; catalogue : wsusscn2.cab téléchargé à cette date depuis
+# http://download.windowsupdate.com/microsoftupdate/v6/wsusscan/wsusscn2.cab (683 059 164 octets)
+#
+# Lecture : assert_office_frozen_baseline (ci/lib-office-catalog-counts.bash) compare les compteurs
+# du run courant à ce snapshot ; TOUT écart aborte le run catalog fail-closed (et le regen du train).
+#
+# DELIBERATE RE-PIN PROCEDURE (deliberate re-pin — the ONLY sanctioned way to change a value below):
+#   1. re-run the audit extract (bash ci/extract-catalog.bash <work-dir> --download) and the CDN
+#      probes documented in the audit doc ;
+#   2. update the drifting key(s) here AND the matching literal(s) in
+#      ci/lib-office-catalog-counts.bash (OFFICE_C2R_BASELINE_LITERALS) in ONE dedicated commit
+#      whose message references the audit doc — never a silent edit ;
+#   3. re-run bash ci/tests/test-office-catalog-counts.sh (the batteries re-derive the c2r rows
+#      from the lib, so lib and baseline move together).
+#   Expected cadence: while Microsoft keeps publishing post-EOL Office 2016 revisions (the audit
+#   found monthly payload publishes through 2026/10), frozen_o2k16 drifts on new revisions — a
+#   re-pin is the loud, deliberate acknowledgement of a new snapshot, never an accident.
+#
+# Compteur de revisions Office 2016 (product-scoped : lignes de la sortie
+# xslt/extract-revision-and-update-ids-o2k16.xsl sur package.xml — Product Id
+# 25aed893-7c2d-4a31-ae22-28ff8ac150ed) :
+frozen_o2k16=722
+#
+# Littéraux C2R audités (sondes officecdn VersionDescriptor.xml du 2026-11-01) :
+#   o2k19 : le CDN advertise 16.0.10417.20228 — ce probe AMENDE la research (10417.20207, même
+#           série 10417.x, révision plus récente) ; la baseline gèle le littéral prescrit par le
+#           plan et l'amendement est consigné dans l'audit doc (plan 20-02 portera la valeur
+#           résolue dans les fallbacks code).
+c2r_baseline_o2k19=16.0.10417.20207
+c2r_baseline_o2k21=16.0.14334.20974
+c2r_baseline_o2k24=16.0.17932.21056

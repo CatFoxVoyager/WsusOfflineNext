@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
@@ -24,9 +25,23 @@ namespace WSUSOffline.Installer
 
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
 
+        private static string GetDisplayVersion()
+        {
+            var info = typeof(MainWindow).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (string.IsNullOrEmpty(info))
+            {
+                info = typeof(MainWindow).Assembly
+                    .GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+            }
+            if (string.IsNullOrEmpty(info)) return "unknown";
+            int plus = info.IndexOf('+');
+            return plus >= 0 ? info.Substring(0, plus) : info;
+        }
+
         public MainWindow()
         {
-            this.Text = "WSUS Offline Next 2026.10.0 - Client Installer";
+            this.Text = $"WSUS Offline Next {GetDisplayVersion()} - Client Installer";
             this.Width = 1040;
             this.Height = 720;
             this.MinimumSize = new System.Drawing.Size(850, 600);

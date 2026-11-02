@@ -8,10 +8,12 @@
 # Covered behaviors (plan 16-01):
 #   a. PAT happy path - registration token travels to config.sh on the
 #      configure argv, NEVER on stdin (WR-04: the real Runner.Listener refuses
-#      redirected input), the remove leg carries no --unattended flag, no
-#      Bearer literal in curl argv, no PAT in the run.sh environment, header
-#      file mode 600 then deleted by the cleanup, remove-token called exactly
-#      once
+#      redirected input), the configure runs unattended (--unattended, VER-02
+#      live 2026-11-02: without it the real configure prompts the runner
+#      group and blocks on READ LINE), the remove leg carries no --unattended
+#      flag, no Bearer literal in curl argv, no PAT in the run.sh environment,
+#      header file mode 600 then deleted by the cleanup, remove-token called
+#      exactly once
 #   b. TERM forwarded - entrypoint exits 143 and the cleanup ran (both
 #      markers); the child-receipt marker is asserted where the host delivers
 #      signals from a trap context (ubuntu CI) and documented local-pass on
@@ -53,15 +55,22 @@
 # contract (run manually when the PAT mode changes; record date + outcome in
 # the phase record):
 #   1. mint a short-expiry fine-grained PAT (Administration: Read and write)
-#      against a DISPOSABLE repo;
+#      against the PERMANENT lab repo - operator convention 2026-11-02:
+#      wson-runner-lab, private, created once, never deleted; only the PAT
+#      stays disposable per cycle (no API mints fine-grained PATs; long-term,
+#      a GitHub App installed on the lab would let the cycle mint
+#      installation tokens via API - zero UI);
 #   2. start the runner container once with a temporary override
-#      (docker compose run -e RUNNER_PAT=<pat> -e REPO_SLUG=<disposable repo>
+#      (docker compose run -e RUNNER_PAT=<pat> -e REPO_SLUG=<lab repo>
 #      catalog-runner) - the override is never written to compose.env or .env;
 #   3. confirm the argv registration completes WITHOUT any prompt - ANSWERED
-#      live 2026-11-02: it does NOT - the configure prompts the runner group
-#      (PromptManager ReadValue "Enter the name of the runner group ...") and
-#      blocks on READ LINE because the PAT branch carries no --unattended
-#      (WR-04 revalidation record at the end of this header);
+#      live 2026-11-02: it did NOT at the time - the configure prompted the
+#      runner group (PromptManager ReadValue "Enter the name of the runner
+#      group ...") and blocked on READ LINE because the PAT branch then
+#      carried no --unattended (WR-04 revalidation record at the end of this
+#      header; the flag travels since the fix round recorded there, and the
+#      live revalidation of the FIXED contract happens at the next PAT cycle
+#      against the lab repo);
 #   4. docker stop the container: the runner disappears (remove-token leg) and
 #      no Authorization header file remains in the container filesystem;
 #   5. revert the override (nothing to clean if step 2 used `compose run`).
@@ -71,19 +80,23 @@
 # Two findings, deliverable of the revalidation (precedent: the 2026-11-01
 # round found the two bugs this file's disposition documents):
 #   (i) group prompt (open question above, now answered): the PAT configure
-#       (--token on argv, no --unattended) prompts "Enter the name of the
-#       runner group" and blocks on READ LINE - no TTY, the runner never
-#       registers (total_count stayed 0). Candidate fix for a NEXT round, not
-#       applied here: carry --unattended on the PAT configure like the token
-#       branch does (case a below pins its ABSENCE today and must move with
-#       that fix);
+#       (--token on argv, no --unattended at the time) prompted "Enter the
+#       name of the runner group" and blocked on READ LINE - no TTY, the
+#       runner never registers (total_count stayed 0). Fix applied in this
+#       header's round: --unattended now travels on the PAT configure like
+#       the token branch does (valid for configure; remove still rejects it,
+#       2026-11-01 proof). Case a pins its PRESENCE, bite-proven against the
+#       pre-fix entrypoint bytes (battery FAIL on the missing flag, green
+#       after);
 #   (ii) blocked-path residue (WR-01-class): with config.sh blocked before
 #       run.sh, the TERM trap stays queued behind it and docker stop's SIGKILL
 #       (exit 137, not 143) bypasses the EXIT trap - the cleanup never runs and
 #       the Authorization header file survives in the stopped container. The
 #       nominal path is unaffected (unconditional deletion holds, case f), and
 #       the header-file API auth itself worked live ("Connected to GitHub"
-#       before the prompt).
+#       before the prompt). Eliminated INDIRECTLY by the same fix: the block
+#       was the root cause of the SIGKILL cleanup bypass - with --unattended
+#       the blocked path is unreachable, so the residue path is too.
 # Host note (mode-600 tier): MSYS stat reports 644 even after chmod 600, so
 # the strong "600" assertion runs only on hosts where a control file proves
 # the mode is representable; elsewhere the battery asserts equality with that
@@ -313,7 +326,7 @@ grep -qF "${REG_TOKEN}" "${argv}" \
 grep -qx -- '--ephemeral' "${argv}" || fail_case "case a - ephemeral absent de l'argv du configure PAT (position HEAD)" "${T}" "${STUB}"
 grep -qx -- '--replace' "${argv}" || fail_case "case a - replace absent de l'argv du configure PAT (position HEAD)" "${T}" "${STUB}"
 grep -qx -- '--unattended' "${argv}" \
-    && fail_case "case a - le configure PAT porte encore le mode non interactif (la forme verrouillee n'en porte pas)" "${T}" "${STUB}"
+    || fail_case "case a - mode non interactif absent de l'argv du configure PAT (VER-02 vivant 2026-11-02 : sans lui le vrai configure prompte le groupe runner et bloque en READ LINE sans TTY)" "${T}" "${STUB}"
 [ ! -s "${T}/rec/config-stdin-1.txt" ] \
     || fail_case "case a - le configure PAT a consomme un stdin non vide (forme pipe bannie : WR-04, le vrai Listener refuse l'entree standard redirigee)" "${T}" "${STUB}"
 grep -qF "${REM_TOKEN}" "${T}/rec/config-argv-2.txt" \

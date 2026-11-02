@@ -16,9 +16,11 @@
 #     pattern MermaidStudio (1 job = 1 registration, recycle par compose).
 #     Auth API par fichier d'en-têtes mode 600 (CISH-04 : le PAT ne transite
 #     ni par argv ni dans l'environnement des enfants) et registration par
-#     argv (WR-04, validation vivante 2026-11-01 : le vrai Listener prompte
-#     le token en mode secret et refuse l'entrée standard redirigée —
-#     System.InvalidOperationException). Le token d'enregistrement reste sur
+#     argv en mode non interactif (WR-04, validations vivantes : 2026-11-01 —
+#     le vrai Listener prompte le token en mode secret et refuse l'entrée
+#     standard redirigée, System.InvalidOperationException ; 2026-11-02
+#     VER-02 — sans --unattended le vrai configure prompte le groupe runner
+#     et bloque en READ LINE sans TTY). Le token d'enregistrement reste sur
 #     l'argv du configure : résidu accepté (jeton éphémère 1 h, repo-scoped,
 #     même analyse que la décision 16-01 et que CIWF-02).
 set -euo pipefail
@@ -84,15 +86,17 @@ elif [ -n "${RUNNER_PAT:-}" ]; then
   echo "Registration éphémère de ${RUNNER_NAME} sur ${REPO_SLUG}..."
   token=$(api actions/runners/registration-token | jq -r .token)
   [ -n "$token" ] && [ "$token" != "null" ] || { echo "registration-token vide : PAT invalide ?" >&2; exit 1; }
-  # Registration PAT par argv (WR-04, validation vivante 2026-11-01) : le
-  # Listener prompte le token en mode secret et refuse l'entrée standard
-  # redirigée (System.InvalidOperationException) — le credential part donc
-  # sur l'argv du configure ; résidu accepté (cf. en-tête, décision 16-01).
+  # Registration PAT par argv en mode non interactif (WR-04, validations
+  # vivantes : 2026-11-01 — le Listener prompte le token en mode secret et
+  # refuse l'entrée standard redirigée ; 2026-11-02 VER-02 — sans
+  # --unattended le configure prompte le groupe runner et bloque en READ
+  # LINE sans TTY) : credential + --unattended sur l'argv du configure ;
+  # résidu accepté (cf. en-tête, décision 16-01).
   ./config.sh \
     --url "https://github.com/${REPO_SLUG}" \
     --token "${token}" \
     --name "${RUNNER_NAME}" --labels "self-hosted,Linux,X64,wson-docker" \
-    --ephemeral --replace
+    --ephemeral --replace --unattended
 elif [ -n "${RUNNER_TOKEN:-}" ]; then
   echo "Registration de ${RUNNER_NAME} sur ${REPO_SLUG} (token d'enregistrement)..."
   ./config.sh --url "https://github.com/${REPO_SLUG}" --token "${RUNNER_TOKEN}" \

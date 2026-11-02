@@ -953,7 +953,7 @@ export default function App() {
                           type="text"
                           value={options.usbPath}
                           onChange={(e) => setOptions(prev => ({ ...prev, usbPath: e.target.value }))}
-                          className="w-full bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-accent-500 placeholder-zinc-600"
+                          className="w-full bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-hidden focus:border-accent-500 placeholder-zinc-600"
                           placeholder="e.g. E:\Windows Update or \\server\updates"
                         />
                       </div>
@@ -988,7 +988,7 @@ export default function App() {
                   value={options.proxy}
                   onChange={(e) => setOptions(prev => ({ ...prev, proxy: e.target.value }))}
                   placeholder="e.g. http://proxy.corporate.lan:8080"
-                  className="w-full bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-accent-500 placeholder-zinc-600"
+                  className="w-full bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-hidden focus:border-accent-500 placeholder-zinc-600"
                 />
               </div>
 
@@ -999,7 +999,7 @@ export default function App() {
                   value={options.wsusUrl}
                   onChange={(e) => setOptions(prev => ({ ...prev, wsusUrl: e.target.value }))}
                   placeholder="e.g. http://wsus01.lan:8530"
-                  className="w-full bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-accent-500 placeholder-zinc-600"
+                  className="w-full bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-hidden focus:border-accent-500 placeholder-zinc-600"
                 />
               </div>
 

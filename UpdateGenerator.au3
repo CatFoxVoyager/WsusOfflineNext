@@ -65,6 +65,11 @@ Dim Const $ini_section_o2k16            = "Office 2016"
 Dim Const $ini_section_o2k19            = "Office 2019"
 Dim Const $ini_section_o2k21            = "Office 2021"
 Dim Const $ini_section_o2k24            = "Office 2024"
+;  OFC-03 - lanes Office EOL totales : $ini_section_o2k16 et $ini_section_o2k21.
+;  Leur onglet Office charge unchecked par defaut (garde force-off, INI herite ignore)
+;  et leurs labels portent le suffixe EOL declare ci-dessous. o2k19 (keep lane live)
+;  et o2k24 (active) restent pilotes par l'INI.
+Dim Const $eol_suffix                 = " - EOL, build final"
 Dim Const $arch_token_x86               = "x86"
 Dim Const $arch_token_x64               = "x64"
 Dim Const $ini_section_iso              = "ISO Images"
@@ -1156,27 +1161,23 @@ GUICtrlCreateGroup("Office 2016 (MSI)", $txtxpos, $txtypos, $groupwidth, 3.2 * $
 $txtypos = $txtypos + 1.5 * $txtyoffset
 $txtxpos = 3 * $txtxoffset
 If $gergui Then
-  $o2k16_x86 = GUICtrlCreateCheckbox("32-Bit (x86) multilingue (glb)", $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
+  $o2k16_x86 = GUICtrlCreateCheckbox("32-Bit (x86) multilingue (glb)" & $eol_suffix, $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
 Else
-  $o2k16_x86 = GUICtrlCreateCheckbox("32-bit (x86) multilingual (glb)", $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
+  $o2k16_x86 = GUICtrlCreateCheckbox("32-bit (x86) multilingual (glb)" & $eol_suffix, $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
 EndIf
-If IniRead($inifilename, $ini_section_o2k16, $arch_token_x86, $disabled) = $enabled Then
-  GUICtrlSetState(-1, $GUI_CHECKED)
-Else
+;  OFC-03 force-off : lane $ini_section_o2k16 EOL (build final) - tout "Enabled"
+;  herite d'un INI anterieur est ignore au chargement (defaut, pas verrou).
   GUICtrlSetState(-1, $GUI_UNCHECKED)
-EndIf
 
 $txtxpos = $txtxpos + $groupwidth / 2 - $txtxoffset
 If $gergui Then
-  $o2k16_x64 = GUICtrlCreateCheckbox("64-Bit (x64) multilingue (glb)", $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
+  $o2k16_x64 = GUICtrlCreateCheckbox("64-Bit (x64) multilingue (glb)" & $eol_suffix, $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
 Else
-  $o2k16_x64 = GUICtrlCreateCheckbox("64-bit (x64) multilingual (glb)", $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
+  $o2k16_x64 = GUICtrlCreateCheckbox("64-bit (x64) multilingual (glb)" & $eol_suffix, $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
 EndIf
-If IniRead($inifilename, $ini_section_o2k16, $arch_token_x64, $disabled) = $enabled Then
-  GUICtrlSetState(-1, $GUI_CHECKED)
-Else
+;  OFC-03 force-off : lane $ini_section_o2k16 EOL (build final) - tout "Enabled"
+;  herite d'un INI anterieur est ignore au chargement (defaut, pas verrou).
   GUICtrlSetState(-1, $GUI_UNCHECKED)
-EndIf
 
 ;  Office Click-to-Run (ODT) group
 $txtxpos = 2 * $txtxoffset
@@ -1204,20 +1205,16 @@ EndIf
 ; Office LTSC 2021
 $txtypos = $txtypos + 1.5 * $txtyoffset
 $txtxpos = 3 * $txtxoffset
-$o2k21_x86 = GUICtrlCreateCheckbox("Office LTSC 2021 x86", $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
-If IniRead($inifilename, $ini_section_o2k21, $arch_token_x86, $disabled) = $enabled Then
-  GUICtrlSetState(-1, $GUI_CHECKED)
-Else
+$o2k21_x86 = GUICtrlCreateCheckbox("Office LTSC 2021 x86" & $eol_suffix, $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
+;  OFC-03 force-off : lane $ini_section_o2k21 EOL (build final) - tout "Enabled"
+;  herite d'un INI anterieur est ignore au chargement (defaut, pas verrou).
   GUICtrlSetState(-1, $GUI_UNCHECKED)
-EndIf
 
 $txtxpos = $txtxpos + $groupwidth / 2 - $txtxoffset
-$o2k21_x64 = GUICtrlCreateCheckbox("Office LTSC 2021 x64", $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
-If IniRead($inifilename, $ini_section_o2k21, $arch_token_x64, $disabled) = $enabled Then
-  GUICtrlSetState(-1, $GUI_CHECKED)
-Else
+$o2k21_x64 = GUICtrlCreateCheckbox("Office LTSC 2021 x64" & $eol_suffix, $txtxpos, $txtypos, $groupwidth / 2 - $txtxoffset, $txtheight)
+;  OFC-03 force-off : lane $ini_section_o2k21 EOL (build final) - tout "Enabled"
+;  herite d'un INI anterieur est ignore au chargement (defaut, pas verrou).
   GUICtrlSetState(-1, $GUI_UNCHECKED)
-EndIf
 
 ; Office LTSC 2024
 $txtypos = $txtypos + 1.5 * $txtyoffset

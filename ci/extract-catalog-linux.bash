@@ -6,7 +6,11 @@
 #
 # Linux counterpart of ci/extract-catalog.bash: cabextract + xsltproc instead of
 # expand.exe + cscript/XSLT.vbs. Produces the same
-# <work-dir>/update-ids-and-locations-all.txt ("<id>,<url>" pairs).
+# <work-dir>/update-ids-and-locations-all.txt ("<id>,<url>" pairs) plus the
+# OFC-01 sidecar <work-dir>/office-family-revision-counts.txt (per-family
+# Office revision counter, ci/lib-office-catalog-counts.bash), then enforces
+# the frozen baseline ci/office-frozen-revision-baseline.txt — a drifted
+# frozen family aborts the run fail-closed (exit 1).
 #
 # The final sort is guarded like the Windows variant (extract-catalog.bash:81-85)
 # and ids-and-locations-unsorted.txt is only deleted AFTER the sort succeeded
@@ -15,7 +19,7 @@
 # and WR-03).
 
 # ===== Configuration =====
-readonly script_version="1.1"
+readonly script_version="1.2"
 
 # ===== Global variables =====
 work_dir=""
@@ -38,6 +42,8 @@ if [ -z "${work_dir}" ]; then
   exit 1
 fi
 mkdir -p "${work_dir}"
+
+. "${repo_root}/ci/lib-office-catalog-counts.bash"
 
 cab="${work_dir}/wsusscn2.cab"
 if [ "${download}" = "enabled" ] || [ ! -f "${cab}" ]; then
@@ -76,5 +82,15 @@ sort -u -T "${work_dir}" -o "${work_dir}/update-ids-and-locations-all.txt" "${wo
 lines="$(grep -c . "${work_dir}/update-ids-and-locations-all.txt" || true)"
 [ "${lines}" -gt 0 ] || { echo "extract-catalog-linux: empty extraction — intermediate kept for diagnosis: ${work_dir}/ids-and-locations-unsorted.txt" >&2; exit 1; }
 echo "extract-catalog-linux: done — ${lines} id/url pairs in ${work_dir}/update-ids-and-locations-all.txt"
+
+# OFC-01: emit the per-family Office revision counter as a machine-readable
+# sidecar plus the loggable stdout table, then enforce the frozen baseline.
+# A drifted frozen family aborts the run BEFORE anything downstream consumes
+# the extraction (fail-closed, same shape as the guards above).
+count_office_family_revisions "${work_dir}/update-ids-and-locations-all.txt" "${work_dir}/office-family-revision-counts.txt" \
+  || { echo "extract-catalog-linux: office family counting failed" >&2; exit 1; }
+assert_office_frozen_baseline "${work_dir}/office-family-revision-counts.txt" "${repo_root}/ci/office-frozen-revision-baseline.txt" \
+  || { echo "extract-catalog-linux: frozen baseline assert failed — run aborted" >&2; exit 1; }
+
 rm -f "${work_dir}/ids-and-locations-unsorted.txt"
 exit 0

@@ -35,6 +35,16 @@ set "TARGET_LANG=%3"
 if "%TARGET_LANG%"=="" set "TARGET_LANG=MatchOS"
 if "%TARGET_LANG:~0,1%"=="/" set "TARGET_LANG=MatchOS"
 
+rem *** Optional 4th argument: /dry-run test lenience flag - case-insensitive, ***
+rem *** parsed in the free 4th slot (no existing caller passes an argument 4) ***
+rem *** /dry-run scopes ALL test lenience to the ODT download: a dead ODT ***
+rem *** warns and continues, and NO hash entry is written (no ghost integrity ***
+rem *** file). Without the flag the run is fail-closed. The bash-side ***
+rem *** equivalent is the warn-and-baseline behavior of ***
+rem *** sh/download-updates-tasks/65-office-c2r.bash (pinned at plan 20-02). ***
+set "DRY_RUN="
+if /i "%4"=="/dry-run" set "DRY_RUN=1"
+
 if /i "%TARGET_ARCH%"=="x86" (
   set "EDITION_NUM=32"
 ) else (
@@ -142,31 +152,59 @@ echo Command: "%ODT_EXE%" /download "%CONFIG_XML%"
 "%ODT_EXE%" /download "%CONFIG_XML%"
 set "ODT_EXIT=%ERRORLEVEL%"
 
-if not "%ODT_EXIT%"=="0" (
-  echo Warning: ODT /download exited with code %ODT_EXIT%.
-  rem Don't hard-fail in offline/dry test runs if destination was simulated
-) else (
-  echo Info: ODT download completed successfully.
-)
-
-rem *** 5. Update cryptographic hash database ***
-if not exist "%MD_DIR%" mkdir "%MD_DIR%" 2>nul
-if exist "%DEST_DIR%" (
-  echo Updating integrity database %HASHES_FILE%...
-  powershell -NoProfile -Command ^
-    "$files = Get-ChildItem -Path '%DEST_DIR%' -Recurse -File; " ^
-    "if ($files) { " ^
-    "  $lines = foreach ($f in $files) { " ^
-    "    $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash.ToLower(); " ^
-    "    $rel = $f.FullName.Substring('%REPO_ROOT%'.Length).TrimStart('\', '/').Replace('\', '/'); " ^
-    "    \"$hash *$rel\" " ^
-    "  }; " ^
-    "  [System.IO.File]::AppendAllLines('%HASHES_FILE%', $lines); " ^
-    "  Write-Host \"Added $($files.Count) SHA256 hash entries to $HASHES_FILE.\"; " ^
-    "}"
-)
-
+rem *** 5. Remove the generated config manifest BEFORE any exit path - the ***
+rem *** fail-closed branch below must never short-circuit this cleanup ***
 if exist "%CONFIG_XML%" del "%CONFIG_XML%" 2>nul
+
+rem *** fail-closed branch (OFC-04): a non-zero ODT exit fails a real run ***
+if not "%ODT_EXIT%"=="0" goto OdtDownloadFailed
+echo Info: ODT download completed successfully.
+goto UpdateHashes
+
+:OdtDownloadFailed
+if not defined DRY_RUN (
+  echo Error: ODT /download exited with code %ODT_EXIT% - staging is incomplete.
+  echo Error: fail-closed - no integrity entry is written for a partial staging; fix the ODT download and re-run.
+  exit /b 1
+)
+echo Warning: ODT /download exited with code %ODT_EXIT% - dry-run lenience: continuing WITHOUT writing any hash entry.
+
+:UpdateHashes
+rem *** 6. Update cryptographic hash database - atomic rewrite, never append ***
+if defined DRY_RUN (
+  echo Info: dry-run - integrity database %HASHES_FILE% left untouched, no ghost hash file.
+  goto Finish
+)
+if not exist "%MD_DIR%" mkdir "%MD_DIR%" 2>nul
+if not exist "%DEST_DIR%" (
+  echo Error: ODT payload directory %DEST_DIR% is missing - refusing to regenerate the integrity file.
+  exit /b 1
+)
+echo Updating integrity database %HASHES_FILE% - atomic rewrite of the %TARGET_PROD%/%TARGET_ARCH% slice...
+powershell -NoProfile -Command ^
+  "$ErrorActionPreference = 'Stop'; " ^
+  "$files = @(Get-ChildItem -Path '%DEST_DIR%' -Recurse -File); " ^
+  "if ($files.Count -eq 0) { Write-Error 'ODT payload directory is empty'; exit 1; } " ^
+  "$prefix = 'client/office/c2r/%TARGET_PROD%/%TARGET_ARCH%/'; " ^
+  "$newLines = foreach ($f in $files) { " ^
+  "  $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash.ToLower(); " ^
+  "  $rel = $f.FullName.Substring('%REPO_ROOT%'.Length).TrimStart('\', '/').Replace('\', '/'); " ^
+  "    \"$hash *$rel\" " ^
+  "  }; " ^
+  "$keep = @(); " ^
+  "if ([System.IO.File]::Exists('%HASHES_FILE%')) { " ^
+  "  $keep = @(Get-Content -Path '%HASHES_FILE%' | Where-Object { $_ -and ($_.TrimEnd() -notmatch ('^[a-fA-F0-9]{64} \*' + [regex]::Escape($prefix))) }); " ^
+  "} " ^
+  "$tmp = '%HASHES_FILE%.tmp'; " ^
+  "[System.IO.File]::WriteAllLines($tmp, @($keep + $newLines)); " ^
+  "Move-Item -Force -Path $tmp -Destination '%HASHES_FILE%'; " ^
+  "Write-Host \"Rewrote $($newLines.Count) hash entries, kept $($keep.Count) sibling entries.\";"
+if errorlevel 1 (
+  echo Error: integrity database update failed - failing the run fail-closed.
+  exit /b 1
+)
+
+:Finish
 echo Done.
 exit /b 0
 
@@ -174,7 +212,20 @@ exit /b 0
 echo.
 echo WSUS Offline Update - Office Click-to-Run (ODT) Staging Engine
 echo.
-echo Usage: %~n0 {o2k19 ^| o2k21 ^| o2k24} {x86 ^| x64} [Language] [/verify]
+echo Usage: %~n0 {o2k19 ^| o2k21 ^| o2k24} {x86 ^| x64} [Language] [/dry-run]
+echo.
+echo   /dry-run  test-only lenience, STRICTLY scoped to the ODT download:
+echo             a failing ODT download warns and continues WITHOUT writing
+echo             any hash entry (no ghost integrity file). Without the flag
+echo             the run is fail-closed: a non-zero ODT exit fails the run
+echo             with rc 1 and no integrity file is written.
+echo             Bash-side equivalent: the warn-and-baseline behavior of
+echo             sh/download-updates-tasks/65-office-c2r.bash (plan 20-02).
+echo.
+echo   A warn-only ODT freshness check runs at generation time on real runs:
+echo   it compares the pinned build with the Microsoft release-history page
+echo   and warns (never fails) when the pin may be stale or when the page
+echo   cannot be reached offline.
 echo Examples:
 echo   %~n0 o2k24 x64 MatchOS
 echo   %~n0 o2k21 x86 fr-fr

@@ -219,4 +219,50 @@ printf 'garbage-one\r\ngarbage-two\r\n' > "$T/staging/update-ids-and-locations-a
 bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] || { echo "FAIL: catalogue sans URL (lignes brutes) doit aborter (rc=$rc)"; rm -rf "$T"; exit 1; }
 rm -rf "$T"
+# ===== OFC-01 : section Office dans le rapport + morsure drift frozen =====
+# Le regen consomme le sidecar du producteur (office-family-revision-counts.txt
+# dans le staging dir), enforce la baseline frozen AVANT tout mouvement de
+# fichiers, et degrade en warning sans sidecar.
+# shellcheck source=lib-office-catalog-counts.bash disable=SC1091
+source ci/lib-office-catalog-counts.bash
+T="$(mktemp -d)"
+mkdir -p "$T/staging" "$T/static"
+cp ci/tests/fixtures-regen/update-ids-and-locations-all.txt "$T/staging/"
+cp "$F/dead.txt" "$T/dead.txt"
+printf 'https://download.example/a/prod-v1.0.exe,alias1.exe\r\n' > "$T/static/listO.txt"
+# sidecar du producteur + baseline plante dans un temp dir (la baseline
+# committée n'est JAMAIS touchée par la batterie — seam OFFICE_FROZEN_BASELINE)
+printf 'o2k16\t3\n' > "$T/staging/office-family-revision-counts.txt"
+{
+  printf '# planted good baseline\nfrozen_o2k16=3\n'
+  for prod in "${!OFFICE_C2R_BASELINE_LITERALS[@]}"; do
+    printf 'c2r_baseline_%s=%s\n' "$prod" "${OFFICE_C2R_BASELINE_LITERALS[${prod}]}"
+  done
+} > "$T/base-good.txt"
+grep -qxF 'frozen_o2k16=3' "$T/base-good.txt" || { echo "FAIL: baseline plante non atterrie"; rm -rf "$T"; exit 1; }
+OFFICE_FROZEN_BASELINE="$T/base-good.txt" bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: regen avec sidecar + baseline bonne exited $rc"; rm -rf "$T"; exit 1; }
+grep -qF '## Office catalog revision counts' "$T/.regen-report.md" || { echo "FAIL: section Office absente du rapport"; rm -rf "$T"; exit 1; }
+grep -qF '| o2k16 | 3 |' "$T/.regen-report.md" || { echo "FAIL: ligne o2k16=3 absente de la table du rapport"; rm -rf "$T"; exit 1; }
+grep -qF 'Frozen baseline: unchanged.' "$T/.regen-report.md" || { echo "FAIL: verdict frozen absent du rapport"; rm -rf "$T"; exit 1; }
+# verdict first-run : sidecar présent mais baseline absente -> section écrite,
+# verdict « absent (first run) », jamais un abort
+printf 'o2k16\t3\n' > "$T/staging/office-family-revision-counts.txt"
+OFFICE_FROZEN_BASELINE="$T/no-such-baseline.txt" bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: first-run verdict run exited $rc"; rm -rf "$T"; exit 1; }
+grep -qF 'Frozen baseline: absent (first run — comparison skipped).' "$T/.regen-report.md" || { echo "FAIL: verdict first-run absent du rapport"; rm -rf "$T"; exit 1; }
+# morsure : compteur frozen divergent -> abort AVANT tout mouvement, aucun
+# rapport dans l'arbre (CISC-03 étendu au cas abort)
+printf 'o2k16\t4\n' > "$T/staging/office-family-revision-counts.txt"
+grep -qxF "$(printf 'o2k16\t4')" "$T/staging/office-family-revision-counts.txt" || { echo "FAIL: sidecar morsure non atterri"; rm -rf "$T"; exit 1; }
+rm -f "$T/.regen-report.md"
+OFFICE_FROZEN_BASELINE="$T/base-good.txt" bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add > /dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: morsure drift frozen — le regen doit aborter"; rm -rf "$T"; exit 1; }
+[ ! -f "$T/.regen-report.md" ] || { echo "FAIL: morsure drift frozen — un rapport a atteint l'arbre"; rm -rf "$T"; exit 1; }
+# degradation : SANS sidecar -> ligne unavailable, jamais un abort
+rm -f "$T/staging/office-family-revision-counts.txt"
+bash ci/regen-static-lists.bash "$T/staging" "$T/static" "$T/dead.txt" --min-lines 2 --add; rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: regen sans sidecar doit rester utilisable (rc=$rc)"; rm -rf "$T"; exit 1; }
+grep -qF 'Office catalog revision counts: unavailable (extract pre-dates the counter)' "$T/.regen-report.md" || { echo "FAIL: ligne unavailable absente du rapport sans sidecar"; rm -rf "$T"; exit 1; }
+rm -rf "$T"
 echo "PASS regen fixtures (KEEP/ADD/famille/REMOVE multi-listes/CRLF/dry-run/abort)"

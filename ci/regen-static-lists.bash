@@ -31,9 +31,20 @@
 # <staging-dir> must hold update-ids-and-locations-all.txt ("<id>,<url>" pairs),
 # produced by the catalog XSLT chain (see ExtractDownloadLinks-all.cmd). A
 # missing or implausibly small staging file aborts before any write.
+#
+# Office catalog revision counts (OFC-01): when the staging dir also carries
+# the extractors' sidecar office-family-revision-counts.txt
+# (ci/lib-office-catalog-counts.bash), the frozen baseline
+# ci/office-frozen-revision-baseline.txt is enforced FIRST — a drifted frozen
+# family aborts the regen before any file movement (the EXIT trap clears the
+# work dir; no report reaches the tree) — and the per-family table is appended
+# to this report, so the counter is visible at the train. Without the sidecar
+# the report carries an explicit "unavailable" warning line: the regen stays
+# usable standalone (warning, never an abort). The assert runs in dry-run too
+# — the discrimination is free there and a dry-run writes nothing to the tree.
 
 # ===== Configuration =====
-readonly script_version="1.2"
+readonly script_version="1.3"
 min_lines="1000"
 dry_run="disabled"
 add_policy="disabled"
@@ -121,6 +132,7 @@ if [ "${list_count}" -eq 0 ]; then
 fi
 
 . "${repo_root}/sh/libraries/dos-files.bash"
+. "${repo_root}/ci/lib-office-catalog-counts.bash"
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -237,6 +249,36 @@ ignored=$(( catalog_total - added_unique - already_n - dead_excl_n ))
 {
   printf '\n**Total:** %d added, %d removed. Catalog disposition: %d already listed, %d dead-excluded, %d no matching family.\n' "${total_added}" "${total_removed}" "${already_n}" "${dead_excl_n}" "${ignored}"
 } >> "${report_file}"
+
+# ===== Office catalog revision counts (OFC-01) =====
+# Enforce the frozen baseline BEFORE the report can reach the tree: a drift
+# aborts the regen here, and the EXIT trap clears the work dir — no report is
+# written anywhere. The table is appended only past the assert, so a report
+# that exists always carries counts the baseline vouched for.
+counts_sidecar="${staging_dir}/office-family-revision-counts.txt"
+# OFFICE_FROZEN_BASELINE exists as a testability seam: the battery plants
+# baselines in a temp dir instead of touching the committed snapshot.
+office_baseline="${OFFICE_FROZEN_BASELINE:-${repo_root}/ci/office-frozen-revision-baseline.txt}"
+if [ -f "${counts_sidecar}" ]; then
+  assert_office_frozen_baseline "${counts_sidecar}" "${office_baseline}" \
+    || { echo "regen-static-lists: frozen baseline assert failed — regen aborted before any file movement" >&2; exit 1; }
+  {
+    printf '\n## Office catalog revision counts\n\n'
+    printf '| family | revisions |\n'
+    printf '| :--- | ---: |\n'
+    while IFS=$'\t' read -r family revisions; do
+      [ -n "${family}" ] || continue
+      printf '| %s | %s |\n' "${family}" "${revisions}"
+    done < <(tr -d '\r' < "${counts_sidecar}")
+    if [ -s "${office_baseline}" ]; then
+      printf 'Frozen baseline: unchanged.\n'
+    else
+      printf 'Frozen baseline: absent (first run — comparison skipped).\n'
+    fi
+  } >> "${report_file}"
+else
+  printf '\nOffice catalog revision counts: unavailable (extract pre-dates the counter)\n' >> "${report_file}"
+fi
 
 # CISC-03: the report only reaches the tree on a real run — in dry-run it
 # stays in the work dir and dies with the EXIT trap.

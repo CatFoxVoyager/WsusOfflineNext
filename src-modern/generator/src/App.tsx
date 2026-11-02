@@ -10,13 +10,13 @@ import {
   Play,
   Square,
   Copy,
-  Trash2,
+  Trash,
   ChevronDown,
   ChevronUp,
   Server,
   Monitor,
   PackageCheck,
-  Loader2
+  LoaderCircle
 } from 'lucide-react';
 
 import logo from './assets/logo.png';
@@ -1028,7 +1028,7 @@ export default function App() {
               </div>
               {isRunning ? (
                 <span className="flex items-center gap-1.5 text-[11px] text-amber-400 font-sans font-medium">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                  <LoaderCircle className="w-3.5 h-3.5 animate-spin text-amber-400" />
                   Downloading...
                 </span>
               ) : (
@@ -1057,7 +1057,7 @@ export default function App() {
                 className="text-zinc-400 hover:text-zinc-200 p-1 rounded hover:bg-dark-800 transition-colors"
                 title="Clear console"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => setIsTerminalOpen(false)}

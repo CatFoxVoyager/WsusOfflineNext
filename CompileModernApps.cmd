@@ -17,6 +17,17 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
+rem Garde empty-dist DEPS-07 : refuser un publish sur un frontend vide.
+set EMPTY_DIST=0
+if not exist "dist\index.html" set EMPTY_DIST=1
+dir /b "dist\assets\*.js" >nul 2>&1
+if errorlevel 1 set EMPTY_DIST=1
+if "%EMPTY_DIST%"=="1" (
+    echo [ERREUR] Garde empty-dist : dist\index.html absent ou aucun asset JS dans dist\assets pour le Generator.
+    if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
+    exit /b 1
+)
+
 echo [2/4] Publication .NET 8 Single-File de UpdateGenerator.exe...
 dotnet publish host\UpdateGenerator.csproj -c Release -r win-x64 /p:PublishSingleFile=true /p:SelfContained=false -o bin
 if %errorlevel% neq 0 (
@@ -36,6 +47,17 @@ if %errorlevel% neq 0 (
     echo [ERREUR] Echec de la compilation frontend de l'Installer.
     if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
     exit /b %errorlevel%
+)
+
+rem Garde empty-dist DEPS-07 : refuser un publish sur un frontend vide.
+set EMPTY_DIST=0
+if not exist "dist\index.html" set EMPTY_DIST=1
+dir /b "dist\assets\*.js" >nul 2>&1
+if errorlevel 1 set EMPTY_DIST=1
+if "%EMPTY_DIST%"=="1" (
+    echo [ERREUR] Garde empty-dist : dist\index.html absent ou aucun asset JS dans dist\assets pour l'Installer.
+    if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
+    exit /b 1
 )
 
 echo [4/4] Publication .NET 8 Single-File de UpdateInstaller.exe...

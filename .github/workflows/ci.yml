@@ -54,6 +54,36 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            src-modern/generator/package-lock.json
+            src-modern/installer/package-lock.json
+
+      - name: Build generator frontend
+        working-directory: src-modern/generator
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build installer frontend
+        working-directory: src-modern/installer
+        run: |
+          npm ci
+          npm run build
+
+      # DEPS-07 : un glob vide n'est pas une erreur MSBuild — refuser un embed vide avant tout publish.
+      - name: Fail-closed on empty dist
+        run: |
+          ok=1
+          test -f src-modern/generator/dist/index.html || { echo "::error::generator dist vide ou incomplet (index.html manquant)"; ok=0; }
+          test -f src-modern/installer/dist/index.html || { echo "::error::installer dist vide ou incomplet (index.html manquant)"; ok=0; }
+          ls src-modern/generator/dist/assets/*.js >/dev/null 2>&1 || { echo "::error::generator dist sans asset JS"; ok=0; }
+          ls src-modern/installer/dist/assets/*.js >/dev/null 2>&1 || { echo "::error::installer dist sans asset JS"; ok=0; }
+          [ "$ok" -eq 1 ] || exit 1
+
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x

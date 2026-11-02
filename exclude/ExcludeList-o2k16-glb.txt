@@ -2,11 +2,22 @@
 # WSUS Offline Update - Office Exclusion List
 # Product Family: Microsoft Office 16.0 (o2k16)
 #
-# LIFECYCLE & EOL STATUS:
-# - Microsoft Office 2016 (MSI & C2R): End of Life October 14, 2025 (FROZEN)
-# - Microsoft Office 2019 (Perpetual): End of Life October 14, 2025 (FROZEN)
-# - Microsoft Office LTSC 2021:        End of Life October 13, 2026 (FROZEN)
-# - Microsoft Office LTSC 2024:        Active Support until October 9, 2029 (ACTIVE)
+# LIFECYCLE & EOL STATUS (exact per-lane semantics, audited 2026-11):
+# - Microsoft Office 2016 (MSI & C2R): End of Life October 14, 2025 (CATALOG-FROZEN:
+#   the audited revision snapshot is the terminal set the tree serves; the dynamic
+#   XSLT catalog lane remains the only content path and still surfaces monthly
+#   post-EOL revisions, re-pinned deliberately - never pruned)
+# - Microsoft Office 2019 (Perpetual): EOL 2025-10-14 - keep lane live
+#   (builds still published case-by-case at Microsoft's sole discretion;
+#   last baseline 16.0.10417.20207 - this lane does NOT freeze)
+# - Microsoft Office LTSC 2021:        End of Life October 13/14, 2026 (Patch Tuesday PT)
+#                                      (TERMINAL-FROZEN, final build 16.0.14334.20974)
+# - Microsoft Office LTSC 2024:        Active Support until October 10, 2029 (ACTIVE)
+#
+# freeze-and-keep policy:
+# EOL lanes are NEVER pruned from this tree. Archived lists and frozen MSP/cab
+# payloads stay downloadable and installable for machines offline since their EOL
+# (precedent: Office 2013, retired in v4.0 with archived lists kept).
 #
 # Machinery Note:
 # The o2k16 tree serves as the shared servicing engine for all Office 16.x suites.

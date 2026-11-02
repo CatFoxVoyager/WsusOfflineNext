@@ -66,7 +66,8 @@ namespace WSUSOffline.Installer
 
             try
             {
-                string userDataFolder = Path.Combine(Path.GetTempPath(), "WSUSInstaller_Cache");
+                string userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WSUSOfflineNext", "Installer");
+                Directory.CreateDirectory(userDataFolder);
                 var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
                 await _webView.EnsureCoreWebView2Async(env);
 

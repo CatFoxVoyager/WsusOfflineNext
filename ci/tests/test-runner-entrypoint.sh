@@ -57,12 +57,33 @@
 #   2. start the runner container once with a temporary override
 #      (docker compose run -e RUNNER_PAT=<pat> -e REPO_SLUG=<disposable repo>
 #      catalog-runner) - the override is never written to compose.env or .env;
-#   3. confirm the argv registration completes WITHOUT any prompt - open
-#      question carried by the 2026-11-01 window: with --token on argv but no
-#      --unattended, does configure prompt for the runner group?;
+#   3. confirm the argv registration completes WITHOUT any prompt - ANSWERED
+#      live 2026-11-02: it does NOT - the configure prompts the runner group
+#      (PromptManager ReadValue "Enter the name of the runner group ...") and
+#      blocks on READ LINE because the PAT branch carries no --unattended
+#      (WR-04 revalidation record at the end of this header);
 #   4. docker stop the container: the runner disappears (remove-token leg) and
 #      no Authorization header file remains in the container filesystem;
 #   5. revert the override (nothing to clean if step 2 used `compose run`).
+# WR-04 revalidation record - Revalidé vivant le 2026-11-02 : verdict DÉVIANT
+# (plan 22-01, image rebuilt with the fixed entrypoint, disposable PAT + repo,
+# same-session teardown; full evidence: phase record 22-01-VER02-EVIDENCE.md).
+# Two findings, deliverable of the revalidation (precedent: the 2026-11-01
+# round found the two bugs this file's disposition documents):
+#   (i) group prompt (open question above, now answered): the PAT configure
+#       (--token on argv, no --unattended) prompts "Enter the name of the
+#       runner group" and blocks on READ LINE - no TTY, the runner never
+#       registers (total_count stayed 0). Candidate fix for a NEXT round, not
+#       applied here: carry --unattended on the PAT configure like the token
+#       branch does (case a below pins its ABSENCE today and must move with
+#       that fix);
+#   (ii) blocked-path residue (WR-01-class): with config.sh blocked before
+#       run.sh, the TERM trap stays queued behind it and docker stop's SIGKILL
+#       (exit 137, not 143) bypasses the EXIT trap - the cleanup never runs and
+#       the Authorization header file survives in the stopped container. The
+#       nominal path is unaffected (unconditional deletion holds, case f), and
+#       the header-file API auth itself worked live ("Connected to GitHub"
+#       before the prompt).
 # Host note (mode-600 tier): MSYS stat reports 644 even after chmod 600, so
 # the strong "600" assertion runs only on hosts where a control file proves
 # the mode is representable; elsewhere the battery asserts equality with that

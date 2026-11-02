@@ -189,6 +189,9 @@ jobs:
       - name: Comparator battery (windows)
         run: bash ci/tests/test-compare-versions.sh
 
+      - name: WebView2 dependency battery
+        run: bash ci/tests/test-bump-webview2-dep.sh
+
       - name: Download regeneration report
         uses: actions/download-artifact@v4
         with:
@@ -242,6 +245,24 @@ jobs:
           git add $(bash ci/bump-version.bash --print-files)
           git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
             commit -m "chore(release): bump version to ${{ steps.version.outputs.version_full }}"
+
+      # The SDK pin must never rot between trains (1.0.2792.45 stood for a
+      # year). The bumper reads the NuGet flatcontainer index and rewrites
+      # only the 4-part PackageReference in BOTH csproj — fail-closed on
+      # divergence, unreachable index or downgrade; the app-version matrix
+      # is a disjoint namespace. The conditional commit is load-bearing:
+      # git commit without staged changes is non-zero and would fail the
+      # train on the daily no-op path.
+      - name: Bump WebView2 SDK dependency
+        run: |
+          WV2_VER="$(bash ci/bump-webview2-dep.bash)"
+          git add $(bash ci/bump-webview2-dep.bash --print-files)
+          if git diff --cached --quiet; then
+            echo "WebView2 SDK already current (${WV2_VER})"
+          else
+            git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
+              commit -m "chore(deps): bump WebView2 SDK to ${WV2_VER}"
+          fi
 
       - name: Append release notes
         run: |

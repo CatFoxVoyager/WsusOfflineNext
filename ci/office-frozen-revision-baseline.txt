@@ -27,10 +27,12 @@
 frozen_o2k16=722
 #
 # Littéraux C2R audités (sondes officecdn VersionDescriptor.xml du 2026-11-01) :
-#   o2k19 : le CDN advertise 16.0.10417.20228 — ce probe AMENDE la research (10417.20207, même
-#           série 10417.x, révision plus récente) ; la baseline gèle le littéral prescrit par le
-#           plan et l'amendement est consigné dans l'audit doc (plan 20-02 portera la valeur
-#           résolue dans les fallbacks code).
-c2r_baseline_o2k19=16.0.10417.20207
+#   o2k19 : 16.0.10417.20228 — RE-PIN DÉLIBÉRÉ (plan 20-02, procédure ci-dessus suivie : commit
+#           dédié référençant l'audit doc). La sonde CDN du 2026-11-01 — re-jouée le 2026-11-02,
+#           même valeur — AMENDE la prose research (10417.20207, même série 10417.x, révision
+#           plus ancienne). Le fallback code de sh/download-updates-tasks/65-office-c2r.bash
+#           porte ce même littéral ; la cohérence baseline <-> code est pinée par
+#           sh/tests/verify-office-servicing.bash (Test 5).
+c2r_baseline_o2k19=16.0.10417.20228
 c2r_baseline_o2k21=16.0.14334.20974
 c2r_baseline_o2k24=16.0.17932.21056

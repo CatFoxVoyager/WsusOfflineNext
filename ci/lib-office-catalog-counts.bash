@@ -66,13 +66,18 @@ declare -A OFFICE_PRODUCT_REVISION_COUNTS=(
 # Audited C2R channel literals (November 2026 audit). These are the LOCKED
 # reference the baseline's c2r_baseline_* keys are verified against — by
 # exact whole-string match, because a mis-transcribed digit here becomes law
-# for every following run (threat T-20-02). They are the AUDITED values, not
-# the stale bash fallbacks in sh/download-updates-tasks/65-office-c2r.bash
-# (plan 20-02 rewrites those fallbacks from this table). Each literal was
-# confirmed by a direct officecdn VersionDescriptor.xml probe replayable from
-# the audit doc — never copied blindly from research prose.
+# for every following run (threat T-20-02). Each literal was confirmed by a
+# direct officecdn VersionDescriptor.xml probe replayable from the audit doc
+# — never copied blindly from research prose. Plan 20-02 rewrote the bash
+# fallbacks in sh/download-updates-tasks/65-office-c2r.bash from THIS table,
+# so the three sources (table / baseline / code) always carry the same
+# literals (coherence pinned by sh/tests/verify-office-servicing.bash).
+#   o2k19 : 16.0.10417.20228 supersedes the research prose (10417.20207) —
+#           the live CDN probe advertises a newer same-series revision; the
+#           deliberate re-pin is documented in the baseline header (one
+#           commit referencing the audit doc, per its re-pin procedure).
 declare -A OFFICE_C2R_BASELINE_LITERALS=(
-  ["o2k19"]="16.0.10417.20207"
+  ["o2k19"]="16.0.10417.20228"
   ["o2k21"]="16.0.14334.20974"
   ["o2k24"]="16.0.17932.21056"
 )

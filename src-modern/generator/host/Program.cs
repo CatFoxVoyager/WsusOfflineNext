@@ -58,6 +58,37 @@ namespace WSUSOffline.Generator
             InitializeWebView();
         }
 
+        private static string DescribeWebView2Failure(Exception ex)
+        {
+            // Classify broadly, never narrowly: any member of the
+            // E_NOINTERFACE / 0x80004002 family (the exact failure the SDK
+            // bump in 261102-aci targeted) must read as "runtime too old",
+            // not as an opaque crash.
+            string rootCause;
+            if (ex is WebView2RuntimeNotFoundException
+                || ex.Message.Contains("Unable to find", StringComparison.OrdinalIgnoreCase))
+            {
+                rootCause = "The Microsoft Edge WebView2 Runtime was not found on this computer.";
+            }
+            else if (ex.Message.Contains("not compatible", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("too old", StringComparison.OrdinalIgnoreCase)
+                || ex is InvalidCastException
+                || ex.Message.Contains("E_NOINTERFACE", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("0x80004002", StringComparison.OrdinalIgnoreCase))
+            {
+                rootCause = "The installed Microsoft Edge WebView2 Runtime is too old for this application.";
+            }
+            else
+            {
+                rootCause = "The modern interface failed to start.\n" + ex.Message;
+            }
+            return rootCause
+                + "\n\nInstall or update the Microsoft Edge WebView2 Runtime (Evergreen)."
+                + "\nOffline machines: run the installer shipped in this package:"
+                + "\nclient\\edge\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+                + "\n\nYou can also use the classic interface.";
+        }
+
         private async void InitializeWebView()
         {
             _webView = new WebView2 { Dock = DockStyle.Fill };
@@ -136,7 +167,17 @@ namespace WSUSOffline.Generator
             }
             catch (Exception ex)
             {
-                MessageBox.Show("WebView2 Error: " + ex.Message, "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // WebView2 startup failed: hand off to the legacy interface
+                // when it ships in the same directory, else explain.
+                string fallbackExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "UpdateGeneratorLegacy.exe");
+                if (File.Exists(fallbackExe))
+                {
+                    Process.Start(new ProcessStartInfo(fallbackExe) { UseShellExecute = true });
+                    Application.Exit();
+                    return;
+                }
+
+                MessageBox.Show(DescribeWebView2Failure(ex), "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 

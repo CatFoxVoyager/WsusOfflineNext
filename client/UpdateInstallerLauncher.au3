@@ -11,30 +11,59 @@
 #pragma compile(ProductName, "WSUS Offline Next")
 #pragma compile(ProductVersion, 5.0.0)
 
-Func _IsWebView2Installed()
+; Minimum WebView2 runtime version accepted by the modern interface: the
+; runtime version that matches the WebView2 SDK the application is built
+; against (the package documentation defines the default browser version as
+; the runtime version corresponding to the SDK version). An older runtime
+; passes a presence-only check but fails downstream with E_NOINTERFACE-class
+; errors, so it must route Legacy instead.
+Global Const $MIN_WEBVIEW2_VERSION = "156.0.4314.35"
+
+Func _GetWebView2Version()
     Local $sVer
     ; 1. System-wide Evergreen runtime (Windows 10 / 11 standard)
     $sVer = RegRead("HKLM64\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     $sVer = RegRead("HKLM64\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     $sVer = RegRead("HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     $sVer = RegRead("HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     ; 2. Per-user / Classic installer
     $sVer = RegRead("HKLM64\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-F55F-4E40-8A2F-69DF4B838507}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     $sVer = RegRead("HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-F55F-4E40-8A2F-69DF4B838507}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     $sVer = RegRead("HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv")
-    If $sVer <> "" Then Return True
+    If $sVer <> "" Then Return $sVer
     $sVer = RegRead("HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-F55F-4E40-8A2F-69DF4B838507}", "pv")
-    If $sVer <> "" Then Return True
-    ; 3. File system location checks
-    If FileExists(@ProgramFilesDir & "\Microsoft\EdgeWebView\Application") Then Return True
-    If FileExists("C:\Program Files (x86)\Microsoft\EdgeWebView\Application") Then Return True
-    Return False
+    If $sVer <> "" Then Return $sVer
+    Return ""
+EndFunc
+
+Func _IsVersionAtLeast($sVersion, $sMinimum)
+    ; Numeric part-by-part comparison with >= semantics. A missing part
+    ; counts as 0 and a non-numeric part counts as 0 (fail-safe: an
+    ; unparsable runtime never routes Modern).
+    Local $aVersion = StringSplit($sVersion, ".")
+    Local $aMinimum = StringSplit($sMinimum, ".")
+    Local $iParts = $aVersion[0]
+    If $aMinimum[0] > $iParts Then $iParts = $aMinimum[0]
+    Local $iIndex, $iVerPart, $iMinPart
+    For $iIndex = 1 To $iParts
+        $iVerPart = 0
+        $iMinPart = 0
+        If $iIndex <= $aVersion[0] Then
+            If StringIsDigit($aVersion[$iIndex]) Then $iVerPart = Number($aVersion[$iIndex])
+        EndIf
+        If $iIndex <= $aMinimum[0] Then
+            If StringIsDigit($aMinimum[$iIndex]) Then $iMinPart = Number($aMinimum[$iIndex])
+        EndIf
+        If $iVerPart < $iMinPart Then Return False
+        If $iVerPart > $iMinPart Then Return True
+    Next
+    Return True
 EndFunc
 
 Func _CanRunModern()
@@ -48,8 +77,9 @@ Func _CanRunModern()
     Local $sModernExe = @ScriptDir & "\UpdateInstallerModern.exe"
     If Not FileExists($sModernExe) Then Return False
 
-    ; 4. WebView2 runtime must be available
-    If Not _IsWebView2Installed() Then Return False
+    ; 4. WebView2 runtime must be available and at least the SDK minimum
+    Local $sWv2Ver = _GetWebView2Version()
+    If Not _IsVersionAtLeast($sWv2Ver, $MIN_WEBVIEW2_VERSION) Then Return False
 
     Return True
 EndFunc

@@ -17,7 +17,7 @@
 # With --download (or when the cab is missing), the catalog is fetched first.
 
 # ===== Configuration =====
-readonly script_version="1.1"
+readonly script_version="1.2"
 
 # ===== Global variables =====
 work_dir=""
@@ -95,10 +95,26 @@ echo "extract-catalog: done — ${lines} id/url pairs in ${work_dir}/update-ids-
 
 # OFC-01: emit the per-family Office revision counter as a machine-readable
 # sidecar plus the loggable stdout table, then enforce the frozen baseline.
-# A drifted frozen family aborts the run BEFORE anything downstream consumes
-# the extraction (fail-closed, same shape as the guards above).
+# The AUTHORITATIVE per-family number is product-scoped: each family in
+# OFFICE_PRODUCT_REVISION_COUNTS gets its own XSLT pass over package.xml
+# (the same selector the download pipeline keys on), and its row in the
+# sidecar replaces any name-census row (audit 2026-11-01: Office MSI payload
+# names carry no version — file-name discrimination is structurally
+# impossible for o2k16). A drifted frozen family aborts the run BEFORE
+# anything downstream consumes the extraction (fail-closed).
 count_office_family_revisions "${work_dir}/update-ids-and-locations-all.txt" "${work_dir}/office-family-revision-counts.txt" \
   || { echo "extract-catalog: office family counting failed" >&2; exit 1; }
+for family in "${!OFFICE_PRODUCT_REVISION_COUNTS[@]}"; do
+  ids_file="${work_dir}/${OFFICE_PRODUCT_REVISION_COUNTS[${family}]}"
+  "${SYSTEMROOT}/System32/cscript.exe" //Nologo //B //E:vbs \
+    "${repo_root}/cmd/XSLT.vbs" \
+    "${work_dir}/package.xml" \
+    "${repo_root}/xslt/extract-revision-and-update-ids-${family}.xsl" \
+    "${ids_file}" \
+    || { echo "extract-catalog: product XSLT failed for ${family}" >&2; exit 1; }
+  count_product_revisions "${ids_file}" "${family}" "${work_dir}/office-family-revision-counts.txt" \
+    || { echo "extract-catalog: product revision counting failed for ${family}" >&2; exit 1; }
+done
 assert_office_frozen_baseline "${work_dir}/office-family-revision-counts.txt" "${repo_root}/ci/office-frozen-revision-baseline.txt" \
   || { echo "extract-catalog: frozen baseline assert failed — run aborted" >&2; exit 1; }
 

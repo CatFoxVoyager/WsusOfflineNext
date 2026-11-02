@@ -30,26 +30,37 @@
 # of this library (extract-catalog*.bash, regen-static-lists.bash) declares its
 # own `readonly script_version`, and a sourced redeclaration of the same
 # readonly name would abort every consumer at source time.
-readonly office_catalog_counts_version="1.0"
+readonly office_catalog_counts_version="1.1"
 
 # Family patterns: ERE applied to the FILE NAME (basename) of each catalog
 # URL ("<id>,<url>" pairs). Every declared family emits a line — including
 # zero; a zero count is a RESULT here, never an error (the discrimination is
 # the comparator's job below).
 #
-# HYPOTHESIS (validated against the real November 2026 catalog by the phase-20
-# audit — .planning/phases/20-office-au-catalogue-courant-novembre-2026/
-# 20-AUDIT-OFFICE.md): Office 2016 MSI payloads surface in the catalog as
-# MSP/EXE file names carrying a client-app token glued directly to 2016 and
-# followed by a free tail up to the extension (office2016-kb...-.msp,
-# mso2016-kb...-none_x.msp, word2016-kb...-x64.exe). The tokens are glued
-# WITHOUT a wildcard between token and 2016 on purpose: server-side 2016
-# products share the bare "2016" substring (sharepoint2016, projectserver2016,
-# sqlserver2016, dynamics2016) and are NOT Office client families — a loose
-# token + 2016 shape would count them in; none of them contains a glued
-# client token (projectserver2016 has no "project2016" substring).
-declare -A OFFICE_FAMILY_PATTERNS=(
-  ["o2k16"]='(office2016|mso2016|word2016|excel2016|powerpnt2016|powerpoint2016|outlook2016|access2016|visio2016|project2016|proof2016|proofing2016|lync2016|skypeforbusiness2016|graph2016|xlic2016|ace2016|sts2016|wac2016).*\.(msp|exe)$'
+# AUDIT CORRECTION (November 2026 catalog, 20-AUDIT-OFFICE.md): the table
+# starts EMPTY. The initial hypothesis (Office 2016 payloads carrying a
+# glued "…2016" token in the file name) was probed against the real catalog
+# and is structurally impossible, not merely mistokened: the 98,548-pair
+# extraction carries ZERO .msp payloads (Office MSI ships as CAB-wrapped MSPs
+# with version-agnostic names — mso-x-none_<40-hex>.cab, excel-x-none_…,
+# word-x-none_…), and every "2016" name belongs to a server product
+# (exchange2016 x91, sqlserver2016 x87, dpm/ws2016, GUID-fragment noise).
+# File names carry no Office version: the authoritative per-family counter is
+# the PRODUCT-SCOPED revision-id extraction below (the same selector the
+# download pipeline uses). This table remains the extension point for any
+# future family whose payload names carry their own token; the battery
+# injects a fixture-scoped pattern to exercise the mechanism.
+declare -A OFFICE_FAMILY_PATTERNS=()
+
+# Product-scoped revision counters: family -> name of the revision-id file
+# the EXTRACTOR must produce before counting (the platform XSLT run on
+# package.xml with xslt/extract-revision-and-update-ids-<family>.xsl —
+# Windows: cscript/XSLT.vbs, Linux: xsltproc). The lib only counts the
+# file's lines and owns the sidecar row. o2k16 selects updates by Product Id
+# 25aed893-7c2d-4a31-ae22-28ff8ac150ed (Office 2016) — the audit-proven
+# discriminator.
+declare -A OFFICE_PRODUCT_REVISION_COUNTS=(
+  ["o2k16"]="o2k16-revision-ids.txt"
 )
 
 # Audited C2R channel literals (November 2026 audit). These are the LOCKED
@@ -103,6 +114,41 @@ function count_office_family_revisions ()
     printf 'office-revision-counts: %s=%s\n' "${family}" "${total}"
   done
   sort -o "${out_file}" "${out_file}"
+  return 0
+}
+
+# Count a family from its PRODUCT-SCOPED revision-id file (the audit-proven
+# authoritative counter — see OFFICE_PRODUCT_REVISION_COUNTS).
+#
+# Usage: count_product_revisions <revision-ids-file> <family> <out-file>
+#
+# <revision-ids-file> holds "#<RevisionId>#,<UpdateId>" lines produced by the
+# extractor's platform XSLT run (xslt/extract-revision-and-update-ids-<family>.xsl
+# on package.xml). The family row in <out-file> is REPLACED (or inserted) —
+# when a name-census row and a product-scoped row would collide, the
+# product-scoped number wins: it is the one the download pipeline itself
+# keys on. Zero is a result, never an error; a missing/unreadable
+# revision-id file fails closed with 1.
+function count_product_revisions ()
+{
+  local revision_ids_file="$1"
+  local family="$2"
+  local out_file="$3"
+  local total=0
+  if [ ! -r "${revision_ids_file}" ]; then
+    echo "office-catalog-counts: revision-ids file missing or unreadable: ${revision_ids_file}" >&2
+    return 1
+  fi
+  total="$(grep -c . "${revision_ids_file}" || true)"
+  if [ -f "${out_file}" ]; then
+    awk -F'\t' -v fam="${family}" '$1 != fam' "${out_file}" > "${out_file}.tmp"
+  else
+    : > "${out_file}.tmp"
+  fi
+  printf '%s\t%s\n' "${family}" "${total}" >> "${out_file}.tmp"
+  sort -o "${out_file}.tmp" "${out_file}.tmp"
+  mv "${out_file}.tmp" "${out_file}"
+  printf 'office-revision-counts: %s=%s (product-scoped revision ids)\n' "${family}" "${total}"
   return 0
 }
 

@@ -408,7 +408,7 @@ Private Sub DetermineOffice16Product(objShell, objFS, strMSOVersion)
   ElseIf InStr(1, strC2RIds, "2021", vbTextCompare) > 0 Then
     strOfficeProductName = "Office LTSC 2021"
     strOfficeProductFamily = "Office LTSC 2021"
-    strOfficeEOLStatus = "EOL (Supported until Oct 2026)"
+    strOfficeEOLStatus = "EOL (End of Life - Oct 2026)"
     numOfficeIsC2R = 1
   ElseIf InStr(1, strC2RIds, "2019", vbTextCompare) > 0 Then
     strOfficeProductName = "Office 2019"
@@ -433,7 +433,7 @@ Private Sub DetermineOffice16Product(objShell, objFS, strMSOVersion)
         ElseIf numBuild >= 14000 Then
           strOfficeProductName = "Office LTSC 2021"
           strOfficeProductFamily = "Office LTSC 2021"
-          strOfficeEOLStatus = "EOL (Supported until Oct 2026)"
+          strOfficeEOLStatus = "EOL (End of Life - Oct 2026)"
           numOfficeIsC2R = 1
         ElseIf numBuild >= 10000 Then
           strOfficeProductName = "Office 2019"

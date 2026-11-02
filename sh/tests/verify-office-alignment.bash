@@ -129,7 +129,7 @@ discriminate_office16() {
         is_c2r=1
     elif [[ "$c2r_ids" == *"2021"* ]]; then
         prod_name="Office LTSC 2021"
-        eol_status="EOL (Supported until Oct 2026)"
+        eol_status="EOL (End of Life - Oct 2026)"
         is_c2r=1
     elif [[ "$c2r_ids" == *"2019"* ]]; then
         prod_name="Office 2019"
@@ -150,7 +150,7 @@ discriminate_office16() {
                     is_c2r=1
                 elif (( num_build >= 14000 )); then
                     prod_name="Office LTSC 2021"
-                    eol_status="EOL (Supported until Oct 2026)"
+                    eol_status="EOL (End of Life - Oct 2026)"
                     is_c2r=1
                 elif (( num_build >= 10000 )); then
                     prod_name="Office 2019"
@@ -177,7 +177,7 @@ fi
 
 # State B: Office LTSC 2021
 res_b="$(discriminate_office16 "ProPlus2021Volume" "16.0.14332.20204")"
-if [[ "$res_b" != "Office LTSC 2021|EOL (Supported until Oct 2026)|1" ]]; then
+if [[ "$res_b" != "Office LTSC 2021|EOL (End of Life - Oct 2026)|1" ]]; then
     echo "FAIL: State B expected Office LTSC 2021 EOL 1, got: $res_b"
     exit 1
 fi

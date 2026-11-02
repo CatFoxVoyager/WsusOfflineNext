@@ -9,6 +9,7 @@
 #   Test 3: Architecture isolation in main updates (ExcludeList-${arch}.txt)
 #   Test 4: C2R Metadata staging, format, and SHA256 hash database integrity
 #   Test 5: Audited C2R fallback baseline literals + audit-baseline coherence
+#   Test 6: Explicit audit-only guard on the Linux C2R lane (banner + AuditOnly=1)
 # =======================================================================
 
 set -e
@@ -29,7 +30,7 @@ echo "======================================================================="
 # -----------------------------------------------------------------------
 # Test 1: Microsoft CDN Audience GUID resolution
 # -----------------------------------------------------------------------
-echo "[Test 1/5] Verifying Microsoft CDN audience GUIDs in 65-office-c2r.bash..."
+echo "[Test 1/6] Verifying Microsoft CDN audience GUIDs in 65-office-c2r.bash..."
 
 c2r_task="${repo_root}/sh/download-updates-tasks/65-office-c2r.bash"
 if [[ ! -f "$c2r_task" ]]; then
@@ -65,7 +66,7 @@ echo "[PASS] Test 1: Microsoft CDN audience GUIDs accurately resolved for 2019, 
 # -----------------------------------------------------------------------
 # Test 2: ODT XML Configuration Templates structure and channel contracts
 # -----------------------------------------------------------------------
-echo "[Test 2/5] Verifying ODT XML configuration templates structure and contracts..."
+echo "[Test 2/6] Verifying ODT XML configuration templates structure and contracts..."
 
 templates_dir="${repo_root}/static/odt-templates"
 if [[ ! -d "$templates_dir" ]]; then
@@ -117,7 +118,7 @@ echo "[PASS] Test 2: ODT configuration templates validated with valid XML syntax
 # -----------------------------------------------------------------------
 # Test 3: Architecture isolation in main updates (ExcludeList-${arch}.txt)
 # -----------------------------------------------------------------------
-echo "[Test 3/5] Verifying architecture isolation in Linux main updates task..."
+echo "[Test 3/6] Verifying architecture isolation in Linux main updates task..."
 
 main_task="${repo_root}/sh/download-updates-tasks/60-main-updates.bash"
 if [[ ! -f "$main_task" ]]; then
@@ -140,7 +141,7 @@ echo "[PASS] Test 3: Dual-architecture isolation verified for Linux main updates
 # -----------------------------------------------------------------------
 # Test 4: C2R Metadata staging, format, and SHA256 hash database integrity
 # -----------------------------------------------------------------------
-echo "[Test 4/5] Verifying C2R metadata staging and hash database contracts..."
+echo "[Test 4/6] Verifying C2R metadata staging and hash database contracts..."
 
 sandbox_dir=$(mktemp -d /tmp/wou_test_c2r_XXXXXX)
 trap 'rm -rf "$sandbox_dir"' EXIT
@@ -190,7 +191,7 @@ echo "[PASS] Test 4: C2R metadata generation and SHA256 hash contract validated.
 # (OFC-02: a failed CDN resolution must fall back on the REAL latest build of
 #  each channel — never on a stale literal that masks the failure)
 # -----------------------------------------------------------------------
-echo "[Test 5/5] Verifying audited C2R baseline literals in 65-office-c2r.bash..."
+echo "[Test 5/6] Verifying audited C2R baseline literals in 65-office-c2r.bash..."
 
 # The three CDN-audited fallback literals must be present verbatim
 # (November 2026 audit probes: o2k19 re-pinned to the live advertise
@@ -255,7 +256,79 @@ else
     echo "[PASS] Test 5: audited baseline literals pinned; coherence with ci/office-frozen-revision-baseline.txt verified."
 fi
 
+# -----------------------------------------------------------------------
+# Test 6: Explicit audit-only guard on the Linux C2R lane (OFC-06, operator
+# decision 2026-11-01): a metadata-only staging must ANNOUNCE its status —
+# banner at the top of the output + machine-readable AuditOnly=1 in the
+# metadata + the Windows path pointer for the real media. The descriptor
+# resolution stays informational; no payload is ever built on this path
+# (deferred to v4.2, OFC-2-02).
+# -----------------------------------------------------------------------
+echo "[Test 6/6] Verifying the explicit audit-only guard on the Linux C2R lane..."
+
+# Static pins in the task file: annotated header section, runtime banner
+# literals, Windows path pointer, machine-readable metadata key.
+if ! grep -qF "===== C2R Linux : AUDIT-ONLY =====" "$c2r_task"; then
+    echo "FAIL: $c2r_task missing the 'C2R Linux : AUDIT-ONLY' header section."
+    exit 1
+fi
+for lit in "C2R Linux = audit-only" "pas de payload" 'cmd\DownloadOfficeC2R.cmd'; do
+    if ! grep -qF "$lit" "$c2r_task"; then
+        echo "FAIL: $c2r_task missing audit-only literal: $lit"
+        exit 1
+    fi
+done
+if ! grep -qF "AuditOnly=1" "$c2r_task"; then
+    echo "FAIL: $c2r_task missing AuditOnly=1 (metadata must carry the machine-readable audit-only status)."
+    exit 1
+fi
+
+# BITE (real sandbox run): execute the task standalone with FAILING curl/wget
+# stubs at the HEAD of PATH. The CDN descriptor is then never fetched — the
+# offline-by-construction guarantee is BY STUB, not by assuming a host without
+# network: without the stubs this run would do a real CDN fetch (slow, flaky,
+# host-dependent). The stubs make the failure deterministic online AND
+# offline, driving the run down the audited-baseline fallback path pinned by
+# Test 5. Against the PRE-FIX task bytes this test fails: that run staged a
+# metadata.ini with NO AuditOnly key and NO banner (the silence state OFC-06
+# removes).
+stub_dir="${sandbox_dir}/stubs"
+mkdir -p "$stub_dir"
+printf '#!/usr/bin/env bash\nexit 3\n' > "${stub_dir}/curl"
+printf '#!/usr/bin/env bash\nexit 4\n' > "${stub_dir}/wget"
+chmod +x "${stub_dir}/curl" "${stub_dir}/wget"
+sandbox_dest="${sandbox_dir}/c2r-auditonly"
+sandbox_log="${sandbox_dir}/c2r-auditonly.log"
+if ! PATH="${stub_dir}:$PATH" bash "$c2r_task" o2k21 x86 glb "$sandbox_dest" > "$sandbox_log" 2>&1; then
+    echo "FAIL: sandboxed audit-only run exited non-zero (stubbed CDN resolution must fall back, not abort)."
+    exit 1
+fi
+# The banner must be at the TOP of the output, not buried.
+if ! head -n 3 "$sandbox_log" | grep -qF "C2R Linux = audit-only" || ! grep -qF "pas de payload" "$sandbox_log"; then
+    echo "FAIL: sandboxed run output missing the audit-only banner at the top (stdout must announce the status up front)."
+    exit 1
+fi
+if ! grep -qF 'cmd\DownloadOfficeC2R.cmd' "$sandbox_log"; then
+    echo "FAIL: sandboxed run output missing the Windows path pointer for the real media."
+    exit 1
+fi
+sandbox_meta="${sandbox_dest}/o2k21/x86/Office/Data/metadata.ini"
+if [[ ! -f "$sandbox_meta" ]]; then
+    echo "FAIL: sandboxed run did not produce metadata.ini."
+    exit 1
+fi
+if ! grep -qF "AuditOnly=1" "$sandbox_meta"; then
+    echo "FAIL: sandboxed metadata.ini missing AuditOnly=1 (pre-fix silence state — the bite)."
+    exit 1
+fi
+if ! grep -qF "Build=16.0.14334.20974" "$sandbox_meta"; then
+    echo "FAIL: sandboxed fallback did not use the audited o2k21 terminal build 16.0.14334.20974."
+    exit 1
+fi
+
+echo "[PASS] Test 6: Linux C2R lane announces audit-only (banner up front + AuditOnly=1 + Windows path pointer) under a real stubbed run."
+
 echo "======================================================================="
-echo "ALL TESTS PASSED: Linux Office Servicing Regression Suite (5/5 green)"
+echo "ALL TESTS PASSED: Linux Office Servicing Regression Suite (6/6 green)"
 echo "======================================================================="
 exit 0

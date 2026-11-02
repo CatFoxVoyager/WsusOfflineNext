@@ -8,6 +8,23 @@
 # Win32 emulation or setup.exe under Linux.
 # =======================================================================
 
+# ===== C2R Linux : AUDIT-ONLY =====
+#
+# This task produces METADATA ONLY (metadata.ini). It never downloads or
+# builds any C2R payload: no stream.dat, no cab, no ODT staging happens on
+# this path. The REAL offline media for Office 2019 / LTSC 2021 / LTSC 2024
+# is produced on Windows by cmd\DownloadOfficeC2R.cmd (ODT staging with
+# fail-closed integrity — consumed by tests/verify-office-staging.cmd).
+#
+# The CDN descriptor resolution below is KEPT as an information source: it
+# dates the audit snapshot, it never feeds a payload (Linux C2R payload
+# construction is DEFERRED to v4.2 — OFC-2-02).
+#
+# Operator decision 2026-11-01 (OFC-06, phase 20 context): a metadata-only
+# staging that stays silent is a lie by omission — every run must announce
+# its audit-only status up front (banner at the top of the output) and every
+# metadata.ini must carry the machine-readable AuditOnly=1 key.
+
 set -e
 set -u
 export LC_ALL=C
@@ -65,7 +82,16 @@ function stage_c2r_build() {
     local arch="$2"
     local lang="${3:-glb}"
     local output_root="${4:-../client/office/c2r}"
-    
+
+    # AUDIT-ONLY guard (OFC-06, operator decision 2026-11-01): announce the
+    # status BEFORE anything else — a metadata-only staging must never claim
+    # media it did not produce. Keep the descriptor resolution below purely
+    # informational; the payload lives on the Windows path.
+    printf '%s\n' "======================================================================="
+    printf '%s\n' "WARNING: C2R Linux = audit-only - pas de payload (metadata seule)."
+    printf '%s\n' "         Real offline media: cmd\\DownloadOfficeC2R.cmd (Windows path)."
+    printf '%s\n' "======================================================================="
+
     local channel_guid
     channel_guid="$(get_c2r_channel_guid "$prod")"
     
@@ -124,6 +150,7 @@ ChannelGuid=${channel_guid}
 Build=${latest_build}
 Language=${lang}
 StagedDate=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+AuditOnly=1
 EOF
 
     echo "Info: Staged metadata for ${prod} ${arch} build ${latest_build}."

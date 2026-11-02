@@ -108,6 +108,59 @@ if not exist "%ODT_EXE%" (
   exit /b 1
 )
 
+rem *** ODT freshness check (warn-only) ***
+rem *** Compares the pinned ODT build with the Microsoft release-history page ***
+rem *** at generation time. This block NEVER aborts the run: it holds no ***
+rem *** failure exit at all - an offline host, a fetch failure, a timeout or ***
+rem *** an unreadable page warn and fall through. It never touches the ***
+rem *** pinned download URL above: the pin moves only by a deliberate re-pin ***
+rem *** (the mirror port keeps byte-identical pins of its own). ***
+set "ODT_HISTORY_URL=https://learn.microsoft.com/en-us/officeupdates/odt-release-history"
+set "ODT_HISTORY_TMP=%TEMP%\odt-release-history.html"
+rem *** build token searched on the release-history page (dot form, as the ***
+rem *** page spells builds); MUST mirror the build embedded in the pinned ***
+rem *** download URL above - ODT_PIN_TOKEN is its dash form as spelled in ***
+rem *** the file name ***
+set "ODT_PIN_BUILD=20430.20146"
+set "ODT_PIN_TOKEN=%ODT_PIN_BUILD:.=-%"
+set "FRESH_WGET="
+if exist "%REPO_ROOT%\bin\wget.exe" set "FRESH_WGET=%REPO_ROOT%\bin\wget.exe"
+if not defined FRESH_WGET if exist "%REPO_ROOT%\bin\wget64.exe" set "FRESH_WGET=%REPO_ROOT%\bin\wget64.exe"
+echo --- ODT staging report: freshness ---
+if defined DRY_RUN goto FreshnessDryRun
+if not defined FRESH_WGET goto FreshnessSkip
+"%FRESH_WGET%" -q -T 30 -t 1 -O "%ODT_HISTORY_TMP%" "%ODT_HISTORY_URL%" >nul 2>&1
+if errorlevel 1 goto FreshnessSkip
+set "FRESH_HEAD="
+for /f "tokens=2-5 delims=. " %%A in ('findstr /i /r /c:"Version 16\.0\.[0-9][0-9]*\.[0-9][0-9]*" "%ODT_HISTORY_TMP%"') do if not defined FRESH_HEAD set "FRESH_HEAD=%%C.%%D"
+if not defined FRESH_HEAD (
+  echo Warning: ODT freshness verdict inconclusive - no build entry read on the release history page; pin %ODT_PIN_BUILD% not confirmed, refresh deliberately via the pinned-URL procedure.
+  goto FreshnessDone
+)
+if not "%FRESH_HEAD%"=="%ODT_PIN_BUILD%" (
+  echo Warning: ODT pin may be stale - the newest release-history entry does not list pin %ODT_PIN_BUILD%; refresh deliberately via the pinned-URL procedure.
+  goto FreshnessDone
+)
+findstr /i "officedeploymenttool_" "%ODT_HISTORY_TMP%" 2>nul | findstr /i /v "%ODT_PIN_TOKEN%" >nul 2>&1
+if errorlevel 1 (
+  echo Info: ODT pin is current per release history.
+) else (
+  echo Warning: ODT pin may be stale - release history lists another build; refresh deliberately via the pinned-URL procedure.
+)
+goto FreshnessDone
+
+:FreshnessDryRun
+echo Info: dry-run - the ODT freshness check is skipped, a dry test never probes the network.
+goto FreshnessDone
+
+:FreshnessSkip
+echo Warning: freshness check skipped (offline or source unreachable).
+:FreshnessDone
+if exist "%ODT_HISTORY_TMP%" del "%ODT_HISTORY_TMP%" 2>nul
+set "FRESH_WGET="
+set "FRESH_HEAD="
+echo --- end ODT freshness section ---
+
 rem *** Authenticode verification via sigcheck if available ***
 if exist "%REPO_ROOT%\bin\sigcheck.exe" (
   echo Verifying digital signature of %ODT_EXE%...

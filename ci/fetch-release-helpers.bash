@@ -40,7 +40,7 @@
 # `expand` is never consulted: on git-bash hosts it resolves to GNU coreutils
 # and refuses -F.
 #
-# Signature position (cmd/DownloadOfficeC2R.cmd:101-114, ported): the two-tier
+# Signature position (cmd/DownloadOfficeC2R.cmd:164-178, ported): the two-tier
 # Authenticode gate runs on the extracted setup.exe whenever bin/sigcheck64.exe
 # exists, passes its own MZ header check AND the host is a Windows-side bash
 # (WINDIR + cygpath present) — sigcheck is a Windows PE, so a Linux host that
@@ -308,7 +308,7 @@ if [ ! -f bin/odt/setup.exe ]; then
     exit 1
   fi
   # T-16-04, second tier: the two-tier Authenticode gate ported from
-  # cmd/DownloadOfficeC2R.cmd:101-114, run only when a PE sigcheck64.exe exists
+  # cmd/DownloadOfficeC2R.cmd:164-178, run only when a PE sigcheck64.exe exists
   # on a Windows-side bash host (see the header for the host condition).
   if [ -f bin/sigcheck64.exe ] && [ "$(head -c 2 bin/sigcheck64.exe)" = "MZ" ] \
      && [ -n "${WINDIR:-}" ] && command -v cygpath >/dev/null 2>&1; then

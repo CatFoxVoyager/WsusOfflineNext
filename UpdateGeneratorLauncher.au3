@@ -1,14 +1,14 @@
-; ***  WSUS Offline Next 5.1.0+2026.11 - Generator Adaptive Launcher  ***
+; ***  WSUS Offline Next 5.1.1+2026.11 - Generator Adaptive Launcher  ***
 ; ***  Automatically routes to Modern (.NET 8) or Legacy (Win32)  ***
 
 #pragma compile(CompanyName, "WSUS Offline Next Project")
 #pragma compile(FileDescription, "WSUS Offline Update Generator (Adaptive Launcher)")
-#pragma compile(FileVersion, 5.1.0)
+#pragma compile(FileVersion, 5.1.1)
 #pragma compile(InternalName, "GeneratorLauncher")
 #pragma compile(LegalCopyright, "GNU GPLv3")
 #pragma compile(OriginalFilename, UpdateGenerator.exe)
 #pragma compile(ProductName, "WSUS Offline Next")
-#pragma compile(ProductVersion, 5.1.0)
+#pragma compile(ProductVersion, 5.1.1)
 
 ; Minimum WebView2 runtime version accepted by the modern interface: the
 ; runtime version that matches the WebView2 SDK the application is built

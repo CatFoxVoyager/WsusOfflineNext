@@ -224,7 +224,44 @@ else
     fi
 fi
 
+
+# ---- scenario E: live proof of the heartbeat liveness (slow stand-in) ----
+# The scenario D stand-in exits immediately - useless to observe a heartbeat.
+# This stand-in SLEEPS 2.5s before returning 0, with ODT_HEARTBEAT_SECONDS
+# pinned to 1s (no 30s real wait in CI): at least 2 heartbeat lines are
+# expected in run.log before the process exits, and rc must still be 0 -
+# proving no hard timeout/kill was introduced on the ODT child process.
+if [ -z "${CSC}" ]; then
+    echo "SKIP scenario E: no OS-bundled csc.exe found - heartbeat liveness not exercised live on this host"
+else
+    scaffold
+    SLOW_STANDIN_DIR="$(mktemp -d)"
+    printf 'class OdtSlowStandIn { static int Main() { System.Threading.Thread.Sleep(2500); return 0; } }\n' > "${SLOW_STANDIN_DIR}/odt.cs"
+    SLOW_STANDIN_WIN="$(cygpath -w "${SLOW_STANDIN_DIR}")"
+    if ! "${CSC}" -nologo "-out:${SLOW_STANDIN_WIN}\\standin.exe" "${SLOW_STANDIN_WIN}\\odt.cs" > "${SLOW_STANDIN_DIR}/csc.log" 2>&1; then
+        echo "SKIP scenario E: stand-in compilation failed - $(head -1 "${SLOW_STANDIN_DIR}/csc.log")"
+        rm -rf "${SLOW_STANDIN_DIR}" "${SB_DIR}"
+    else
+        cp "${SLOW_STANDIN_DIR}/standin.exe" "${SB_DIR}/bin/odt/setup.exe"
+        # the stand-in only sleeps and exits 0 - it writes no payload itself,
+        # so a fake file is pre-seeded in the destination (as scenario D also
+        # does) or the later integrity-update step fails on an empty directory
+        mkdir -p "${SB_DIR}/client/office/c2r/o2k24/x64"
+        printf 'fake C2R payload marker\n' > "${SB_DIR}/client/office/c2r/o2k24/x64/metadata.ini"
+        ( cd "${SB_DIR}" && TEMP="${TEMP_WIN}" TMP="${TEMP_WIN}" ODT_HEARTBEAT_SECONDS=1 \
+            cmd //c 'cmd\DownloadOfficeC2R.cmd o2k24 x64 en-us' > run.log 2>&1 )
+        rc=$?
+        [ "${rc}" -eq 0 ] \
+            || fail "scenario E: the slow stand-in run exited ${rc}, expected 0 (a hard timeout/kill would show here)"
+        n_heartbeat="$(grep -ci 'still downloading' "${SB_DIR}/run.log")"
+        [ "${n_heartbeat}" -ge 2 ] \
+            || fail "scenario E: expected >= 2 heartbeat lines in run.log, got ${n_heartbeat} (silent-stream regression)"
+        echo "scenario E PASS: heartbeat liveness - rc 0 (no hard timeout/kill), ${n_heartbeat} heartbeat lines over a 2.5s sleep at 1s interval"
+        rm -rf "${SLOW_STANDIN_DIR}" "${SB_DIR}"
+    fi
+fi
+
 guard_after
 rm -rf "${SB_DIR}"
 unset SB_DIR
-echo "PASS office-c2r failclosed battery (A fail-closed bite with a non-PE stub / B /dry-run lenience without ghost file / C atomic slice rewrite structure / D live atomic rewrite with sibling survival, offline, sandboxed)"
+echo "PASS office-c2r failclosed battery (A fail-closed bite with a non-PE stub / B /dry-run lenience without ghost file / C atomic slice rewrite structure / D live atomic rewrite with sibling survival / E heartbeat liveness proof with a slow stand-in, offline, sandboxed)"

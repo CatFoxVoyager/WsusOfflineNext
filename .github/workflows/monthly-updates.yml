@@ -181,7 +181,12 @@ jobs:
         # distro is docker-desktop -- a minimal distro with no /bin/bash,
         # so every step died with "execvpe(/bin/bash) failed" (run 41665534094).
         # Pinning Git bash makes the job independent of the machine's WSL state.
-        shell: 'C:\Program Files\Git\bin\bash.exe {0}'
+        # 8.3 short path, forward slashes, NO spaces: the Actions executor
+        # fails to parse a shell path containing spaces/backslashes with
+        # "Second path fragment must not be a drive or UNC name" before the
+        # step even starts (run 41700189978). C:\PROGRA~1 is the NTFS short
+        # name of C:\Program Files (verified present on the runner machine).
+        shell: C:/PROGRA~1/Git/bin/bash.exe {0}
     steps:
       - name: Checkout (includes the refreshed lists)
         uses: actions/checkout@v7

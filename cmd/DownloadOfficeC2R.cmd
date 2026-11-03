@@ -200,9 +200,14 @@ rem *** 3. Ensure destination folder exists ***
 if not exist "%DEST_DIR%" mkdir "%DEST_DIR%" 2>nul
 
 rem *** 4. Run ODT download ***
-echo Starting ODT download process...
+if not defined ODT_HEARTBEAT_SECONDS set "ODT_HEARTBEAT_SECONDS=30"
+echo Starting ODT download process (heartbeat every %ODT_HEARTBEAT_SECONDS%s - no console output is otherwise expected mid-download)...
 echo Command: "%ODT_EXE%" /download "%CONFIG_XML%"
-"%ODT_EXE%" /download "%CONFIG_XML%"
+powershell -NoProfile -Command ^
+  "$p = Start-Process -FilePath '%ODT_EXE%' -ArgumentList '/download', '%CONFIG_XML%' -PassThru -NoNewWindow; " ^
+  "$interval = %ODT_HEARTBEAT_SECONDS%; " ^
+  "do { $exited = $p.WaitForExit($interval * 1000); if (-not $exited) { Write-Host '[ODT] still downloading via Office Deployment Tool - heartbeat only, zero console output during the actual download is normal ODT behavior' } } while (-not $exited); " ^
+  "exit $p.ExitCode;"
 set "ODT_EXIT=%ERRORLEVEL%"
 
 rem *** 5. Remove the generated config manifest BEFORE any exit path - the ***

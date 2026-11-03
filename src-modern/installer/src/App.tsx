@@ -177,7 +177,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-semibold text-zinc-100 tracking-tight">WSUS Offline Next Installer</h1>
               <span className="text-[11px] px-2 py-0.5 rounded bg-dark-800 text-zinc-300 border border-dark-700 font-mono font-medium">
-                v5.1.1+2026.11 • Administrator access
+                v5.2.0+2026.11 • Administrator access
               </span>
             </div>
             <p className="text-[11px] text-zinc-400">Offline update installer for Windows and Office</p>

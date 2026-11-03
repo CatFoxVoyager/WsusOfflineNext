@@ -204,7 +204,8 @@ if not defined ODT_HEARTBEAT_SECONDS set "ODT_HEARTBEAT_SECONDS=30"
 echo Starting ODT download process (heartbeat every %ODT_HEARTBEAT_SECONDS%s - no console output is otherwise expected mid-download)...
 echo Command: "%ODT_EXE%" /download "%CONFIG_XML%"
 powershell -NoProfile -Command ^
-  "$p = Start-Process -FilePath '%ODT_EXE%' -ArgumentList '/download', '%CONFIG_XML%' -PassThru -NoNewWindow; " ^
+  "$ErrorActionPreference = 'Stop'; " ^
+  "try { $p = Start-Process -FilePath '%ODT_EXE%' -ArgumentList '/download', '%CONFIG_XML%' -PassThru -NoNewWindow; } catch { Write-Host $_.Exception.Message; exit 1; }; " ^
   "$interval = %ODT_HEARTBEAT_SECONDS%; " ^
   "do { $exited = $p.WaitForExit($interval * 1000); if (-not $exited) { Write-Host '[ODT] still downloading via Office Deployment Tool - heartbeat only, zero console output during the actual download is normal ODT behavior' } } while (-not $exited); " ^
   "exit $p.ExitCode;"

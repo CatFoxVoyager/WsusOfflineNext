@@ -58,23 +58,35 @@ namespace WSUSOffline.Generator
             InitializeWebView();
         }
 
+        private static bool IsWebView2RuntimeMissing(Exception ex)
+        {
+            return ex is WebView2RuntimeNotFoundException
+                || ex.Message.Contains("Unable to find", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Classify broadly, never narrowly: any member of the
+        // E_NOINTERFACE / 0x80004002 family (the exact failure the SDK
+        // bump in 261102-aci targeted, and the dead-RCW getter crash of
+        // issue #21) must read as "runtime too old", not as an opaque
+        // crash. Shared by the init catch and the global exception net.
+        private static bool IsWebView2FailureFamily(Exception ex)
+        {
+            return IsWebView2RuntimeMissing(ex)
+                || ex is InvalidCastException
+                || ex.Message.Contains("not compatible", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("too old", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("E_NOINTERFACE", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("0x80004002", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string DescribeWebView2Failure(Exception ex)
         {
-            // Classify broadly, never narrowly: any member of the
-            // E_NOINTERFACE / 0x80004002 family (the exact failure the SDK
-            // bump in 261102-aci targeted) must read as "runtime too old",
-            // not as an opaque crash.
             string rootCause;
-            if (ex is WebView2RuntimeNotFoundException
-                || ex.Message.Contains("Unable to find", StringComparison.OrdinalIgnoreCase))
+            if (IsWebView2RuntimeMissing(ex))
             {
                 rootCause = "The Microsoft Edge WebView2 Runtime was not found on this computer.";
             }
-            else if (ex.Message.Contains("not compatible", StringComparison.OrdinalIgnoreCase)
-                || ex.Message.Contains("too old", StringComparison.OrdinalIgnoreCase)
-                || ex is InvalidCastException
-                || ex.Message.Contains("E_NOINTERFACE", StringComparison.OrdinalIgnoreCase)
-                || ex.Message.Contains("0x80004002", StringComparison.OrdinalIgnoreCase))
+            else if (IsWebView2FailureFamily(ex))
             {
                 rootCause = "The installed Microsoft Edge WebView2 Runtime is too old for this application.";
             }
@@ -87,6 +99,128 @@ namespace WSUSOffline.Generator
                 + "\nOffline machines: run the installer shipped in this package:"
                 + "\nclient\\edge\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
                 + "\n\nYou can also use the classic interface.";
+        }
+
+        // --- Round-3 WebView2 defenses (issue #21): startup gate before any
+        // WebView2 call, global exception net so the JIT/Watson dialog can
+        // never appear, and a fail-safe Legacy hand-off shared by both. ---
+
+        // Startup gate: an absent or too-old runtime is diagnosed here,
+        // before anything can crash mid-flight.
+        private static void EnsureWebView2RuntimeOrFallback()
+        {
+            string? detected = null;
+            try
+            {
+                detected = CoreWebView2Environment.GetAvailableBrowserVersionString();
+            }
+            catch { }
+
+            if (!string.IsNullOrEmpty(detected)
+                && WebView2Compat.IsVersionAtLeast(detected, WebView2Compat.MinWebView2Version))
+            {
+                return;
+            }
+
+            string message =
+                "Le composant Microsoft Edge WebView2 est absent ou trop ancien.\n"
+                + "Version détectée : " + (string.IsNullOrEmpty(detected) ? "absente" : detected) + "\n"
+                + "Requis : " + WebView2Compat.MinWebView2Version + " ou plus récent.\n\n"
+                + "Installez le WebView2 Evergreen Runtime :\n"
+                + "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+                + "Ouvrir l'interface classique (Legacy) à la place ?";
+            if (MessageBox.Show(message, "WSUS Offline Next",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+            {
+                StartLegacyInterfaceOrExplain();
+                Environment.Exit(0);
+            }
+            Environment.Exit(1);
+        }
+
+        // Single sink of the global exception net. A second fatal while the
+        // dialog is up exits immediately; the dialog owner performs the
+        // Legacy hand-off before the exit so the AppDomain event's
+        // cannot-continue semantics stay best-effort but never silent.
+        private static int _fatalInProgress;
+
+        internal static void HandleFatal(Exception ex)
+        {
+            if (Interlocked.Exchange(ref _fatalInProgress, 1) != 0)
+            {
+                Environment.Exit(1);
+            }
+            try
+            {
+                if (IsWebView2FailureFamily(ex))
+                {
+                    if (MessageBox.Show(
+                            DescribeWebView2Failure(ex) + "\n\nOuvrir l'interface classique (Legacy) ?",
+                            "WSUS Offline Next",
+                            MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    {
+                        StartLegacyInterfaceOrExplain();
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(
+                        "Une erreur inattendue a interrompu l'application.\n" + ex.Message,
+                        "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            catch { }
+            LogFatal(ex);
+            Environment.Exit(1);
+        }
+
+        private static void InstallGlobalExceptionNet()
+        {
+            // CatchException routes UI-thread exceptions to ThreadException
+            // instead of the JIT dialog; the AppDomain event covers worker
+            // threads (the process cannot continue after it, hence the
+            // dialog-then-exit order in HandleFatal).
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (s, e) => HandleFatal(e.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+                HandleFatal(e.ExceptionObject as Exception
+                    ?? new Exception(e.ExceptionObject?.ToString() ?? "unknown"));
+        }
+
+        // Hand off to the sibling legacy exe — the name produced by
+        // CompileAutoItScripts.cmd in every release tree; absent next to a
+        // bare dev build, which must degrade to a message, never a crash.
+        private static void StartLegacyInterfaceOrExplain()
+        {
+            string legacyPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "UpdateGeneratorLegacy.exe");
+            try
+            {
+                if (File.Exists(legacyPath))
+                {
+                    Process.Start(new ProcessStartInfo(legacyPath) { UseShellExecute = true });
+                    return;
+                }
+            }
+            catch { }
+            MessageBox.Show(
+                "L'interface classique (Legacy) est introuvable :\n" + legacyPath,
+                "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        private static void LogFatal(Exception ex)
+        {
+            try
+            {
+                string logDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WSUSOfflineNext", "Generator");
+                Directory.CreateDirectory(logDir);
+                File.AppendAllText(
+                    Path.Combine(logDir, "host-crash.log"),
+                    "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] " + ex + "\r\n\r\n");
+            }
+            catch { }
         }
 
         private async void InitializeWebView()
@@ -183,12 +317,19 @@ namespace WSUSOffline.Generator
 
         private void SendToWeb(object message)
         {
-            if (_webView?.CoreWebView2 == null) return;
-            string json = JsonSerializer.Serialize(message);
-            this.BeginInvoke(new Action(() =>
+            // Whole-body guard: on a dead WebView2 RCW the CoreWebView2
+            // GETTER itself throws (issue #21 stack). A silently dropped
+            // web-log line is friendlier than a fatal dialog, so swallow.
+            try
             {
-                try { _webView.CoreWebView2.PostWebMessageAsString(json); } catch { }
-            }));
+                if (_webView?.CoreWebView2 == null) return;
+                string json = JsonSerializer.Serialize(message);
+                this.BeginInvoke(new Action(() =>
+                {
+                    try { _webView.CoreWebView2.PostWebMessageAsString(json); } catch { }
+                }));
+            }
+            catch { return; }
         }
 
         private void LogToWeb(string text)
@@ -711,7 +852,53 @@ namespace WSUSOffline.Generator
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            // Net before gate so the startup gate itself is covered; gate
+            // before Run so no WebView2 call precedes the runtime check.
+            InstallGlobalExceptionNet();
+            EnsureWebView2RuntimeOrFallback();
             Application.Run(new MainWindow());
+        }
+    }
+
+    // Pure WebView2 version logic, callable without a WebView2 runtime
+    // (exercised by ci/tests/test-webview2-version-gate.sh).
+    public static class WebView2Compat
+    {
+        // Keep in sync with $MIN_WEBVIEW2_VERSION in
+        // UpdateGeneratorLauncher.au3 and client/UpdateInstallerLauncher.au3
+        // (the launcher-side twin of the in-host gate): the runtime version
+        // paired with the pinned WebView2 SDK. The battery cross-checks
+        // the const against both launcher literals, so a drift fails the
+        // build instead of the users.
+        public const string MinWebView2Version = "156.0.4314.35";
+
+        // 4-part numeric comparison with launcher-parity semantics: any
+        // '+'/'-' suffix is stripped first, then missing or non-numeric
+        // parts count as 0 (fail-safe: an unparsable runtime never passes).
+        public static bool IsVersionAtLeast(string? version, string minimum)
+        {
+            if (string.IsNullOrEmpty(version) || string.IsNullOrEmpty(minimum)) return false;
+            string[] versionParts = StripSuffix(version).Split('.');
+            string[] minimumParts = StripSuffix(minimum).Split('.');
+            int count = Math.Max(versionParts.Length, minimumParts.Length);
+            for (int i = 0; i < count; i++)
+            {
+                int v = i < versionParts.Length ? ParseNumericPart(versionParts[i]) : 0;
+                int m = i < minimumParts.Length ? ParseNumericPart(minimumParts[i]) : 0;
+                if (v != m) return v > m;
+            }
+            return true;
+        }
+
+        private static string StripSuffix(string version)
+        {
+            int cut = version.IndexOfAny(new[] { '+', '-' });
+            return cut >= 0 ? version.Substring(0, cut) : version;
+        }
+
+        private static int ParseNumericPart(string part)
+        {
+            return int.TryParse(part, out int value) ? value : 0;
         }
     }
 }

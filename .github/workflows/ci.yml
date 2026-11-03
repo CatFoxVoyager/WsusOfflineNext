@@ -49,6 +49,7 @@ jobs:
           bash ci/tests/test-fetch-release-helpers.sh
           bash ci/tests/test-runner-entrypoint.sh
           bash ci/tests/test-bump-webview2-dep.sh
+          bash ci/tests/test-webview2-version-gate.sh
 
   dotnet-build:
     runs-on: ubuntu-latest

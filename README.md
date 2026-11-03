@@ -93,6 +93,16 @@ Runtime downloads: [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/d
 
 Offline updating does not provide Windows ESU entitlement or Office activation. Package availability and eligibility still depend on the relevant product and license.
 
+## Antivirus false positives
+
+The release package includes executables compiled from AutoIt scripts with `Aut2Exe`: the adaptive launchers `UpdateGenerator.exe` and `client\UpdateInstaller.exe`, and the classic interfaces `UpdateGeneratorLegacy.exe` and `client\UpdateInstallerLegacy.exe`. Antivirus engines sometimes report these files as malware — for example, Microsoft Defender flagged `UpdateGeneratorLegacy.exe` in the official 5.2.0 archive as `Trojan:Win32/Wacatac.C!ml`. Such detections are machine-learning false positives, a known issue with compiled AutoIt programs: the same source rebuilt locally scans clean, and a false-positive report has been submitted to Microsoft.
+
+If your antivirus flags one of these files:
+
+- The detection is a false positive; the file is safe to restore or allow.
+- The modern .NET 8 interfaces are not affected. Run `UpdateGeneratorModern.exe` or `client\UpdateInstallerModern.exe` directly; the launcher also selects the modern interface automatically when the WebView2 Runtime is available.
+- A permanent fix is in progress: the remaining AutoIt components are being rewritten without AutoIt.
+
 ## Quick start
 
 ### 1. Prepare updates on the connected computer

@@ -183,11 +183,20 @@ namespace WSUSOffline.Generator
 
         private void SendToWeb(object message)
         {
-            if (_webView?.CoreWebView2 == null) return;
+            // Issue #21: the download pipeline calls this from Task.Run worker
+            // threads (progress logs). The CoreWebView2 getter is a COM QI that
+            // must only run on the UI thread -- accessed cross-thread it throws
+            // InvalidCastException E_NOINTERFACE (the exact reported stack).
+            // Marshal EVERYTHING, including the null-check, inside BeginInvoke.
             string json = JsonSerializer.Serialize(message);
             this.BeginInvoke(new Action(() =>
             {
-                try { _webView.CoreWebView2.PostWebMessageAsString(json); } catch { }
+                try
+                {
+                    if (_webView?.CoreWebView2 == null) return;
+                    _webView.CoreWebView2.PostWebMessageAsString(json);
+                }
+                catch { }
             }));
         }
 

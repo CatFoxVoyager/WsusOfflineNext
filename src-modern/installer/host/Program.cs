@@ -117,8 +117,12 @@ namespace WSUSOffline.Installer
             }
             catch { }
 
-            if (!string.IsNullOrEmpty(detected)
-                && WebView2Compat.IsVersionAtLeast(detected, WebView2Compat.MinWebView2Version))
+            bool gatePassed = !string.IsNullOrEmpty(detected)
+                && WebView2Compat.IsVersionAtLeast(detected, WebView2Compat.MinWebView2Version);
+
+            // Unconditional diagnostics, before any branch or exit path.
+            WriteStartupDiagnostics(detected, gatePassed);
+            if (gatePassed)
             {
                 return;
             }
@@ -127,6 +131,7 @@ namespace WSUSOffline.Installer
                 "Le composant Microsoft Edge WebView2 est absent ou trop ancien.\n"
                 + "Version détectée : " + (string.IsNullOrEmpty(detected) ? "absente" : detected) + "\n"
                 + "Requis : " + WebView2Compat.MinWebView2Version + " ou plus récent.\n\n"
+                + "Journal de diagnostic : " + GetStartupDiagnosticsLogPath() + "\n\n"
                 + "Installez le WebView2 Evergreen Runtime :\n"
                 + "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
                 + "Ouvrir l'interface classique (Legacy) à la place ?";
@@ -156,7 +161,7 @@ namespace WSUSOffline.Installer
                 if (IsWebView2FailureFamily(ex))
                 {
                     if (MessageBox.Show(
-                            DescribeWebView2Failure(ex) + "\n\nOuvrir l'interface classique (Legacy) ?",
+                            DescribeWebView2Failure(ex) + "\n\nDiagnostic log: " + GetStartupDiagnosticsLogPath() + "\n\nOuvrir l'interface classique (Legacy) ?",
                             "WSUS Offline Next Installer",
                             MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                     {
@@ -166,7 +171,7 @@ namespace WSUSOffline.Installer
                 else
                 {
                     MessageBox.Show(
-                        "Une erreur inattendue a interrompu l'application.\n" + ex.Message,
+                        "Une erreur inattendue a interrompu l'application.\n" + ex.Message + "\n\nJournal de diagnostic : " + GetStartupDiagnosticsLogPath(),
                         "WSUS Offline Next Installer", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
@@ -233,6 +238,123 @@ namespace WSUSOffline.Installer
                 File.AppendAllText(
                     Path.Combine(logDir, "host-crash.log"),
                     "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] " + ex + "\r\n\r\n");
+            }
+            catch { }
+        }
+
+        // Path of the unconditional startup diagnostics log — same folder
+        // family as LogFatal's host-crash.log so both artifacts are found
+        // together and attached to a report.
+        private static string GetStartupDiagnosticsLogPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WSUSOfflineNext", "Installer", "startup-diagnostics.log");
+        }
+
+        // Written on EVERY startup (gate pass or fail), not only on crash:
+        // issue #21 reproduces only on the reporter's machine, so each
+        // environment fact below is captured independently — one failing
+        // capture never drops the other lines nor the write itself.
+        private static void WriteStartupDiagnostics(string? detectedVersion, bool gatePassed)
+        {
+            List<string> lines = new List<string>
+            {
+                "=== Startup diagnostics " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ==="
+            };
+
+            string appVersionLabel = "App version: ";
+            try { lines.Add(appVersionLabel + GetDisplayVersion()); }
+            catch (Exception ex) { lines.Add(appVersionLabel + "<error: " + ex.Message + ">"); }
+
+            string detectedVersionLabel = "WebView2 detected version: ";
+            try { lines.Add(detectedVersionLabel + (string.IsNullOrEmpty(detectedVersion) ? "<none>" : detectedVersion)); }
+            catch (Exception ex) { lines.Add(detectedVersionLabel + "<error: " + ex.Message + ">"); }
+
+            string minVersionLabel = "WebView2 minimum required: ";
+            try { lines.Add(minVersionLabel + WebView2Compat.MinWebView2Version); }
+            catch (Exception ex) { lines.Add(minVersionLabel + "<error: " + ex.Message + ">"); }
+
+            string gateResultLabel = "WebView2 gate result: ";
+            try { lines.Add(gateResultLabel + (gatePassed ? "PASS" : "FAIL")); }
+            catch (Exception ex) { lines.Add(gateResultLabel + "<error: " + ex.Message + ">"); }
+
+            string processArchLabel = "Process architecture: ";
+            try { lines.Add(processArchLabel + RuntimeInformation.ProcessArchitecture); }
+            catch (Exception ex) { lines.Add(processArchLabel + "<error: " + ex.Message + ">"); }
+
+            string osVersionLabel = "OS version: ";
+            try { lines.Add(osVersionLabel + RuntimeInformation.OSDescription); }
+            catch (Exception ex) { lines.Add(osVersionLabel + "<error: " + ex.Message + ">"); }
+
+            string? loaderPath = null;
+            string? loaderVersion = null;
+            try
+            {
+                // GetAvailableBrowserVersionString() has already run by the
+                // time this fires, so the module list shows the loader the
+                // process ACTUALLY resolved, not the one merely hoped for.
+                foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
+                {
+                    try
+                    {
+                        if (string.Equals(
+                                Path.GetFileName(module.FileName), "WebView2Loader.dll",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            loaderPath = module.FileName;
+                            try
+                            {
+                                loaderVersion = module.FileVersionInfo.FileVersion;
+                            }
+                            catch { }
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            string loaderPathLabel = "WebView2Loader.dll path: ";
+            try { lines.Add(loaderPathLabel + (loaderPath ?? "<not loaded>")); }
+            catch (Exception ex) { lines.Add(loaderPathLabel + "<error: " + ex.Message + ">"); }
+
+            string loaderVersionLabel = "WebView2Loader.dll file version: ";
+            try { lines.Add(loaderVersionLabel + (loaderVersion ?? "<unknown>")); }
+            catch (Exception ex) { lines.Add(loaderVersionLabel + "<error: " + ex.Message + ">"); }
+
+            string userDataLabel = "WebView2 user-data folder: ";
+            try
+            {
+                lines.Add(userDataLabel + Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WSUSOfflineNext", "Installer"));
+            }
+            catch (Exception ex) { lines.Add(userDataLabel + "<error: " + ex.Message + ">"); }
+
+            string envVarsLabel = "WEBVIEW2_* environment variables: ";
+            try
+            {
+                List<string> vars = new List<string>();
+                foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+                {
+                    if (entry.Key is string key
+                        && key.StartsWith("WEBVIEW2_", StringComparison.OrdinalIgnoreCase))
+                    {
+                        vars.Add(key + "=" + entry.Value);
+                    }
+                }
+                lines.Add(envVarsLabel + (vars.Count > 0 ? string.Join(", ", vars) : "<none>"));
+            }
+            catch (Exception ex) { lines.Add(envVarsLabel + "<error: " + ex.Message + ">"); }
+
+            try
+            {
+                string logPath = GetStartupDiagnosticsLogPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                lines.Add("");
+                File.AppendAllLines(logPath, lines);
             }
             catch { }
         }

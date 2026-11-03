@@ -1,4 +1,4 @@
-; ***  WSUS Offline Next 5.0.0+2026.11 - Installer  ***
+; ***  WSUS Offline Next 5.1.0+2026.11 - Installer  ***
 ; ***       Author: T. Wittrock, Kiel        ***
 ; ***         - Next Edition -          ***
 ; ***   Dialog scaling added by Th. Baisch   ***
@@ -10,14 +10,14 @@
 #RequireAdmin
 #pragma compile(CompanyName, "WSUS Offline Next Project")
 #pragma compile(FileDescription, "WSUS Offline Update Installer")
-#pragma compile(FileVersion, 5.0.0)
+#pragma compile(FileVersion, 5.1.0)
 #pragma compile(InternalName, "Installer")
 #pragma compile(LegalCopyright, "GNU GPLv3")
 #pragma compile(OriginalFilename, UpdateInstaller.exe)
 #pragma compile(ProductName, "WSUS Offline Next")
-#pragma compile(ProductVersion, 5.0.0)
+#pragma compile(ProductVersion, 5.1.0)
 
-Dim Const $caption                      = "WSUS Offline Next - 5.0.0+2026.11 (b2026.10) - Installer"
+Dim Const $caption                      = "WSUS Offline Next - 5.1.0+2026.11 (b2026.10) - Installer"
 
 ; Registry constants
 Dim Const $reg_key_wsh_hklm64           = "HKLM64\Software\Microsoft\Windows Script Host\Settings"

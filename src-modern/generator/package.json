@@ -1,7 +1,7 @@
 {
   "name": "wsus-offline-next-generator",
   "private": true,
-  "version": "5.0.0+2026.11",
+  "version": "5.1.0+2026.11",
   "type": "module",
   "scripts": {
     "dev": "vite",

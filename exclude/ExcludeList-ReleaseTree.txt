@@ -66,3 +66,12 @@ pre.md
 dead.md
 .regen-report.md
 compose.env
+UpdateProjectBranding.cmd
+UpdateProjectBranding.py
+CompileModernApps.cmd
+MakeReleaseUnzipped.cmd
+WINDOWS.md
+doc\RELEASING.md
+doc\coverage.txt
+doc\branding\
+doc\screenshots\

@@ -8,6 +8,8 @@ static/custom/StaticDownloadLinks-w100-x64-glb.txt
 .planning/
 .claude/
 .Claude/
+.omc/
+.playwright-mcp/
 scratch/
 
 # Environment variables & secrets
@@ -36,6 +38,9 @@ client/w62/
 client/w62-x64/
 client/w63/
 client/w63-x64/
+client/w60-x64/
+client/w61-x64/
+static/sdd/
 client/o2k*/
 client/dotnet/
 client/cpp/

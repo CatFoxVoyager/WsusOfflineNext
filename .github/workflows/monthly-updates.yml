@@ -314,8 +314,8 @@ jobs:
           VER_FULL="${{ steps.version.outputs.version_full }}"
           ZIP="$TEMP/wsusofflineCE${VER_CORE}.zip"
           [ -f "$ZIP" ] || { echo "FAIL: $ZIP absent"; exit 1; }
-          if unzip -l "$ZIP" | grep -qE "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/)"; then
-            echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/)"; exit 1
+          if unzip -l "$ZIP" | grep -qE "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/|UpdateProjectBranding[.](cmd|py)|CompileModernApps[.]cmd|MakeReleaseUnzipped[.]cmd|WINDOWS[.]md|doc/(RELEASING[.]md|coverage[.]txt|branding/|screenshots/))"; then
+            echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/|UpdateProjectBranding[.](cmd|py)|CompileModernApps[.]cmd|MakeReleaseUnzipped[.]cmd|WINDOWS[.]md|doc/(RELEASING[.]md|coverage[.]txt|branding/|screenshots/))"; exit 1
           fi
           unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe manquant"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe manquant"; exit 1; }

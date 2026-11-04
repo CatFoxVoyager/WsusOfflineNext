@@ -143,3 +143,4 @@ self-hosted/compose.env
 
 # python bytecode cache (contract-suite runs)
 tests/__pycache__/
+src-native/installer/installer.res

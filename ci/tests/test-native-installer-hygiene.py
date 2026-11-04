@@ -23,6 +23,7 @@ Phase 23 analysis venv via an explicit sys.path fallback below, never from
 ambient environment paths.)
 """
 import os
+import struct
 import sys
 
 repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -169,6 +170,46 @@ def check_binary(binary):
     if stub_at != -1:
         fail(binary, f"UPX stub signature found at offset {stub_at}")
     print(f"   no-UPX: {len(pe.sections)} sections, none packed, no stub signature")
+
+    # --- 4. Icon entries DIB-encoded (plan 26-04 launch defect) ---
+    # A PNG-compressed ICO entry passes every byte check above yet KILLS the
+    # process at startup: LCL's TApplication.Initialize decodes MAINICON with
+    # the pure-Pascal TLazReaderIconDib (intfgraphics.pas), which supports
+    # only DIB entries - measured on the 26-04 Win7 validation run as
+    # FPImageException "Bitmap with unknown compression" -> unhandled
+    # exception -> rc 217 on every OS. Assert every RT_ICON entry in the
+    # binary is a DIB whose biCompression the reader accepts, and that a
+    # MAINICON group exists.
+    try:
+        icon_entries = {}
+        group_names = []
+        for rt in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+            if rt.struct.Id == 3:  # RT_ICON
+                for eid in rt.directory.entries:
+                    lang = eid.directory.entries[0]
+                    icon_entries[eid.struct.Id] = pe.get_data(
+                        lang.data.struct.OffsetToData, lang.data.struct.Size)
+            elif rt.struct.Id == 14:  # RT_GROUP_ICON
+                group_names.extend(str(e.name) if e.name else e.struct.Id
+                                   for e in rt.directory.entries)
+    except AttributeError:
+        fail(binary, "no resource directory (icon not embedded)")
+    if "MAINICON" not in group_names:
+        fail(binary, f"MAINICON group missing (groups: {group_names})")
+    if not icon_entries:
+        fail(binary, "no RT_ICON entries behind MAINICON")
+    for icon_id, blob in sorted(icon_entries.items()):
+        if blob[:8] == b"\x89PNG\r\n\x1a\n":
+            fail(binary, f"RT_ICON #{icon_id} is PNG-compressed "
+                         "(LCL icon reader cannot decode it - startup crash)")
+        if len(blob) < 40:
+            fail(binary, f"RT_ICON #{icon_id} smaller than a BITMAPINFOHEADER")
+        bi_compression, = struct.unpack_from("<I", blob, 30)
+        if bi_compression not in (0, 3):  # BI_RGB or BI_BITFIELDS
+            fail(binary, f"RT_ICON #{icon_id} DIB compression {bi_compression} "
+                         "unsupported by the LCL icon reader")
+    print(f"   icon: MAINICON group + {len(icon_entries)} RT_ICON entries, "
+          "all DIB-encoded (LCL-decodable)")
 
     print(f"[PASS] {binary}")
     return len(REQUIRED_STRINGFILEINFO_FIELDS), len(manifest), len(pe.sections)

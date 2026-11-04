@@ -7,8 +7,7 @@
 #   1. cmd/DownloadUpdates.cmd
 #   2. sh/download-updates-tasks/60-main-updates.bash
 #   3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
-#   4. client/UpdateInstaller.au3
-#   5. client/UpdateTable/builds.txt (whole-file emission - the native
+#   4. client/UpdateTable/builds.txt (whole-file emission - the native
 #      installer's Enablement-Package data file, consumed at GUI runtime
 #      by src-native/installer/buildsupgrade.pas)
 #
@@ -163,54 +162,18 @@ END {
     close(f4)
 
     # -------------------------------------------------------------------
-    # Site 4: client/UpdateInstaller.au3
+    # Shared 12-row census (reg_secs/arr_rs) for client/UpdateTable/
+    # builds.txt below - the retired registry-table site introduced the
+    # list; the data-file emission still iterates it.
     # -------------------------------------------------------------------
-    f5 = tmp_dir "/block5.txt"
-    printf "; Format: [build, arch, os_family, servicing_branch, status, ekb_source_build, ekb_kb, ekb_prereq_kb, ekb_min_revision, is_enforced]\n" > f5
-    printf "Global Const $aBuildRegistry[12][10] = [ _\n" > f5
     reg_secs = "w100-x86-19041 w100-x64-19041 w100-x86-19042 w100-x64-19042 w100-x86-19044 w100-x64-19044 w100-x86-19045 w100-x64-19045 w100-x64-26100 w100-x64-26200 w100-x64-26300 w100-x64-28000"
     n_rs = split(reg_secs, arr_rs, " ")
-    for (i = 1; i <= n_rs; i++) {
-        sec = arr_rs[i]
-        bld = data[sec, "build"]
-        arch = data[sec, "arch"]
-        os_f = data[sec, "os_family"]
-        br = data[sec, "servicing_branch"]
-        st = data[sec, "status"]
-        src = data[sec, "ekb_source_build"]
-        kb = data[sec, "ekb_kb"]
-        pre = data[sec, "ekb_prereq_kb"]
-        rev = data[sec, "ekb_min_revision"]
-        enf = (bld == "19042" ? 1 : 0)
-        cont = (i < n_rs ? ", _" : " _")
-
-        c_st = sprintf("\"%s\",", st)
-        c_src = sprintf("\"%s\",", src)
-        c_kb = sprintf("\"%s\",", kb)
-        c_pre = sprintf("\"%s\",", pre)
-        c_rev = sprintf("\"%s\",", rev)
-
-        if (st == "ineligible") {
-            p_st = sprintf("%-14s", c_st)
-            p_src = sprintf("%-4s", c_src)
-        } else {
-            p_st = sprintf("%-10s", c_st)
-            p_src = sprintf("%-8s", c_src)
-        }
-        p_kb = sprintf("%-13s", c_kb)
-        p_pre = sprintf("%-13s", c_pre)
-        p_rev = sprintf("%-8s", c_rev)
-
-        printf "  [\"%s\", \"%s\", \"%s\", \"%s\", %s %s %s %s %s %d]%s\n", bld, arch, os_f, br, p_st, p_src, p_kb, p_pre, p_rev, enf, cont > f5
-    }
-    printf "]\n" > f5
-    close(f5)
 
     # -------------------------------------------------------------------
     # client/UpdateTable/builds.txt - the native installer Enablement
     # data file (plan 26-02). Pipe-delimited rows, hash-comment lines,
-    # CRLF. Same 12-row census and is_enforced formula as the au3 site
-    # above; the au3 site itself dies with plan 03 (sites step to 3).
+    # CRLF. 12-row census and is_enforced formula identical to the
+    # retired registry table (the au3 site left at plan 03 - sites 3).
     # -------------------------------------------------------------------
     f6 = tmp_dir "/builds_txt_data.txt"
     printf "# client/UpdateTable/builds.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT\n" > f6
@@ -364,12 +327,9 @@ process_site "sh/download-updates-tasks/60-main-updates.bash" "# -- BEGIN GENERA
 # 3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
 process_site "sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash" "# -- BEGIN GENERATED BUILDS --" "# -- END GENERATED BUILDS --" "$tmp_dir/block4.txt"
 
-# 4. client/UpdateInstaller.au3
-process_site "client/UpdateInstaller.au3" "; -- BEGIN GENERATED BUILDS TABLE --" "; -- END GENERATED BUILDS TABLE --" "$tmp_dir/block5.txt"
-
 # Synchronize client/UpdateTable/builds.txt - whole-file emission (NOT a
-# process_site marker rewrite; the process_site call count stays 4 until
-# plan 03 deletes the au3 site)
+# process_site marker rewrite; the three process_site calls above are the
+# code sites, the data file rides along)
 builds_txt="${repo_root}/client/UpdateTable/builds.txt"
 tmp_builds_txt="$tmp_dir/builds_txt_crlf.txt"
 sed 's/\r*$//' "$tmp_dir/builds_txt_data.txt" | sed 's/$/\r/' > "$tmp_builds_txt"
@@ -422,10 +382,10 @@ if [ "$check_only" = true ]; then
     if [ "$drift_detected" = true ]; then
         exit 1
     else
-        echo "All 4 build sites are in sync with static/builds.ini."
+        echo "All 3 build sites are in sync with static/builds.ini."
         exit 0
     fi
 else
-    echo "Successfully updated 4 build sites from static/builds.ini."
+    echo "Successfully updated 3 build sites from static/builds.ini."
     exit 0
 fi

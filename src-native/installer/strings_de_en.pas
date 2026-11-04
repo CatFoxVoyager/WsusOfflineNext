@@ -2,7 +2,7 @@
 
     Record/array table per 26-RESEARCH.md Pattern 6 option A: zero runtime
     files, incumbent inline-model behavior, trivially auditable parity.
-    DE strings are transcribed from client/UpdateInstaller.au3
+    DE strings are transcribed from the incumbent installer au3
     (Windows-1252) via a one-shot iconv read - umlauts intact. UTF-8
     source, no mojibake.
 

@@ -12,7 +12,7 @@
     testrunner can prove each incumbent gating rule verbatim without LCL
     or live registry state; mainform fills the inputs from the live probes.
 
-    Extraction source: client/UpdateInstaller.au3 (Windows-1252, read via
+    Extraction source: the incumbent installer au3 (Windows-1252, read via
     iconv) - lines 23-44 (constants), 126-202 (Office + share mapping),
     280-365 (builds table predicates + WSH), 367-511 (IE/.NET/WMF maps),
     513-546 (presence probes). The au3 stays the parity source until plan

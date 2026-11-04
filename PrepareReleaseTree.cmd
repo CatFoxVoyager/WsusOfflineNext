@@ -14,11 +14,6 @@ echo Copying scripts and binaries...
 pushd "%~dps0"
 xcopy *.* %TARGET_DIR% /E /Q /Y /EXCLUDE:exclude\ExcludeList-ReleaseTree.txt
 popd
-
-rem *** Compile AutoIt-Scripts ***
-pushd %TARGET_DIR%
-call "%~dps0CompileAutoItScripts.cmd"
-popd
 goto EoF
 
 :NoExtensions

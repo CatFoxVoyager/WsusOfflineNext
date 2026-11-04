@@ -38,7 +38,6 @@ General filter rules
    dotnet
    msse
    wddefs
-   UpdateInstaller.au3
    IfAdmin.cpp
 
    Paths must be complete paths, relative to the sh directory. The above
@@ -62,7 +61,6 @@ General filter rules
    ../client/dotnet
    ../client/msse
    ../client/wddefs
-   ../client/UpdateInstaller.au3
    ../client/bin/IfAdmin.cpp
 
    Subdirectories can be specified with the name of the last directory
@@ -266,7 +264,6 @@ Source files
    files are never needed for end users, neither for download nor for
    installation:
 
-   UpdateInstaller.au3
    IfAdmin.cpp
 
 Comments

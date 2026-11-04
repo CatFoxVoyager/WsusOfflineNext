@@ -197,7 +197,8 @@ namespace WSUSOffline.Installer
         {
             // Probe order matches the init catch above: the .orig.exe name
             // kept for local setups first, then the name actually shipped
-            // by CompileAutoItScripts.cmd in every release tree.
+            // by the native lazbuild lane (CompileModernApps.cmd step 3)
+            // in every release tree.
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             foreach (string name in new[] { "UpdateInstaller.orig.exe", "UpdateInstallerLegacy.exe" })
             {
@@ -499,7 +500,7 @@ namespace WSUSOffline.Installer
                     Application.Exit();
                     return;
                 }
-                // The name actually shipped by CompileAutoItScripts.cmd —
+                // The name actually shipped by the native lazbuild lane —
                 // the vestigial probe above is kept first for local setups
                 // that still rely on it.
                 fallbackExe = Path.Combine(baseDir, "UpdateInstallerLegacy.exe");

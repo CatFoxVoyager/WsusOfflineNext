@@ -6,7 +6,7 @@ REM WSUS Offline Update - Windows 11 26H1 (Build 28000) Regression Suite
 REM File: tests\verify-win11-26h1.cmd
 REM
 REM Scenarios:
-REM   1. builds.ini & AutoIt Registry Table Contracts (Branch 28000, Status Ineligible)
+REM   1. builds.ini & Native Builds-Table Contracts (Branch 28000, Status Ineligible)
 REM   2. Dedicated Static Manifests & Zero Checkpoint (KB5043080) Leakage
 REM   3. Client Environment Variables & .NET 4.8.1 Target Resolution
 REM   4. Feature Upgrade Ineligibility & Update Queue Isolation
@@ -39,7 +39,7 @@ set "TEMP=%SANDBOX_ROOT%\temp"
 REM -----------------------------------------------------------------------
 REM Scenario 1: builds.ini & Registry Table Contracts
 REM -----------------------------------------------------------------------
-echo [Scenario 1/4] Verifying builds.ini and AutoIt Registry Table Contracts...
+echo [Scenario 1/4] Verifying builds.ini and Native Builds-Table Contracts...
 
 REM 1. builds.ini section [w100-x64-28000]
 %SystemRoot%\System32\findstr.exe /I /C:"[w100-x64-28000]" "%REPO_ROOT%\static\builds.ini" >nul 2>&1
@@ -58,21 +58,22 @@ if errorlevel 1 (
   goto test_failed
 )
 
-REM 2. client/UpdateInstaller.au3 table declaration
-%SystemRoot%\System32\findstr.exe /C:"[\"28000\", \"x64\", \"win11\", \"28000\", \"ineligible\"" "%REPO_ROOT%\client\UpdateInstaller.au3" >nul 2>&1
+REM 2. client/UpdateTable/builds.txt ineligible row declaration (native
+REM    Enablement data file consumed by buildsupgrade.pas)
+%SystemRoot%\System32\findstr.exe /C:"28000|x64|win11|28000|ineligible" "%REPO_ROOT%\client\UpdateTable\builds.txt" >nul 2>&1
 if errorlevel 1 (
-  echo [FAIL] Scenario 1: client\UpdateInstaller.au3 table missing build 28000 ineligible entry.
+  echo [FAIL] Scenario 1: client\UpdateTable\builds.txt missing build 28000 ineligible entry.
   goto test_failed
 )
 
-REM 3. Ineligibility notification in client/UpdateInstaller.au3
-%SystemRoot%\System32\findstr.exe /I /C:"IsBuildIneligible" "%REPO_ROOT%\client\UpdateInstaller.au3" >nul 2>&1
+REM 3. Ineligibility predicate in the native sources
+%SystemRoot%\System32\findstr.exe /C:"BuIsBuildIneligible" "%REPO_ROOT%\src-native\installer\buildsupgrade.pas" >nul 2>&1
 if errorlevel 1 (
-  echo [FAIL] Scenario 1: client\UpdateInstaller.au3 missing IsBuildIneligible handler.
+  echo [FAIL] Scenario 1: src-native\installer\buildsupgrade.pas missing BuIsBuildIneligible handler.
   goto test_failed
 )
 
-echo [PASS] Scenario 1: builds.ini and AutoIt registry table contracts verified.
+echo [PASS] Scenario 1: builds.ini and native builds-table contracts verified.
 
 REM -----------------------------------------------------------------------
 REM Scenario 2: Static Manifests & Zero Checkpoint Leakage
@@ -150,15 +151,16 @@ if "%OS_NAME%" NEQ "w100" (
   goto test_failed
 )
 
-REM Verify UpdateInstaller.au3 maps 28000 to .NET 4.8.1 release 533320
-%SystemRoot%\System32\findstr.exe /C:"28000" "%REPO_ROOT%\client\UpdateInstaller.au3" >nul 2>&1
+REM Verify the native GUI maps the WIN_11 branch (build >= 22000, which
+REM covers build 28000) to the .NET 4.8.1 target release 533320
+%SystemRoot%\System32\findstr.exe /C:"AOs.Build >= 22000" "%REPO_ROOT%\src-native\installer\detection.pas" >nul 2>&1
 if errorlevel 1 (
-  echo [FAIL] Scenario 3: client\UpdateInstaller.au3 DotNet4TargetRelease missing 28000 mapping.
+  echo [FAIL] Scenario 3: src-native\installer\detection.pas missing the WIN_11 branch gate.
   goto test_failed
 )
-%SystemRoot%\System32\findstr.exe /C:"533320" "%REPO_ROOT%\client\UpdateInstaller.au3" >nul 2>&1
+%SystemRoot%\System32\findstr.exe /C:"Exit('533320')" "%REPO_ROOT%\src-native\installer\detection.pas" >nul 2>&1
 if errorlevel 1 (
-  echo [FAIL] Scenario 3: client\UpdateInstaller.au3 missing 533320 return value.
+  echo [FAIL] Scenario 3: src-native\installer\detection.pas missing 533320 return value.
   goto test_failed
 )
 

@@ -15,14 +15,16 @@
 # impossible instead of accidentally absent.
 #
 # SemVer extension (phase 19, decision D-01): the locked format is
-# MAJOR.MINOR.PATCH+YYYY.MM. The matrix occurrences (22 since Phase 25
-# plan 01; 26 after Phase 24; 32 before it) split into two disjoint
-# contexts: 16 full-form sites (source of truth, headers, captions, marker,
-# <Version>, package.json, App.tsx) carry the whole M.m.p+YYYY.MM token,
-# and 6 numeric-only build contexts (csproj <FileVersion>/
-# <AssemblyVersion> "X.Y.Z.0", AutoIt "#pragma compile(..., X.Y.Z)") MUST
-# carry the bare core - a '+' metadata there breaks CompileModernApps.cmd
-# and Aut2Exe. The engine therefore runs TWO LANES (see ci/bump-version.bash).
+# MAJOR.MINOR.PATCH+YYYY.MM. The matrix occurrences (22 since Phase 26
+# plan 03; 22 through Phase 25; 26 after Phase 24; 32 before it) split into
+# two disjoint contexts: 15 full-form sites (source of truth, headers,
+# captions, marker, <Version>, package.json, App.tsx, the .lpi
+# ProductVersion string) carry the whole M.m.p+YYYY.MM token, and 7
+# numeric-only build contexts (csproj <FileVersion>/<AssemblyVersion>
+# "X.Y.Z.0", the .lpi MajorVersionNr/MinorVersionNr/RevisionNr integer
+# fields - the retired AutoIt "#pragma compile(..., X.Y.Z)" context left
+# with the au3 deletion) MUST carry the bare core. The engine therefore
+# runs TWO LANES (see ci/bump-version.bash).
 
 # ===== Functions =====
 
@@ -101,17 +103,26 @@ function substitute_bounded ()
 }
 
 # Count the NUMERIC-CONTEXT anchors of an escaped source token in one matrix
-# file: csproj "<FileVersion>core.0</FileVersion>" / "<AssemblyVersion>" and
-# AutoIt "#pragma compile(FileVersion|ProductVersion, core)" lines. Anchors
-# are tied to the closing tag/paren, never to bare version text (T-19-03).
-# Non-numeric files count 0.
+# file: csproj "<FileVersion>core.0</FileVersion>" / "<AssemblyVersion>"
+# lines, and the .lpi VersionInfo integer fields (MajorVersionNr/
+# MinorVersionNr/RevisionNr carrying the source core's components - the
+# global VersionInfo block makes this ONE site family in ONE file). Anchors
+# are tied to the closing tag or the element name, never to bare version
+# text (T-19-03). Non-numeric files count 0.
 function count_numeric_anchored ()
 {
   local src_escaped="$1"
   local target="$2"
   case "${target}" in
     *.csproj) count_occurrences "${src_escaped}\.0</(FileVersion|AssemblyVersion)>" "${target}" ;;
-    *.au3)    count_occurrences "${src_escaped}\)" "${target}" ;;
+    *.lpi)
+      local lpi_maj="" lpi_min="" lpi_rev="" lpi_n=0
+      IFS="." read -r lpi_maj lpi_min lpi_rev <<< "${src_escaped//\\/}"
+      lpi_n=$(( lpi_n + $(count_occurrences "<MajorVersionNr Value=\"${lpi_maj}\"" "${target}") ))
+      lpi_n=$(( lpi_n + $(count_occurrences "<MinorVersionNr Value=\"${lpi_min}\"" "${target}") ))
+      lpi_n=$(( lpi_n + $(count_occurrences "<RevisionNr Value=\"${lpi_rev}\"" "${target}") ))
+      printf '%s\n' "${lpi_n}"
+      ;;
     *)        printf '0\n' ;;
   esac
   return 0
@@ -119,12 +130,13 @@ function count_numeric_anchored ()
 
 # Numeric-anchored lane: rewrite the build-context anchors of <src-escaped>
 # to the bare core <dst-core> in one matrix file, in place. The anchors are
-# tied to the closing tag/paren (T-19-03) and the selection is by filename
-# suffix: a csproj pass only ever runs on .csproj paths, a pragma pass only
-# on .au3 paths - never a scan of the whole matrix. <dst-core> is a bare
-# M.m.p core, so the replacement text puts digits only BEFORE the \1
-# backref; a digit AFTER a backref is the broken parse shape ("\\15" reads
-# as backref 15).
+# tied to the closing tag or the element name (T-19-03) and the selection
+# is by filename suffix: a csproj pass only ever runs on .csproj paths, an
+# .lpi pass only on .lpi paths - never a scan of the whole matrix.
+# <dst-core> is a bare M.m.p core, so the replacement text puts digits only
+# BEFORE the \1 backref; a digit AFTER a backref is the broken parse shape
+# ("\\15" reads as backref 15). The .lpi pass rewrites each VersionInfo
+# integer field from the destination core's own components.
 function substitute_numeric_versions ()
 {
   local src_escaped="$1"
@@ -134,8 +146,12 @@ function substitute_numeric_versions ()
     *.csproj)
       sed -E -i "s/${src_escaped}\.0(<\/(FileVersion|AssemblyVersion)>)/${dst_core}.0\1/g" "${target}"
       ;;
-    *.au3)
-      sed -E -i "s/${src_escaped}\)/${dst_core})/g" "${target}"
+    *.lpi)
+      local lpi_maj="" lpi_min="" lpi_rev=""
+      IFS="." read -r lpi_maj lpi_min lpi_rev <<< "${dst_core}"
+      sed -E -i "s/(<MajorVersionNr Value=\")[0-9]+(\")/\1${lpi_maj}\2/g" "${target}"
+      sed -E -i "s/(<MinorVersionNr Value=\")[0-9]+(\")/\1${lpi_min}\2/g" "${target}"
+      sed -E -i "s/(<RevisionNr Value=\")[0-9]+(\")/\1${lpi_rev}\2/g" "${target}"
       ;;
   esac
   return 0

@@ -5,5 +5,4 @@
 # and genisoimage themselves don't support comments.
 
 # Exclude source files
-UpdateInstaller.au3
 IfAdmin.cpp

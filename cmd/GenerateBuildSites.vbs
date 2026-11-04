@@ -6,8 +6,7 @@
 '   1. cmd/DownloadUpdates.cmd
 '   2. sh/download-updates-tasks/60-main-updates.bash
 '   3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
-'   4. client/UpdateInstaller.au3
-'   5. client/UpdateTable/builds.txt (whole-file emission - the native
+'   4. client/UpdateTable/builds.txt (whole-file emission - the native
 '      installer's Enablement-Package data file, consumed at GUI runtime
 '      by src-native/installer/buildsupgrade.pas)
 '
@@ -272,12 +271,11 @@ strValuesBlock = "declare -A w100_values=(" & vbCrLf & _
 strSite4Block = strKeysBlock & vbCrLf & vbCrLf & strLabelsBlock & vbCrLf & vbCrLf & strValuesBlock
 
 ' -----------------------------------------------------------------------
-' Target 4: client/UpdateInstaller.au3 & client/static/StaticUpdateIds-BuildUpgrades.txt
+' Shared 12-row census for client/UpdateTable/builds.txt below (the
+' retired registry-table site introduced the array; the data-file
+' emission still iterates it).
 ' -----------------------------------------------------------------------
-Dim strSite5Path, strSite5Content, strSite5Block, strSite5New
-strSite5Path = objFSO.BuildPath(strRepoRoot, "client\UpdateInstaller.au3")
-
-Dim arrRegistrySections, sSec, bld, arch, osF, regBranch, st, ekbSrc, ekbKb, ekbPre, ekbRev, enf, cont
+Dim arrRegistrySections, sSec, enf
 arrRegistrySections = Array( _
     "w100-x86-19041", "w100-x64-19041", _
     "w100-x86-19042", "w100-x64-19042", _
@@ -287,52 +285,10 @@ arrRegistrySections = Array( _
     "w100-x64-26300", "w100-x64-28000" _
 )
 
-strSite5Block = "; Format: [build, arch, os_family, servicing_branch, status, ekb_source_build, ekb_kb, ekb_prereq_kb, ekb_min_revision, is_enforced]" & vbCrLf & _
-                "Global Const $aBuildRegistry[12][10] = [ _" & vbCrLf
-
-For i = 0 To UBound(arrRegistrySections)
-    sSec = arrRegistrySections(i)
-    Set dictSection = dictSections(sSec)
-    bld = dictSection("build")
-    arch = dictSection("arch")
-    osF = dictSection("os_family")
-    regBranch = dictSection("servicing_branch")
-    st = dictSection("status")
-    ekbSrc = dictSection("ekb_source_build")
-    ekbKb = dictSection("ekb_kb")
-    ekbPre = dictSection("ekb_prereq_kb")
-    ekbRev = dictSection("ekb_min_revision")
-    enf = 0
-    If bld = "19042" Then enf = 1
-    If i < UBound(arrRegistrySections) Then cont = ", _" Else cont = " _"
-
-    Dim cSt, cSrc, cKb, cPre, cRev, pSt, pSrc, pKb, pPre, pRev
-    cSt = Chr(34) & st & Chr(34) & ","
-    cSrc = Chr(34) & ekbSrc & Chr(34) & ","
-    cKb = Chr(34) & ekbKb & Chr(34) & ","
-    cPre = Chr(34) & ekbPre & Chr(34) & ","
-    cRev = Chr(34) & ekbRev & Chr(34) & ","
-
-    If st = "ineligible" Then
-        pSt = PadRight(cSt, 14)
-        pSrc = PadRight(cSrc, 4)
-    Else
-        pSt = PadRight(cSt, 10)
-        pSrc = PadRight(cSrc, 8)
-    End If
-    pKb = PadRight(cKb, 13)
-    pPre = PadRight(cPre, 13)
-    pRev = PadRight(cRev, 8)
-
-    strSite5Block = strSite5Block & "  [" & Chr(34) & bld & Chr(34) & ", " & Chr(34) & arch & Chr(34) & ", " & Chr(34) & osF & Chr(34) & ", " & Chr(34) & regBranch & Chr(34) & ", " & _
-                    pSt & " " & pSrc & " " & pKb & " " & pPre & " " & pRev & " " & enf & "]" & cont & vbCrLf
-Next
-strSite5Block = strSite5Block & "]"
-
 ' client/UpdateTable/builds.txt - the native installer's Enablement data
 ' file (plan 26-02). Pipe-delimited rows, hash-comment header, CRLF.
-' Same 12-row census and is_enforced formula as the au3 site above; the
-' au3 site itself dies with plan 03 (sites then step to 3).
+' 12-row census and is_enforced formula identical to the retired
+' registry table (the au3 site left at plan 03 - sites then step to 3).
 Dim strBuildsTxtPath, strBuildsTxtNew, strBuildsTxtContent
 strBuildsTxtPath = objFSO.BuildPath(strRepoRoot, "client\UpdateTable\builds.txt")
 strBuildsTxtNew = "# client/UpdateTable/builds.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT" & vbCrLf & _
@@ -428,15 +384,6 @@ If strSite4New <> strSite4Content Then
 End If
 If Not bCheckOnly Then Call WriteTextFile1252(strSite4Path, strSite4New)
 
-' 4. client/UpdateInstaller.au3
-strSite5Content = ReadTextFile1252(strSite5Path)
-strSite5New = ReplaceBetweenMarkers(strSite5Content, "; -- BEGIN GENERATED BUILDS TABLE --", "; -- END GENERATED BUILDS TABLE --", strSite5Block, "client/UpdateInstaller.au3 (TABLE)")
-If strSite5New <> strSite5Content Then
-    bDrift = True
-    If bCheckOnly Then WScript.Echo "ERROR: File client/UpdateInstaller.au3 is out of sync with static/builds.ini."
-End If
-If Not bCheckOnly Then Call WriteTextFile1252(strSite5Path, strSite5New)
-
 ' Synchronize client/static/StaticUpdateIds-BuildUpgrades.txt
 strStaticUpgradesContent = ReadTextFile1252(strStaticUpgradesPath)
 If strStaticUpgradesNew <> strStaticUpgradesContent Then
@@ -482,25 +429,17 @@ If bCheckOnly Then
     If bDrift Then
         WScript.Quit 1
     Else
-        WScript.Echo "All 4 build sites plus the builds.txt data file are in sync with static/builds.ini."
+        WScript.Echo "All 3 build sites plus the builds.txt data file are in sync with static/builds.ini."
         WScript.Quit 0
     End If
 Else
-    WScript.Echo "Successfully updated 4 build sites plus the builds.txt data file from static/builds.ini."
+    WScript.Echo "Successfully updated 3 build sites plus the builds.txt data file from static/builds.ini."
     WScript.Quit 0
 End If
 
 ' -----------------------------------------------------------------------
 ' Helper Functions
 ' -----------------------------------------------------------------------
-Function PadRight(strText, intLen)
-    Dim s
-    s = strText
-    While Len(s) < intLen
-        s = s & " "
-    Wend
-    PadRight = s
-End Function
 
 Function ReadTextFile1252(strFilePath)
     Dim objStream

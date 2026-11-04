@@ -1,6 +1,6 @@
 {*** Main form of the native installer - full incumbent option surface.
 
-    Parity port of client/UpdateInstaller.au3 (the extraction source, still
+    Parity port of the incumbent installer au3 (the extraction source at
     present until plan 03 deletes it):
     - caption from the exe's own VERSIONINFO (versionless fallback until
       plan 03), the incumbent intro label, the Medium-info group

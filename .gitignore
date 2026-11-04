@@ -72,6 +72,7 @@ UpdateGeneratorLegacy.exe
 UpdateGeneratorModern.exe
 client/UpdateInstaller.exe
 client/UpdateInstallerLegacy.exe
+client/UpdateInstallerLegacy64.exe
 client/UpdateInstallerModern.exe
 *.exe.manifest
 UpdateGenerator.ini
@@ -139,3 +140,6 @@ src-native/**/bin/
 # runner Docker: token
 self-hosted/compose.env
 !self-hosted/.env.example
+
+# python bytecode cache (contract-suite runs)
+tests/__pycache__/

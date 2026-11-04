@@ -67,5 +67,4 @@ UpdateTable-w63-glb.csv
 UpdateTable-w100-glb.csv
 
 # Exclude source files
-UpdateInstaller.au3
 IfAdmin.cpp

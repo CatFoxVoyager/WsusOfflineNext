@@ -341,16 +341,15 @@ check_cmd_launcher_structure () {
 check_cmd_launcher_structure "${GEN_CMD}"
 check_cmd_launcher_structure "${INS_CMD}"
 
-# --- Generator-zombie gate (Phase 25) ---------------------------------------
-# The retired generator surface must not reappear in the launcher or in the
-# trimmed compile lane. Enforcement point: this gate NAMES the literals on
-# purpose. Counted over comment-stripped lines, like every section e gate.
+# --- Generator-zombie gate (Phase 25; compile-lane leg retired Phase 26) -----
+# The retired generator surface must not reappear in the launcher. The
+# compile-lane leg policed the AutoIt compile script itself and retired
+# together with it (Phase 26 plan 03 - the lane is gone). Enforcement
+# point: this gate NAMES the literals on purpose. Counted over
+# comment-stripped lines, like every section e gate.
 gen_zombies="$(grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "${GEN_CMD}" | grep -cF 'UpdateGeneratorLegacy')"
 [ "${gen_zombies}" -eq 0 ] \
     || fail_case "section e: retired classic generator executable referenced in ${GEN_CMD} (${gen_zombies} code-line hit(s))"
-lane_zombies="$(grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "CompileAutoItScripts.cmd" | grep -cF 'UpdateGenerator.au3')"
-[ "${lane_zombies}" -eq 0 ] \
-    || fail_case "section e: generator AutoIt source referenced by the trimmed compile lane (${lane_zombies} code-line hit(s))"
 
 # --- Section d: the battery can fail ---
 echo "== Section d: can-fail controls =="

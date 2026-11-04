@@ -4,7 +4,7 @@
 # File: sh/tests/verify-win11-26h1.bash
 #
 # Verifies:
-#   Test 1: builds.ini & AutoIt Registry Table Contracts
+#   Test 1: builds.ini & Native Builds-Table Contracts
 #   Test 2: Dedicated Static Manifests & Zero Checkpoint (KB5043080) Leakage
 #   Test 3: Client Environment Variables & .NET 4.8.1 Target Resolution
 #   Test 4: Feature Upgrade Ineligibility & Update Queue Isolation
@@ -31,7 +31,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 # -----------------------------------------------------------------------
 # Test 1: builds.ini & Registry Table Contracts
 # -----------------------------------------------------------------------
-echo "[Test 1/4] Verifying builds.ini and AutoIt Registry Table Contracts..."
+echo "[Test 1/4] Verifying builds.ini and Native Builds-Table Contracts..."
 
 builds_ini="${repo_root}/static/builds.ini"
 if ! grep -q "\[w100-x64-28000\]" "$builds_ini"; then
@@ -47,17 +47,17 @@ if ! grep -A 10 "\[w100-x64-28000\]" "$builds_ini" | grep -q "status=ineligible"
     exit 1
 fi
 
-installer_au3="${repo_root}/client/UpdateInstaller.au3"
-if ! grep -q '\["28000", "x64", "win11", "28000", "ineligible"' "$installer_au3"; then
-    echo "FAIL: client/UpdateInstaller.au3 table missing build 28000 ineligible entry."
+builds_txt="${repo_root}/client/UpdateTable/builds.txt"
+if ! grep -q '^28000|x64|win11|28000|ineligible' "$builds_txt"; then
+    echo "FAIL: client/UpdateTable/builds.txt missing build 28000 ineligible entry."
     exit 1
 fi
-if ! grep -q "IsBuildIneligible" "$installer_au3"; then
-    echo "FAIL: client/UpdateInstaller.au3 missing IsBuildIneligible handler."
+if ! grep -q "BuIsBuildIneligible" "${repo_root}/src-native/installer/buildsupgrade.pas"; then
+    echo "FAIL: src-native/installer/buildsupgrade.pas missing BuIsBuildIneligible handler."
     exit 1
 fi
 
-echo "PASS: builds.ini and AutoIt registry table contracts verified."
+echo "PASS: builds.ini and native builds-table contracts verified."
 
 # -----------------------------------------------------------------------
 # Test 2: Static Manifests & Zero Checkpoint Leakage
@@ -108,9 +108,11 @@ if ! grep -A 1 "10.0.28000" "$settarget_cmd" | grep -q "533320"; then
     exit 1
 fi
 
-# Verify UpdateInstaller.au3 maps 28000 to .NET 4.8.1 (533320)
-if ! grep -A 8 'Case "WIN_11"' "$installer_au3" | grep -q '28000'; then
-    echo "FAIL: UpdateInstaller.au3 DotNet4TargetRelease missing 28000 mapping."
+# Verify the native GUI maps the WIN_11 branch (build >= 22000, which
+# covers build 28000) to the .NET 4.8.1 target release 533320
+detection_pas="${repo_root}/src-native/installer/detection.pas"
+if ! grep -A 5 '>= 22000 then' "$detection_pas" | grep -q "Exit('533320')"; then
+    echo "FAIL: detection.pas WIN_11 branch missing the 533320 mapping (build 28000 coverage)."
     exit 1
 fi
 
@@ -129,9 +131,9 @@ if grep -q "^28000," "$buildupg_file"; then
 fi
 
 # Verify that build 28000 is marked as status=ineligible
-status_28000=$(awk -F',' '$1 ~ /"28000"/ { gsub(/[" ]/, "", $5); print $5 }' "$installer_au3")
+status_28000=$(awk -F'|' '$1 == "28000" { print $5; exit }' "$builds_txt")
 if [[ "$status_28000" != "ineligible" ]]; then
-    echo "FAIL: Build 28000 status in UpdateInstaller table is not ineligible: '$status_28000'."
+    echo "FAIL: Build 28000 status in builds.txt is not ineligible: '$status_28000'."
     exit 1
 fi
 

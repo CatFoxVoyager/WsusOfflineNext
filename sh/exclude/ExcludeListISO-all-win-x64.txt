@@ -56,5 +56,4 @@ hashes-msse-x64-glb.txt
 hashes-wddefs-x86-glb.txt
 
 # Exclude source files
-UpdateInstaller.au3
 IfAdmin.cpp

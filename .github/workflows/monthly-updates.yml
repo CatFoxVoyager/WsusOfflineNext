@@ -333,11 +333,12 @@ jobs:
           unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} non embarquée"; exit 1; }
           unzip -p "$ZIP" wsusoffline/UpdateGenerator.cmd > /dev/null || { echo "FAIL: UpdateGenerator.cmd entry point missing from the zip"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/UpdateInstaller.cmd > /dev/null || { echo "FAIL: client/UpdateInstaller.cmd entry point missing from the zip"; exit 1; }
-          if unzip -l "$ZIP" | grep -qE "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|wsusoffline/UpdateGeneratorLegacy[.]exe"; then
-            echo "FAIL: retired AutoIt generator artifacts in the zip (generator source, launcher sources, or generator legacy exe)"
-            unzip -l "$ZIP" | grep -E "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|wsusoffline/UpdateGeneratorLegacy[.]exe"
+          if unzip -l "$ZIP" | grep -qE "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|[.]au3$|Aut2[Ee]xe[.]exe|wsusoffline/CompileAutoItScripts[.]cmd|wsusoffline/Include/"; then
+            echo "FAIL: retired AutoIt artifacts in the zip (any .au3 source, launcher sources, generator legacy exe, Aut2Exe pair, compile script, Include/ stdlib)"
+            unzip -l "$ZIP" | grep -E "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|[.]au3$|Aut2[Ee]xe[.]exe|wsusoffline/CompileAutoItScripts[.]cmd|wsusoffline/Include/"
             exit 1
           fi
+          unzip -p "$ZIP" wsusoffline/client/UpdateInstallerLegacy.exe > /dev/null 2>&1 || { echo "FAIL: client/UpdateInstallerLegacy.exe missing from the zip (native installer GUI must ship)"; exit 1; }
           echo "verify-release-archive: contenu OK"
 
       - name: Tag and publish release

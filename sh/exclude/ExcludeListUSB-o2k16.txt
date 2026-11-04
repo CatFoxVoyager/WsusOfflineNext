@@ -21,5 +21,4 @@
 /w100
 /w100-x64
 /win
-/UpdateInstaller.au3
 /bin/IfAdmin.cpp

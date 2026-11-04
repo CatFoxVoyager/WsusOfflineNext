@@ -1,109 +1,101 @@
-import sys
 import os
 import subprocess
-import tempfile
+import sys
 
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(repo_root)
 
 print("=" * 71)
-print("WSUS Offline Update - GUI Contract & Encoding Verification Suite")
+print("WSUS Offline Next - GUI Contract Verification Suite (native host)")
 print("=" * 71)
 
 # The generator-side INI/argv frozen-contract enforcement was removed with
-# the generator itself in Phase 25; it re-lands in Phase 26 against the
-# native GUI host.
+# the generator itself in Phase 25. The installer-side contracts moved to
+# the native Pascal sources in Phase 26; the Windows-1252 ANSI byte test
+# retired together with the au3 source (all native sources are UTF-8).
 
-# Test 1: client/UpdateInstaller.au3 frozen tokens
-print("[Test 1/4] Verifying client/UpdateInstaller.au3 frozen INI keys and sections...")
-with open("client/UpdateInstaller.au3", "r", encoding="windows-1252") as f:
-    inst_content = f.read()
+LAZARUS_ROOT = os.environ.get("WO_LAZARUS_ROOT",
+                              os.path.join(repo_root, ".planning", "tmp", "23-tools", "lazarus"))
+LAZBUILD = os.path.join(LAZARUS_ROOT, "lazbuild.exe")
+LPI = os.path.join(repo_root, "src-native", "installer", "installer.lpi")
 
-required_inst_tokens = [
-    "ini_section_installation", "ini_section_control", "ini_section_messaging", "ini_section_msi",
-    "ini_value_buildupgrade", "ini_value_rcerts", "ini_value_dotnet35", "ini_value_dotnet4",
-    "ini_value_wmf", "ini_value_dotnet5", "ini_value_cpp",
-    "ini_value_instedge", "ini_value_instwebview2", "ini_value_instoffice",
-    "ini_value_verify", "ini_value_autoreboot", "ini_value_shutdown", "ini_value_auditonly", "ini_value_showlog"
+# Test 1: enginecontracts.pas frozen INI sections/keys
+print("[Test 1/3] Verifying enginecontracts.pas frozen INI sections and keys...")
+with open(os.path.join("src-native", "installer", "enginecontracts.pas"), "r", encoding="utf-8") as f:
+    contracts = f.read()
+
+required_sections = [
+    "ENG_INI_SECTION_INSTALLATION", "ENG_INI_SECTION_CONTROL",
+    "ENG_INI_SECTION_MESSAGING", "ENG_INI_SECTION_MSI",
 ]
-
-missing_inst = [t for t in required_inst_tokens if t not in inst_content]
-if missing_inst:
-    print(f"[FAIL] Missing tokens in client/UpdateInstaller.au3: {missing_inst}")
+missing_sections = [t for t in required_sections if t not in contracts]
+if missing_sections:
+    print(f"[FAIL] Missing INI section constants in enginecontracts.pas: {missing_sections}")
     sys.exit(1)
 
-inst_office_tokens = [
-    "$instoffice", "$lbloffice", "/updateoffice"
+required_keys = [
+    "upgradebuilds", "updatercerts", "instdotnet35", "instdotnet4",
+    "instwmf", "updatedotnet5", "updatecpp",
+    "instedge", "instwebview2",
+    "verify", "autoreboot", "shutdown", "auditonly", "showlog",
 ]
-missing_inst_office = [t for t in inst_office_tokens if t not in inst_content]
-if missing_inst_office:
-    print(f"[FAIL] Missing Office installer tokens in client/UpdateInstaller.au3: {missing_inst_office}")
+missing_keys = [t for t in required_keys if f"'{t}'" not in contracts]
+if missing_keys:
+    print(f"[FAIL] Missing frozen INI keys in enginecontracts.pas: {missing_keys}")
     sys.exit(1)
-print("[PASS] Test 1: client/UpdateInstaller.au3 frozen tokens intact.")
+print("[PASS] Test 1: enginecontracts.pas frozen INI sections and keys intact.")
 
-# Test 2: Argv contracts
-print("\n[Test 2/4] Verifying command-line argument handling contracts...")
-assert 'Case "enu"' in inst_content, 'Installer missing enu argv handling'
-assert 'Case "deu"' in inst_content, 'Installer missing deu argv handling'
-print("[PASS] Test 2: Command-line contracts verified on the AU3 installer script.")
+# Test 2: argv contracts (the launcher forwards argv verbatim, so the
+# incumbent 'enu'/'deu' language contract and the frozen switch table persist)
+print("\n[Test 2/3] Verifying command-line argument handling contracts...")
+assert "ENG_SWITCH_COUNT = 24" in contracts, "Installer missing the frozen 24-token switch table"
+for token in ["/auditonly", "/updateoffice", "/autoreboot", "/instmsi"]:
+    assert f"'{token}'" in contracts, f"Installer missing frozen argv token {token}"
+with open(os.path.join("src-native", "installer", "strings_de_en.pas"), "r", encoding="utf-8") as f:
+    strings_unit = f.read()
+assert "'enu'" in strings_unit and "'deu'" in strings_unit, \
+    "Installer missing enu/deu argv language handling"
+print("[PASS] Test 2: Command-line contracts verified on the native sources.")
 
-# Test 3: ANSI byte encoding integrity
-print("\n[Test 3/4] Verifying Windows-1252 ANSI byte encoding integrity...")
-for path in ["client/UpdateInstaller.au3"]:
-    with open(path, "rb") as f:
-        raw = f.read()
-    if raw.startswith(b"\xef\xbb\xbf"):
-        print(f"[FAIL] {path} has a UTF-8 BOM!")
-        sys.exit(1)
-    try:
-        raw.decode("windows-1252")
-    except Exception as e:
-        print(f"[FAIL] {path} failed to decode as windows-1252: {e}")
-        sys.exit(1)
-    # German umlauts check
-    umlauts = [b"\xe4", b"\xf6", b"\xfc", b"\xdf"] # ä, ö, ü, ß
-    found = sum(1 for u in umlauts if u in raw)
-    if found < 2:
-        print(f"[FAIL] {path} does not contain expected ANSI umlauts!")
-        sys.exit(1)
-    print(f"  {path}: Windows-1252 ANSI verified ({len(raw)} bytes, {found} umlaut markers).")
-print("[PASS] Test 3: Windows-1252 ANSI byte integrity verified.")
-
-# Test 4: Compilation + launcher contracts
-print("\n[Test 4/4] Compiling the AU3 installer script and verifying the launcher contract...")
-aut2exe = os.path.join(repo_root, "bin", "Aut2exe.exe")
-tmp_inst = os.path.join(tempfile.gettempdir(), "test_UpdateInstaller.exe")
-
-res2 = subprocess.run([aut2exe, "/in", os.path.join("client", "UpdateInstaller.au3"), "/out", tmp_inst, "/nopack"])
-if res2.returncode != 0:
-    print(f"[FAIL] Aut2exe failed on client/UpdateInstaller.au3 (exit code {res2.returncode})")
+# Test 3: native compile + launcher contracts
+print("\n[Test 3/3] Compiling the native installer (both Release modes) and verifying the launcher contract...")
+if not os.path.exists(LAZBUILD):
+    print(f"[FAIL] lazbuild not found at {LAZBUILD} - set WO_LAZARUS_ROOT "
+          f"(CI runner installation is Phase 27's lane)")
     sys.exit(1)
-if os.path.exists(tmp_inst):
-    try: os.remove(tmp_inst)
-    except: pass
+for mode in ["Release-i386", "Release-x64"]:
+    res = subprocess.run([LAZBUILD, f"--build-mode={mode}", LPI],
+                         cwd=repo_root, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"[FAIL] lazbuild {mode} failed on installer.lpi (exit code {res.returncode})")
+        print(res.stdout[-2000:])
+        print(res.stderr[-2000:])
+        sys.exit(1)
+    print(f"  lazbuild {mode}: compiled clean.")
 
-launcher_paths = [os.path.join("client", "UpdateInstallerLauncher.au3")]
+launcher_paths = [os.path.join("client", "UpdateInstaller.cmd")]
 for lp in launcher_paths:
     if not os.path.exists(lp):
         print(f"[FAIL] Launcher script {lp} does not exist!")
         sys.exit(1)
-    with open(lp, "r", encoding="windows-1252") as lf:
+    with open(lp, "r", encoding="utf-8", errors="replace") as lf:
         l_content = lf.read()
-    for token in ["@OSArch", "@OSBuild", "_IsWebView2Installed", "/legacy", "RunWait"]:
+    for token in ["UpdateInstallerLegacy.exe", "UpdateInstallerModern.exe", "TARGET_NAME", "runas"]:
         if token not in l_content:
             print(f"[FAIL] Required adaptive token '{token}' missing from {lp}")
             sys.exit(1)
-    tmp_l = os.path.join(tempfile.gettempdir(), "test_" + os.path.basename(lp).replace(".au3", ".exe"))
-    res_l = subprocess.run([aut2exe, "/in", lp, "/out", tmp_l, "/nopack"])
-    if res_l.returncode != 0:
-        print(f"[FAIL] Aut2exe compilation failed on {lp} (code {res_l.returncode})")
+    print(f"  {lp}: Adaptive contracts verified.")
+
+# The .NET host's WebView2 fallback must keep probing the exact name slots.
+with open(os.path.join("src-modern", "installer", "host", "Program.cs"), "r", encoding="utf-8") as f:
+    host = f.read()
+for name in ["UpdateInstaller.orig.exe", "UpdateInstallerLegacy.exe"]:
+    if name not in host:
+        print(f"[FAIL] Required exact-name probe '{name}' missing from Program.cs")
         sys.exit(1)
-    if os.path.exists(tmp_l):
-        try: os.remove(tmp_l)
-        except: pass
-    print(f"  {lp}: Adaptive contracts & compilation verified.")
-print("[PASS] Test 4: Installer compile and launcher contracts verified.")
+print("  Program.cs exact-name probes verified.")
+print("[PASS] Test 3: Native compile and launcher contracts verified.")
 
 print("\n" + "=" * 71)
-print("SUCCESS: All 4 GUI contract and encoding tests passed!")
+print("SUCCESS: All 3 GUI contract tests passed!")
 print("=" * 71)

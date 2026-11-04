@@ -6,9 +6,11 @@
 # line count 2), digit-boundary safety (2026.10.2 never matches inside
 # 2026.10.20) and border preservation. These probes never touch the tree.
 # Part 2 (real tree, clean tree only): the full bump must land exactly 22
-# substitutions in exactly 14 files with the build tag intact (Phase 24
+# substitutions in exactly 13 files with the build tag intact (Phase 24
 # plan 02 retarget removed the two AutoIt launcher twins; Phase 25 plan 01
-# removed the generator GUI source from the matrix with its deletion).
+# removed the generator GUI source from the matrix with its deletion;
+# Phase 26 plan 03 removed the last au3 and added the native installer's
+# .lpi VersionInfo block as the new numeric site family).
 set -u
 SANDBOX="$(mktemp -d)"
 # shellcheck disable=SC1091  # sourced on purpose: the library under test
@@ -102,6 +104,25 @@ is_valid_version_arg "5.0.0+2026.1" \
 is_valid_version_arg "abc" \
     && { echo "FAIL: probe 9 — non-numérique doit être refusé"; rm -rf "${SANDBOX}"; exit 1; }
 
+# ---- probe 11: ancres numeriques .lpi (MajorVersionNr/MinorVersionNr/RevisionNr) ----
+# Comptage par composant sur un .lpi synthetique; la substitution reecrit
+# chaque champ depuis le coeur de destination, BuildNr jamais touche.
+mkdir -p "${SANDBOX}/lpi"
+printf '<VersionInfo>\n  <UseVersionInfo Value="True"/>\n  <MajorVersionNr Value="5"/>\n  <MinorVersionNr Value="2"/>\n  <RevisionNr Value="0"/>\n  <BuildNr Value="0"/>\n  <StringTable ProductVersion="5.2.0+2026.11"/>\n</VersionInfo>\n' > "${SANDBOX}/lpi/proj.lpi"
+[ "$(count_numeric_anchored '5\.2\.0' "${SANDBOX}/lpi/proj.lpi")" -eq 3 ] \
+    || { echo "FAIL: probe 11 - les 3 champs .lpi doivent compter 3"; rm -rf "${SANDBOX}"; exit 1; }
+substitute_numeric_versions '5\.2\.0' '5.2.1' "${SANDBOX}/lpi/proj.lpi"
+grep -q '<RevisionNr Value="1"/>' "${SANDBOX}/lpi/proj.lpi" \
+    || { echo "FAIL: probe 11 - RevisionNr doit passer a 1"; rm -rf "${SANDBOX}"; exit 1; }
+grep -q '<MajorVersionNr Value="5"/>' "${SANDBOX}/lpi/proj.lpi" \
+    || { echo "FAIL: probe 11 - MajorVersionNr doit rester 5"; rm -rf "${SANDBOX}"; exit 1; }
+grep -q '<BuildNr Value="0"/>' "${SANDBOX}/lpi/proj.lpi" \
+    || { echo "FAIL: probe 11 - BuildNr ne doit jamais bouger"; rm -rf "${SANDBOX}"; exit 1; }
+grep -q '<MinorVersionNr Value="2"/>' "${SANDBOX}/lpi/proj.lpi" \
+    || { echo "FAIL: probe 11 - MinorVersionNr doit rester 2"; rm -rf "${SANDBOX}"; exit 1; }
+[ "$(count_numeric_anchored '5\.2\.1' "${SANDBOX}/lpi/proj.lpi")" -eq 3 ] \
+    || { echo "FAIL: probe 11 - recomptage apres bump doit rendre 3"; rm -rf "${SANDBOX}"; exit 1; }
+
 # ---- probe 10: bornes du motif FULL-FORM, dans les deux sens ----
 # Le motif borné d'une forme complète matche exactement une fois dans
 # "v5.0.0+2026.11.txt" et ne matche PAS dans "5.0.0+2026.110" (voisin droit
@@ -148,35 +169,40 @@ NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
 BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
-echo "$STAT" | grep -q "14 files changed" || { echo "FAIL: attends 14 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
+echo "$STAT" | grep -q "13 files changed" || { echo "FAIL: attends 13 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
 echo "$STAT" | grep -q "22 insertions" || { echo "FAIL: attends 22 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
 # Comptage de lanes sur l'arbre réel — les tripwire du moteur (22 cœurs /
-# 16 full-form / 6 numériques, split 4 csproj + 2 au3) re-mesurés ici
-# indépendamment via count_occurrences, jamais un grep -c brut. Le
-# partitionnement 16/6 n'est PAS l'invariant (il dépend de la forme) : le
+# 15 full-form / 7 numériques, split 4 csproj + 3 champs .lpi) re-mesurés
+# ici indépendamment via count_occurrences, jamais un grep -c brut. Le
+# partitionnement 15/7 n'est PAS l'invariant (il dépend de la forme) : le
 # TOTAL des sites à token de version = 22 l'est, dans les deux formes.
 MATRIX="$(bash ci/bump-version.bash --print-files)"
-[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 14 ] || { echo "FAIL: --print-files ne rend pas 14 chemins"; git checkout -- .; exit 1; }
+[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 13 ] || { echo "FAIL: --print-files ne rend pas 13 chemins"; git checkout -- .; exit 1; }
 new_esc="${NEW//./\\.}"; new_esc="${new_esc//+/\\+}"
 new_core="${NEW%%+*}"; new_core_esc="${new_core//./\\.}"
-full_after=0; num_csproj=0; num_au3=0; core_after=0
+IFS="." read -r NEW_MAJ NEW_MIN NEW_REV <<< "${new_core}"
+full_after=0; num_csproj=0; num_lpi=0; core_after=0
 for f in ${MATRIX}; do
   full_after=$(( full_after + $(count_occurrences "(^|[^0-9])${new_esc}([^0-9]|\$)" "${f}") ))
   core_after=$(( core_after + $(count_occurrences "(^|[^0-9])${new_core_esc}([^0-9]|\$)" "${f}") ))
   case "${f}" in
     *.csproj) num_csproj=$(( num_csproj + $(count_occurrences "${new_core_esc}\.0</(FileVersion|AssemblyVersion)>" "${f}") )) ;;
-    *.au3)    num_au3=$(( num_au3 + $(count_occurrences "${new_core_esc}\)" "${f}") )) ;;
+    *.lpi)
+      num_lpi=$(( num_lpi + $(count_occurrences "<MajorVersionNr Value=\"${NEW_MAJ}\"" "${f}") ))
+      num_lpi=$(( num_lpi + $(count_occurrences "<MinorVersionNr Value=\"${NEW_MIN}\"" "${f}") ))
+      num_lpi=$(( num_lpi + $(count_occurrences "<RevisionNr Value=\"${NEW_REV}\"" "${f}") ))
+      ;;
   esac
 done
 [ "${core_after}" -eq 22 ] || { echo "FAIL: attendu 22 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
-[ "${full_after}" -eq 16 ] || { echo "FAIL: attendu 16 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
+[ "${full_after}" -eq 15 ] || { echo "FAIL: attendu 15 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
 [ "${num_csproj}" -eq 4 ] || { echo "FAIL: attendu 4 ancres csproj, obtenu ${num_csproj}"; git checkout -- .; exit 1; }
-[ "${num_au3}" -eq 2 ] || { echo "FAIL: attendu 2 ancres au3, obtenu ${num_au3}"; git checkout -- .; exit 1; }
-# The version-frozen launcher source left the matrix in Phase 24 plan 02 and
-# keeps the old version until Phase 26 deletes it — it is excluded from the
-# residue scan so a frozen source cannot read as residue. The generator GUI
-# and launcher sources were deleted in Phase 25 plan 01.
-grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright|UpdateInstallerLauncher\.au3" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
+[ "${num_lpi}" -eq 3 ] || { echo "FAIL: attendu 3 ancres .lpi, obtenu ${num_lpi}"; git checkout -- .; exit 1; }
+# The generator GUI and launcher sources were deleted in Phase 25 plan 01;
+# the last au3 (installer) left in Phase 26 plan 03. The *.au3 include in
+# the residue scan stays as zombie-defense: a tracked au3 carrying the old
+# version must fail the scan.
+grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
 grep -q "${NEW}" cmd/DownloadUpdates.cmd || { echo "FAIL: nouvelle version absente du moteur"; git checkout -- .; exit 1; }
 # Invariant capture/compare (le littéral figé pourrit à chaque changement de
 # mois) : la capture du build tag doit être byte-identique avant/après.

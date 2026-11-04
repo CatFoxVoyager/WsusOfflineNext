@@ -1,7 +1,7 @@
 @echo off
 rem ***  WSUS Offline Next - Installer Adaptive Launcher (pure .cmd)   ***
-rem ***  Takes over the adaptive launcher role of the former AutoIt    ***
-rem ***  client/UpdateInstallerLauncher.au3: it routes to the modern   ***
+rem ***  Takes over the adaptive launcher role of the retired AutoIt   ***
+rem ***  launcher source: it routes to the modern                      ***
 rem ***  WebView2/.NET 8 installer when all capability gates pass, and ***
 rem ***  to the classic Win32 installer otherwise, with the same       ***
 rem ***  registry probes, overrides, fallback chain and exit-code      ***

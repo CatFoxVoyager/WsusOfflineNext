@@ -95,13 +95,13 @@ Offline updating does not provide Windows ESU entitlement or Office activation. 
 
 ## Antivirus false positives
 
-The 5.x distribution no longer ships any AutoIt generator component: the generator entry point and the generator itself are pure `.cmd` + .NET 8. One AutoIt component remains — the classic client installer interface `client\UpdateInstallerLegacy.exe` — until the v4.2 rewrite replaces it. Antivirus engines sometimes report compiled AutoIt programs as malware: for example, Microsoft Defender flagged the classic generator executable in the official 5.2.0 archive as `Trojan:Win32/Wacatac.C!ml`. Such detections are machine-learning false positives, a known issue with compiled AutoIt programs: the same source rebuilt locally scans clean, and a false-positive report was submitted to Microsoft.
+The v4.2 distribution ships no AutoIt component at all: the generator entry point and the generator itself are pure `.cmd` + .NET 8, and the classic client installer interface `client\UpdateInstallerLegacy.exe` is a native Win32 application built with Lazarus/Free Pascal (a declarative manifest and VERSIONINFO are embedded in every shipped binary). Antivirus engines sometimes report compiled AutoIt programs as malware: for example, Microsoft Defender flagged the classic generator executable in the official 5.2.0 archive as `Trojan:Win32/Wacatac.C!ml`. Such detections are machine-learning false positives, a known issue with compiled AutoIt programs: the same source rebuilt locally scans clean, and a false-positive report was submitted to Microsoft.
 
 If your antivirus flags one of these files:
 
 - The detection is a false positive; the file is safe to restore or allow. Report suspected false positives to Microsoft via the [WDSI submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission).
 - The modern .NET 8 interfaces are not affected. Run `UpdateGeneratorModern.exe` or `client\UpdateInstallerModern.exe` directly; the launcher also selects the modern interface automatically when the WebView2 Runtime is available.
-- A permanent fix is in progress: the remaining AutoIt component is being rewritten without AutoIt.
+- The permanent fix shipped in v4.2: the last AutoIt component (the installer GUI) was rewritten as a native Win32 application — AutoIt has left the distribution.
 
 ## Quick start
 
@@ -241,7 +241,7 @@ The repository includes focused verification scripts:
 .\tests\verify-c2r-servicing.cmd
 ```
 
-The GUI contract suite checks the remaining AutoIt components — the classic installer interface and its launcher source; the generator-side AutoIt checks were removed together with the generator itself. It does not replace testing the modern React/WebView2 bridge. Inspect individual test prerequisites before running them. The historical AutoIt build remains available through `CompileAutoItScripts.cmd` (installer interface only); it writes to the same executable destination, so run the modern build last when using the modern UI.
+The GUI contract suite checks the native installer GUI — the frozen engine contracts plus both Release builds via lazbuild; the AutoIt-side checks were removed together with the AutoIt sources themselves (Phase 26). It does not replace testing the modern React/WebView2 bridge. Inspect individual test prerequisites before running them.
 
 Windows download and installation engines remain under `cmd/` and `client/cmd/`. Bash preparation tooling lives under `sh/`; its prerequisites and supported invocation are documented in that tree. Desktop installation remains Windows-specific.
 

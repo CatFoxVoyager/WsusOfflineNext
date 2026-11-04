@@ -15,7 +15,7 @@
     - malformed rows (wrong field count) are skipped, never fatal
     - the file ships with the client tree; updates need no recompile
 
-    The three predicates are VERBATIM ports of client/UpdateInstaller.au3
+    The three predicates are VERBATIM ports of the incumbent installer au3
     lines 290-347, including the 19041-family branch range rule and the
     enforcement-mode skip. The file-existence probes are injected via a
     callback so the console testrunner can drive the golden table without

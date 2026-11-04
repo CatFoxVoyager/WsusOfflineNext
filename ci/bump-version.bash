@@ -7,20 +7,21 @@
 #
 # The old version is read from the single source of truth
 # (cmd/DownloadUpdates.cmd, "set WSUSOFFLINE_VERSION=X.Y.Z" — with or without
-# the "+YYYY.MM" metadata). The 14-file matrix is the one committed in
-# 339f600, retargeted in Phase 24 plan 02 when the two pure-.cmd launchers
-# replaced the AutoIt launcher twins, and in Phase 25 plan 01 when the
-# legacy generator GUI source was deleted (the remaining AutoIt installer
-# sources are version-frozen pending deletion in Phase 26). The build tag
+# the "+YYYY.MM" metadata). The 13-file matrix is the one committed in
+# 339f600, retargeted in Phase 24 plan 02 (pure-.cmd launchers replaced the
+# AutoIt launcher twins), in Phase 25 plan 01 (generator GUI source deleted)
+# and in Phase 26 plan 03 (the last au3 left; the native installer's .lpi
+# VersionInfo block joined as the new site family). The build tag
 # "(b2026.10)" is version-independent and must not move. Exits 1 unless
-# exactly 22 version-token sites land in exactly 14 files.
+# exactly 22 version-token sites land in exactly 13 files.
 #
 # The engine runs TWO LANES over the 22 matrix occurrences (phase 19, D-01):
-# a bounded full-form lane (16 sites: source of truth, headers, captions,
-# marker, <Version>, package.json, App.tsx) and a numeric-anchored core lane
-# (6 build contexts: csproj <FileVersion>/<AssemblyVersion> "X.Y.Z.0" plus
-# AutoIt "#pragma compile(..., X.Y.Z)" on the remaining legacy GUI source —
-# a '+' metadata there breaks CompileModernApps.cmd and Aut2Exe).
+# a bounded full-form lane (15 sites: source of truth, headers, captions,
+# marker, <Version>, package.json, App.tsx, the .lpi ProductVersion string)
+# and a numeric-anchored core lane (7 build contexts: csproj
+# <FileVersion>/<AssemblyVersion> "X.Y.Z.0" plus the .lpi MajorVersionNr/
+# MinorVersionNr/RevisionNr fields — a '+' metadata there is impossible by
+# construction, the fields are integers).
 #
 # The before-accounting is SHAPE-CONDITIONAL — the binding invariant in BOTH
 # shapes is TOTAL version-token sites = 22 across the 14 files, never a
@@ -31,12 +32,12 @@
 #   MIGRATION (old is a bare core): the bounded bare-core motif matches ALL
 #     22 sites, so the full-form lane already enumerates every site; the
 #     before gate asserts sum(before_full) = 22 and sum(before_num) is
-#     INFORMATIVE only (printed, never gate-binding) — those 6 are the
+#     INFORMATIVE only (printed, never gate-binding) — those 7 are the
 #     numeric subset of the 22 that the numeric lane re-repairs after the
 #     full lane carried the "+YYYY.MM" form there.
 #   The shape branch is selected by whether the old version carries '+' —
 #   picking the wrong branch produces a wrong TOTAL and aborts, so the gate
-#   stays fail-closed in both shapes. The after-gates (16 full-form + 6
+#   stays fail-closed in both shapes. The after-gates (15 full-form + 7
 #   numeric + 22 core sites) are binding in both shapes because the
 #   after-state is identical whichever shape produced it.
 #
@@ -44,11 +45,11 @@
 # are COUNTED and the pattern is bounded at digit boundaries (CISC-08).
 
 # ===== Configuration =====
-readonly script_version="1.3"
+readonly script_version="1.4"
 VERSION_FILES="
 cmd/DownloadUpdates.cmd
 client/cmd/DoUpdate.cmd
-client/UpdateInstaller.au3
+src-native/installer/installer.lpi
 CompileModernApps.cmd
 README.md
 sh/download-updates.bash
@@ -155,15 +156,15 @@ fi
 echo "TOTAL: ${before_gate_total} -> $(( full_after_total + num_after_total )) substitutions in ${files_touched} files"
 echo "shape: ${bump_shape} | before lanes full/num: ${full_before_total}/${num_before_total} | after: full ${full_after_total}, numeric ${num_after_total}, core ${core_after_total}"
 
-if [ "${before_gate_total}" -ne 22 ] || [ "${files_touched}" -ne 14 ]; then
-  echo "bump-version: EXPECTED 22 version-token sites across 14 files — aborting (tree modified, run git checkout -- .)" >&2
+if [ "${before_gate_total}" -ne 22 ] || [ "${files_touched}" -ne 13 ]; then
+  echo "bump-version: EXPECTED 22 version-token sites across 13 files — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 # After-gates — binding in BOTH shapes (the after-state is identical
-# whichever shape produced it): 16 full-form + 6 numeric, 22 core sites.
-if [ "${full_after_total}" -ne 16 ] || [ "${num_after_total}" -ne 6 ] \
+# whichever shape produced it): 15 full-form + 7 numeric, 22 core sites.
+if [ "${full_after_total}" -ne 15 ] || [ "${num_after_total}" -ne 7 ] \
    || [ "${core_after_total}" -ne 22 ]; then
-  echo "bump-version: EXPECTED after-state 16 full-form + 6 numeric = 22 core sites — aborting (tree modified, run git checkout -- .)" >&2
+  echo "bump-version: EXPECTED after-state 15 full-form + 7 numeric = 22 core sites — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 if [ $(( full_after_total + num_after_total )) -ne "${core_after_total}" ]; then

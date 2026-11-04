@@ -1,6 +1,4 @@
 .git\
-Aut2Exe.exe
-Aut2exe_x64.exe
 upx.exe
 StaticUpdateIds-MSIProducts-dotnet5_documented.txt
 StaticUpdateIds-MSIProducts-dotnet6_documented.txt
@@ -22,9 +20,7 @@ ExcludeList-ProductionTree.txt
 ExcludeList-ReleaseTree.txt
 ExcludeList-w100_documented.txt
 ico\
-Include\
 extract-revision-update-and-product-ids.xsl
-CompileAutoItScripts.cmd
 ExtractDownloadLinks-all.cmd
 ExtractSupersededUpdates.cmd
 PrepareReleaseTree.cmd
@@ -75,4 +71,3 @@ doc\RELEASING.md
 doc\coverage.txt
 doc\branding\
 doc\screenshots\
-UpdateInstallerLauncher.au3

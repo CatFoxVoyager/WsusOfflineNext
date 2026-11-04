@@ -4,11 +4,10 @@
 # File: sh/generate-build-sites.bash
 #
 # Propagates build definitions from static/builds.ini into:
-#   1. UpdateGenerator.au3
-#   2. cmd/DownloadUpdates.cmd
-#   3. sh/download-updates-tasks/60-main-updates.bash
-#   4. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
-#   5. client/UpdateInstaller.au3
+#   1. cmd/DownloadUpdates.cmd
+#   2. sh/download-updates-tasks/60-main-updates.bash
+#   3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
+#   4. client/UpdateInstaller.au3
 #
 # Preserves CRLF line endings and Windows-1252 bytes.
 # =======================================================================
@@ -67,7 +66,9 @@ BEGIN {
 }
 END {
     # -------------------------------------------------------------------
-    # Site 1: UpdateGenerator.au3
+    # WIN11 build selection data (shared by the sites below; the former
+    # generator-GUI site that consumed block1.txt was removed in Phase 25
+    # together with its target file)
     # -------------------------------------------------------------------
     n_w11 = 0
     for (i = 1; i <= n_sec; i++) {
@@ -89,39 +90,23 @@ END {
             }
         }
     }
-    w11_v_str = ""
-    w11_d_str = ""
-    w11_def_str = ""
     w11_space_str = ""
     for (i = 1; i <= n_w11; i++) {
         if (i > 1) {
-            w11_v_str = w11_v_str ","
-            w11_d_str = w11_d_str ","
-            w11_def_str = w11_def_str ","
             w11_space_str = w11_space_str " "
         }
-        w11_v_str = w11_v_str w11_builds[i]
-        w11_d_str = w11_d_str w11_names[i]
-        w11_def_str = w11_def_str w11_defs[i]
         w11_space_str = w11_space_str w11_builds[i]
     }
 
-    f1 = tmp_dir "/block1.txt"
-    printf "Dim Const $win11_vmax                   = %d\n", n_w11 > f1
-    printf "Dim Const $win11_versions               = \"%s\"\n", w11_v_str > f1
-    printf "Dim Const $win11_displayversions        = \"%s\"\n", w11_d_str > f1
-    printf "Dim Const $win11_defaults               = \"%s\"\n", w11_def_str > f1
-    close(f1)
-
     # -------------------------------------------------------------------
-    # Site 2: cmd/DownloadUpdates.cmd
+    # Site 1: cmd/DownloadUpdates.cmd
     # -------------------------------------------------------------------
     f2 = tmp_dir "/block2.txt"
     printf "  set TMP_BUILDS_ALL_WIN11=%s\n", w11_space_str > f2
     close(f2)
 
     # -------------------------------------------------------------------
-    # Site 3: sh/download-updates-tasks/60-main-updates.bash
+    # Site 2: sh/download-updates-tasks/60-main-updates.bash
     # -------------------------------------------------------------------
     f3 = tmp_dir "/block3.txt"
     x86_list = "10240 14393 17763 19041"
@@ -131,7 +116,7 @@ END {
     close(f3)
 
     # -------------------------------------------------------------------
-    # Site 4: sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
+    # Site 3: sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
     # -------------------------------------------------------------------
     f4 = tmp_dir "/block4.txt"
     printf "w100_keys=(\n" > f4
@@ -175,7 +160,7 @@ END {
     close(f4)
 
     # -------------------------------------------------------------------
-    # Site 5: client/UpdateInstaller.au3
+    # Site 4: client/UpdateInstaller.au3
     # -------------------------------------------------------------------
     f5 = tmp_dir "/block5.txt"
     printf "; Format: [build, arch, os_family, servicing_branch, status, ekb_source_build, ekb_kb, ekb_prereq_kb, ekb_min_revision, is_enforced]\n" > f5
@@ -346,19 +331,16 @@ process_site() {
     fi
 }
 
-# 1. UpdateGenerator.au3
-process_site "UpdateGenerator.au3" "; -- BEGIN GENERATED BUILDS WIN11 --" "; -- END GENERATED BUILDS WIN11 --" "$tmp_dir/block1.txt"
-
-# 2. cmd/DownloadUpdates.cmd
+# 1. cmd/DownloadUpdates.cmd
 process_site "cmd/DownloadUpdates.cmd" "REM -- BEGIN GENERATED BUILDS WIN11 --" "REM -- END GENERATED BUILDS WIN11 --" "$tmp_dir/block2.txt"
 
-# 3. sh/download-updates-tasks/60-main-updates.bash
+# 2. sh/download-updates-tasks/60-main-updates.bash
 process_site "sh/download-updates-tasks/60-main-updates.bash" "# -- BEGIN GENERATED BUILDS --" "# -- END GENERATED BUILDS --" "$tmp_dir/block3.txt"
 
-# 4. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
+# 3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
 process_site "sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash" "# -- BEGIN GENERATED BUILDS --" "# -- END GENERATED BUILDS --" "$tmp_dir/block4.txt"
 
-# 5. client/UpdateInstaller.au3
+# 4. client/UpdateInstaller.au3
 process_site "client/UpdateInstaller.au3" "; -- BEGIN GENERATED BUILDS TABLE --" "; -- END GENERATED BUILDS TABLE --" "$tmp_dir/block5.txt"
 
 # Synchronize client/static/StaticUpdateIds-BuildUpgrades.txt
@@ -397,10 +379,10 @@ if [ "$check_only" = true ]; then
     if [ "$drift_detected" = true ]; then
         exit 1
     else
-        echo "All 5 build sites are in sync with static/builds.ini."
+        echo "All 4 build sites are in sync with static/builds.ini."
         exit 0
     fi
 else
-    echo "Successfully updated 5 build sites from static/builds.ini."
+    echo "Successfully updated 4 build sites from static/builds.ini."
     exit 0
 fi

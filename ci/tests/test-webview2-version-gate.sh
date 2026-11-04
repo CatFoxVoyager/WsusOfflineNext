@@ -341,6 +341,17 @@ check_cmd_launcher_structure () {
 check_cmd_launcher_structure "${GEN_CMD}"
 check_cmd_launcher_structure "${INS_CMD}"
 
+# --- Generator-zombie gate (Phase 25) ---------------------------------------
+# The retired generator surface must not reappear in the launcher or in the
+# trimmed compile lane. Enforcement point: this gate NAMES the literals on
+# purpose. Counted over comment-stripped lines, like every section e gate.
+gen_zombies="$(grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "${GEN_CMD}" | grep -cF 'UpdateGeneratorLegacy')"
+[ "${gen_zombies}" -eq 0 ] \
+    || fail_case "section e: retired classic generator executable referenced in ${GEN_CMD} (${gen_zombies} code-line hit(s))"
+lane_zombies="$(grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "CompileAutoItScripts.cmd" | grep -cF 'UpdateGenerator.au3')"
+[ "${lane_zombies}" -eq 0 ] \
+    || fail_case "section e: generator AutoIt source referenced by the trimmed compile lane (${lane_zombies} code-line hit(s))"
+
 # --- Section d: the battery can fail ---
 echo "== Section d: can-fail controls =="
 
@@ -395,6 +406,16 @@ if probe_parity_ok "${SANDBOX}/GenCorrupt.cmd"; then
 else
     echo "  control ok: probe-parity gate rejects a corrupted probe GUID"
 fi
+
+# Control 4: the generator-zombie instrument must fire on the defect class
+# it names. Seed the retired-generator literal into a sandbox copy of the
+# launcher and require the same comment-stripped count to be non-zero.
+cp "${GEN_CMD}" "${SANDBOX}/GenZombie.cmd"
+printf 'echo [launcher] handing off to UpdateGeneratorLegacy.exe\r\n' >> "${SANDBOX}/GenZombie.cmd"
+seeded_zombies="$(grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "${SANDBOX}/GenZombie.cmd" | grep -cF 'UpdateGeneratorLegacy')"
+[ "${seeded_zombies}" -ge 1 ] \
+    || fail_case "section d: generator-zombie control seed did not land (${seeded_zombies} hits)"
+echo "  control ok: generator-zombie count fires on a seeded legacy reference"
 
 # --- Verdict ---
 if [ "${FAILED_CASES}" -eq 0 ]; then

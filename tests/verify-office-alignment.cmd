@@ -56,19 +56,7 @@ for %%f in ("%REPO_ROOT%\exclude\*o2k13*") do (
   goto Fail
 )
 
-REM 1.2 Scan UpdateGenerator.au3 for o2k13 references
-findstr /i /c:"o2k13" "%REPO_ROOT%\UpdateGenerator.au3" >nul 2>&1
-if not errorlevel 1 (
-  echo FAIL: UpdateGenerator.au3 contains references to o2k13.
-  goto Fail
-)
-findstr /i /c:"Office 2013" "%REPO_ROOT%\UpdateGenerator.au3" >nul 2>&1
-if not errorlevel 1 (
-  echo FAIL: UpdateGenerator.au3 contains references to 'Office 2013'.
-  goto Fail
-)
-
-REM 1.3 Scan client/cmd/ for o2k13 references
+REM 1.2 Scan client/cmd/ for o2k13 references
 for %%f in ("%REPO_ROOT%\client\cmd\*.cmd" "%REPO_ROOT%\client\cmd\*.vbs") do (
   findstr /i /c:"o2k13" "%%f" >nul 2>&1
   if not errorlevel 1 (
@@ -77,14 +65,14 @@ for %%f in ("%REPO_ROOT%\client\cmd\*.cmd" "%REPO_ROOT%\client\cmd\*.vbs") do (
   )
 )
 
-REM 1.4 Scan sh/ bash scripts for o2k13 references
+REM 1.3 Scan sh/ bash scripts for o2k13 references
 powershell -NoProfile -Command "if (Get-ChildItem -Path '%REPO_ROOT%\sh' -Filter '*.bash' -Recurse | Where-Object { $_.FullName -notmatch '[\\/]tests[\\/]' } | Select-String 'o2k13') { exit 1 } else { exit 0 }"
 if errorlevel 1 (
   echo FAIL: Linux bash scripts under sh/ contain references to o2k13.
   goto Fail
 )
 
-REM 1.5 Scan cmd/DownloadUpdates.cmd active target options
+REM 1.4 Scan cmd/DownloadUpdates.cmd active target options
 findstr /i /c:"PLATFORM_OFFICE=o2k16" "%REPO_ROOT%\cmd\DownloadUpdates.cmd" >nul 2>&1
 if errorlevel 1 (
   echo FAIL: cmd\DownloadUpdates.cmd does not set PLATFORM_OFFICE=o2k16.

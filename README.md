@@ -95,20 +95,20 @@ Offline updating does not provide Windows ESU entitlement or Office activation. 
 
 ## Antivirus false positives
 
-The release package includes executables compiled from AutoIt scripts with `Aut2Exe`: the adaptive launchers `UpdateGenerator.exe` and `client\UpdateInstaller.exe`, and the classic interfaces `UpdateGeneratorLegacy.exe` and `client\UpdateInstallerLegacy.exe`. Antivirus engines sometimes report these files as malware — for example, Microsoft Defender flagged `UpdateGeneratorLegacy.exe` in the official 5.2.0 archive as `Trojan:Win32/Wacatac.C!ml`. Such detections are machine-learning false positives, a known issue with compiled AutoIt programs: the same source rebuilt locally scans clean, and a false-positive report has been submitted to Microsoft.
+The 5.x distribution no longer ships any AutoIt generator component: the generator entry point and the generator itself are pure `.cmd` + .NET 8. One AutoIt component remains — the classic client installer interface `client\UpdateInstallerLegacy.exe` — until the v4.2 rewrite replaces it. Antivirus engines sometimes report compiled AutoIt programs as malware: for example, Microsoft Defender flagged the classic generator executable in the official 5.2.0 archive as `Trojan:Win32/Wacatac.C!ml`. Such detections are machine-learning false positives, a known issue with compiled AutoIt programs: the same source rebuilt locally scans clean, and a false-positive report was submitted to Microsoft.
 
 If your antivirus flags one of these files:
 
-- The detection is a false positive; the file is safe to restore or allow.
+- The detection is a false positive; the file is safe to restore or allow. Report suspected false positives to Microsoft via the [WDSI submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission).
 - The modern .NET 8 interfaces are not affected. Run `UpdateGeneratorModern.exe` or `client\UpdateInstallerModern.exe` directly; the launcher also selects the modern interface automatically when the WebView2 Runtime is available.
-- A permanent fix is in progress: the remaining AutoIt components are being rewritten without AutoIt.
+- A permanent fix is in progress: the remaining AutoIt component is being rewritten without AutoIt.
 
 ## Quick start
 
 ### 1. Prepare updates on the connected computer
 
 1. Start with a built copy of the project. A source checkout requires the [build steps below](#build-from-source); generated executables are not tracked in Git.
-2. Launch **`UpdateGenerator.exe`** from the project root.
+2. Launch **`UpdateGenerator.cmd`** from the project root.
 3. Select the Windows versions and Office Click-to-Run products you need. Under **Options & Media**, choose additional components and keep **Verify downloaded files** enabled.
 4. Check the USB destination before enabling copying, or disable copying to prepare the local repository first. Click **Start download** and inspect the console and `log/download.log` for failures.
 5. Transfer the **complete `client/` directory**, including scripts, integrity data, `office/` packages when selected, and `wwwroot/` assets when present, to the destination media. Copying the full directory preserves Office content; the modern host's automatic media jobs are driven by selected Windows targets.
@@ -241,7 +241,7 @@ The repository includes focused verification scripts:
 .\tests\verify-c2r-servicing.cmd
 ```
 
-The GUI contract suite checks the historical AutoIt interfaces; it does not replace testing the modern React/WebView2 bridge. Inspect individual test prerequisites before running them. The historical AutoIt build remains available through `CompileAutoItScripts.cmd`; it writes to the same executable destinations, so run the modern build last when using the modern UI.
+The GUI contract suite checks the remaining AutoIt components — the classic installer interface and its launcher source; the generator-side AutoIt checks were removed together with the generator itself. It does not replace testing the modern React/WebView2 bridge. Inspect individual test prerequisites before running them. The historical AutoIt build remains available through `CompileAutoItScripts.cmd` (installer interface only); it writes to the same executable destination, so run the modern build last when using the modern UI.
 
 Windows download and installation engines remain under `cmd/` and `client/cmd/`. Bash preparation tooling lives under `sh/`; its prerequisites and supported invocation are documented in that tree. Desktop installation remains Windows-specific.
 

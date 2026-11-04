@@ -5,9 +5,10 @@
 # probed on synthetic files - occurrence counting (two occurrences on one
 # line count 2), digit-boundary safety (2026.10.2 never matches inside
 # 2026.10.20) and border preservation. These probes never touch the tree.
-# Part 2 (real tree, clean tree only): the full bump must land exactly 26
-# substitutions in exactly 15 files with the build tag intact (Phase 24
-# plan 02 retarget: the two AutoIt launcher twins left the matrix).
+# Part 2 (real tree, clean tree only): the full bump must land exactly 22
+# substitutions in exactly 14 files with the build tag intact (Phase 24
+# plan 02 retarget removed the two AutoIt launcher twins; Phase 25 plan 01
+# removed the generator GUI source from the matrix with its deletion).
 set -u
 SANDBOX="$(mktemp -d)"
 # shellcheck disable=SC1091  # sourced on purpose: the library under test
@@ -114,8 +115,8 @@ printf '5.0.0+2026.110' > "${SANDBOX}/full-collide.txt"
 # Le motif CORE est volontairement plus permissif : il compte le préfixe
 # borné porté AU SEIN de la forme complète ("5.0.0" dans "5.0.0+2026.11" —
 # le '+' est un non-digit). C'est la base de comptage before/after du moteur
-# (32 sites des deux côtés) : disposition délibérée du hazard 1, épinglée
-# côté arbre réel par les assertions 32/20/12 de la sonde ci-dessous.
+# (22 sites des deux côtés) : disposition délibérée du hazard 1, épinglée
+# côté arbre réel par les assertions 22/16/6 de la sonde ci-dessous.
 [ "$(count_occurrences "(^|[^0-9])5\.0\.0([^0-9]|\$)" "${SANDBOX}/full-ok.txt")" -eq 1 ] \
     || { echo "FAIL: probe 10 — le motif CORE doit compter le préfixe de la forme complète"; rm -rf "${SANDBOX}"; exit 1; }
 rm -rf "${SANDBOX}"
@@ -134,7 +135,7 @@ fi
 # Derivation format-agnostic (fonctionne avant ET après le train de
 # migration) : OLD lu en forme complète, MONTH pris dans la metadata d'OLD
 # si présente sinon le mois courant, NEW résolu par la lib — toujours porteur
-# de metadata, forme que les gates after (20 pleines / 12 numériques / 32
+# de metadata, forme que les gates after (16 pleines / 6 numériques / 22
 # cœurs) savent valider. Les after-gates du moteur avortent sur un NEW nu :
 # la dérivation arithmétique fixe d'origine (2026.10.2 -> 2026.10.3) est
 # restée bloquée sous les nouvelles gates.
@@ -147,15 +148,15 @@ NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
 BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
-echo "$STAT" | grep -q "15 files changed" || { echo "FAIL: attends 15 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
-echo "$STAT" | grep -q "26 insertions" || { echo "FAIL: attends 26 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
-# Comptage de lanes sur l'arbre réel — les tripwire du moteur (26 cœurs /
-# 18 full-form / 8 numériques, split 4 csproj + 4 au3) re-mesurés ici
+echo "$STAT" | grep -q "14 files changed" || { echo "FAIL: attends 14 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
+echo "$STAT" | grep -q "22 insertions" || { echo "FAIL: attends 22 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
+# Comptage de lanes sur l'arbre réel — les tripwire du moteur (22 cœurs /
+# 16 full-form / 6 numériques, split 4 csproj + 2 au3) re-mesurés ici
 # indépendamment via count_occurrences, jamais un grep -c brut. Le
-# partitionnement 18/8 n'est PAS l'invariant (il dépend de la forme) : le
-# TOTAL des sites à token de version = 26 l'est, dans les deux formes.
+# partitionnement 16/6 n'est PAS l'invariant (il dépend de la forme) : le
+# TOTAL des sites à token de version = 22 l'est, dans les deux formes.
 MATRIX="$(bash ci/bump-version.bash --print-files)"
-[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 15 ] || { echo "FAIL: --print-files ne rend pas 15 chemins"; git checkout -- .; exit 1; }
+[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 14 ] || { echo "FAIL: --print-files ne rend pas 14 chemins"; git checkout -- .; exit 1; }
 new_esc="${NEW//./\\.}"; new_esc="${new_esc//+/\\+}"
 new_core="${NEW%%+*}"; new_core_esc="${new_core//./\\.}"
 full_after=0; num_csproj=0; num_au3=0; core_after=0
@@ -167,14 +168,15 @@ for f in ${MATRIX}; do
     *.au3)    num_au3=$(( num_au3 + $(count_occurrences "${new_core_esc}\)" "${f}") )) ;;
   esac
 done
-[ "${core_after}" -eq 26 ] || { echo "FAIL: attendu 26 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
-[ "${full_after}" -eq 18 ] || { echo "FAIL: attendu 18 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
+[ "${core_after}" -eq 22 ] || { echo "FAIL: attendu 22 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
+[ "${full_after}" -eq 16 ] || { echo "FAIL: attendu 16 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
 [ "${num_csproj}" -eq 4 ] || { echo "FAIL: attendu 4 ancres csproj, obtenu ${num_csproj}"; git checkout -- .; exit 1; }
-[ "${num_au3}" -eq 4 ] || { echo "FAIL: attendu 4 ancres au3, obtenu ${num_au3}"; git checkout -- .; exit 1; }
-# The two version-frozen launcher sources left the matrix (Phase 24 plan 02)
-# and keep the old version until Phase 25/26 deletes them — they are excluded
-# from the residue scan so a frozen source cannot read as residue.
-grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright|UpdateGeneratorLauncher\.au3|UpdateInstallerLauncher\.au3" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
+[ "${num_au3}" -eq 2 ] || { echo "FAIL: attendu 2 ancres au3, obtenu ${num_au3}"; git checkout -- .; exit 1; }
+# The version-frozen launcher source left the matrix in Phase 24 plan 02 and
+# keeps the old version until Phase 26 deletes it — it is excluded from the
+# residue scan so a frozen source cannot read as residue. The generator GUI
+# and launcher sources were deleted in Phase 25 plan 01.
+grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright|UpdateInstallerLauncher\.au3" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
 grep -q "${NEW}" cmd/DownloadUpdates.cmd || { echo "FAIL: nouvelle version absente du moteur"; git checkout -- .; exit 1; }
 # Invariant capture/compare (le littéral figé pourrit à chaque changement de
 # mois) : la capture du build tag doit être byte-identique avant/après.
@@ -183,4 +185,4 @@ BT_AFTER="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 grep -q "${NEW},release" static/SelfUpdateVersion-this.txt || { echo "FAIL: marqueur selfupdate non bumpé"; git checkout -- .; exit 1; }
 git checkout -- .
 [ -z "$(git diff --name-only --ignore-cr-at-eol)" ] || { echo "FAIL: revert incomplet"; exit 1; }
-echo "PASS bump-version (15 fichiers, 26 substitutions, build tag intact, revert propre)"
+echo "PASS bump-version (14 fichiers, 22 substitutions, build tag intact, revert propre)"

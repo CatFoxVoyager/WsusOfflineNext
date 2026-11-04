@@ -1,11 +1,11 @@
 @echo off
 rem ***  WSUS Offline Next - Generator Adaptive Launcher (pure .cmd)  ***
 rem ***  Takes over the adaptive launcher role of the former AutoIt  ***
-rem ***  UpdateGeneratorLauncher.au3: it routes to the modern        ***
-rem ***  WebView2/.NET 8 generator when all capability gates pass,   ***
-rem ***  and to the classic Win32 generator otherwise, with the      ***
-rem ***  same registry probes, overrides, fallback chain and         ***
-rem ***  exit-code propagation as the incumbent.                     ***
+rem ***  launcher source: it routes to the modern WebView2/.NET 8    ***
+rem ***  generator - the only generator executable since the classic ***
+rem ***  interface was retired (Phase 25) - with the same registry   ***
+rem ***  probes, overrides and exit-code propagation as the          ***
+rem ***  incumbent.                                                  ***
 
 verify other 2>nul
 setlocal enableextensions
@@ -109,17 +109,14 @@ if "%FORCE_LEGACY%"=="1" goto TargetResolved
 if "%CAN_MODERN%"=="1" set "ROUTE_MODERN=1"
 :TargetResolved
 
-set "TARGET_NAME=UpdateGeneratorLegacy.exe"
-if "%ROUTE_MODERN%"=="1" set "TARGET_NAME=UpdateGeneratorModern.exe"
+rem Phase 25 retarget: the classic generator executable was retired, so a
+rem single target remains. A Legacy route (a /legacy or /classic override,
+rem or a failed capability gate) resolves to the same modern exe - the
+rem in-host Evergreen dialog then explains the runtime situation.
+set "TARGET_NAME=UpdateGeneratorModern.exe"
 if exist "%~dp0%TARGET_NAME%" goto HaveTarget
 
-rem Fallback chain: the chosen target is missing, use the other exe (Legacy
-rem first on the Legacy branch, Modern first on the Modern branch).
-if "%ROUTE_MODERN%"=="1" set "TARGET_NAME=UpdateGeneratorLegacy.exe"
-if "%ROUTE_MODERN%"=="0" set "TARGET_NAME=UpdateGeneratorModern.exe"
-if exist "%~dp0%TARGET_NAME%" goto HaveTarget
-
-rem Both targets missing: bilingual error, pause, exit code 1.
+rem Target missing: bilingual error, pause, exit code 1.
 echo [launcher] FEHLER: Kein geeignetes Programm gefunden.
 echo [launcher] ERROR: No suitable generator executable found.
 echo [launcher] Ziel/Target: "%~dp0%TARGET_NAME%"
@@ -127,11 +124,10 @@ pause
 endlocal & exit /b 1
 
 :HaveTarget
-if "%ROUTE_MODERN%"=="1" goto LaunchModern
-echo [launcher] Starte klassische Programmvariante (Fallback)...
-echo [launcher] Launching classic interface (fallback)...
-goto DoHandoff
-:LaunchModern
+rem Phase 25 retarget: the classic interface is retired - every route lands
+rem on the modern exe; the in-host dialog explains the runtime situation.
+echo [launcher] Vorgang: Die klassische Variante wird nicht mehr angeboten.
+echo [launcher] Operation: The classic interface is no longer offered.
 echo [launcher] Starte moderne Programmvariante...
 echo [launcher] Launching modern interface...
 :DoHandoff

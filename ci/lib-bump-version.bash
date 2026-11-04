@@ -15,10 +15,11 @@
 # impossible instead of accidentally absent.
 #
 # SemVer extension (phase 19, decision D-01): the locked format is
-# MAJOR.MINOR.PATCH+YYYY.MM. The 32 matrix occurrences split into two
-# disjoint contexts: 20 full-form sites (source of truth, headers, captions,
-# marker, <Version>, package.json, App.tsx) carry the whole M.m.p+YYYY.MM
-# token, and 12 numeric-only build contexts (csproj <FileVersion>/
+# MAJOR.MINOR.PATCH+YYYY.MM. The matrix occurrences (22 since Phase 25
+# plan 01; 26 after Phase 24; 32 before it) split into two disjoint
+# contexts: 16 full-form sites (source of truth, headers, captions, marker,
+# <Version>, package.json, App.tsx) carry the whole M.m.p+YYYY.MM token,
+# and 6 numeric-only build contexts (csproj <FileVersion>/
 # <AssemblyVersion> "X.Y.Z.0", AutoIt "#pragma compile(..., X.Y.Z)") MUST
 # carry the bare core - a '+' metadata there breaks CompileModernApps.cmd
 # and Aut2Exe. The engine therefore runs TWO LANES (see ci/bump-version.bash).

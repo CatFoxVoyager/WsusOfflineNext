@@ -160,7 +160,7 @@ if exist ..\static\sdd\StaticUpdateFiles-modified.txt (
 echo %DATE% %TIME% - Info: Ending WSUS Offline Next - self update>>%DOWNLOAD_LOGFILE%
 if "%RESTART_GENERATOR%"=="1" (
   cd ..
-  start UpdateGenerator.exe
+  start UpdateGenerator.cmd
   exit
 )
 goto EoF

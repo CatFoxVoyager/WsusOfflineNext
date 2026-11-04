@@ -333,9 +333,9 @@ jobs:
           unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} non embarquée"; exit 1; }
           unzip -p "$ZIP" wsusoffline/UpdateGenerator.cmd > /dev/null || { echo "FAIL: UpdateGenerator.cmd entry point missing from the zip"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/UpdateInstaller.cmd > /dev/null || { echo "FAIL: client/UpdateInstaller.cmd entry point missing from the zip"; exit 1; }
-          if unzip -l "$ZIP" | grep -qE "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3"; then
-            echo "FAIL: superseded AutoIt launcher sources in the zip"
-            unzip -l "$ZIP" | grep -E "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3"
+          if unzip -l "$ZIP" | grep -qE "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|wsusoffline/UpdateGeneratorLegacy[.]exe"; then
+            echo "FAIL: retired AutoIt generator artifacts in the zip (generator source, launcher sources, or generator legacy exe)"
+            unzip -l "$ZIP" | grep -E "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|wsusoffline/UpdateGeneratorLegacy[.]exe"
             exit 1
           fi
           echo "verify-release-archive: contenu OK"

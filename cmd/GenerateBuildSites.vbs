@@ -3,11 +3,10 @@
 ' File: cmd/GenerateBuildSites.vbs
 '
 ' Propagates build definitions from static/builds.ini into:
-'   1. UpdateGenerator.au3
-'   2. cmd/DownloadUpdates.cmd
-'   3. sh/download-updates-tasks/60-main-updates.bash
-'   4. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
-'   5. client/UpdateInstaller.au3
+'   1. cmd/DownloadUpdates.cmd
+'   2. sh/download-updates-tasks/60-main-updates.bash
+'   3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
+'   4. client/UpdateInstaller.au3
 '
 ' Preserves CRLF line endings and Windows-1252 ANSI encoding.
 ' =======================================================================
@@ -68,10 +67,10 @@ For Each strLine In arrLines
 Next
 
 ' -----------------------------------------------------------------------
-' Target 1: UpdateGenerator.au3
+' WIN11 build selection data (shared by the targets below; the former
+' generator-GUI target that consumed it was removed in Phase 25 together
+' with its file)
 ' -----------------------------------------------------------------------
-Dim strSite1Path, strSite1Content, strSite1Block, strSite1New
-strSite1Path = objFSO.BuildPath(strRepoRoot, "UpdateGenerator.au3")
 
 ' Extract Windows 11 builds
 Dim arrWin11Builds(), arrWin11Names(), arrWin11Defs()
@@ -105,28 +104,8 @@ For i = 0 To nWin11 - 2
     Next
 Next
 
-Dim strW11Versions, strW11Dsp, strW11Defaults
-strW11Versions = ""
-strW11Dsp = ""
-strW11Defaults = ""
-For i = 0 To nWin11 - 1
-    If i > 0 Then
-        strW11Versions = strW11Versions & ","
-        strW11Dsp = strW11Dsp & ","
-        strW11Defaults = strW11Defaults & ","
-    End If
-    strW11Versions = strW11Versions & CStr(arrWin11Builds(i))
-    strW11Dsp = strW11Dsp & arrWin11Names(i)
-    strW11Defaults = strW11Defaults & arrWin11Defs(i)
-Next
-
-strSite1Block = "Dim Const $win11_vmax                   = " & nWin11 & vbCrLf & _
-                "Dim Const $win11_versions               = """ & strW11Versions & """" & vbCrLf & _
-                "Dim Const $win11_displayversions        = """ & strW11Dsp & """" & vbCrLf & _
-                "Dim Const $win11_defaults               = """ & strW11Defaults & """"
-
 ' -----------------------------------------------------------------------
-' Target 2: cmd/DownloadUpdates.cmd
+' Target 1: cmd/DownloadUpdates.cmd
 ' -----------------------------------------------------------------------
 Dim strSite2Path, strSite2Content, strSite2Block, strSite2New
 strSite2Path = objFSO.BuildPath(strRepoRoot, "cmd\DownloadUpdates.cmd")
@@ -140,7 +119,7 @@ Next
 strSite2Block = "  set TMP_BUILDS_ALL_WIN11=" & strW11SpaceList
 
 ' -----------------------------------------------------------------------
-' Target 3: sh/download-updates-tasks/60-main-updates.bash
+' Target 2: sh/download-updates-tasks/60-main-updates.bash
 ' -----------------------------------------------------------------------
 Dim strSite3Path, strSite3Content, strSite3Block, strSite3New
 strSite3Path = objFSO.BuildPath(strRepoRoot, "sh\download-updates-tasks\60-main-updates.bash")
@@ -215,7 +194,7 @@ strSite3Block = "w100_x86_all_versions=( " & strX86List & " )" & vbCrLf & _
                 "w100_x64_all_versions=( " & strX64List & " )"
 
 ' -----------------------------------------------------------------------
-' Target 4: sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
+' Target 3: sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
 ' -----------------------------------------------------------------------
 Dim strSite4Path, strSite4Content, strSite4Block, strSite4New
 strSite4Path = objFSO.BuildPath(strRepoRoot, "sh\update-generator-tasks\10-show-selection-dialogs-with-dialog.bash")
@@ -290,7 +269,7 @@ strValuesBlock = "declare -A w100_values=(" & vbCrLf & _
 strSite4Block = strKeysBlock & vbCrLf & vbCrLf & strLabelsBlock & vbCrLf & vbCrLf & strValuesBlock
 
 ' -----------------------------------------------------------------------
-' Target 5: client/UpdateInstaller.au3 & client/static/StaticUpdateIds-BuildUpgrades.txt
+' Target 4: client/UpdateInstaller.au3 & client/static/StaticUpdateIds-BuildUpgrades.txt
 ' -----------------------------------------------------------------------
 Dim strSite5Path, strSite5Content, strSite5Block, strSite5New
 strSite5Path = objFSO.BuildPath(strRepoRoot, "client\UpdateInstaller.au3")
@@ -400,16 +379,7 @@ Next
 ' -----------------------------------------------------------------------
 bDrift = False
 
-' 1. UpdateGenerator.au3
-strSite1Content = ReadTextFile1252(strSite1Path)
-strSite1New = ReplaceBetweenMarkers(strSite1Content, "; -- BEGIN GENERATED BUILDS WIN11 --", "; -- END GENERATED BUILDS WIN11 --", strSite1Block, "UpdateGenerator.au3")
-If strSite1New <> strSite1Content Then
-    bDrift = True
-    If bCheckOnly Then WScript.Echo "ERROR: File UpdateGenerator.au3 is out of sync with static/builds.ini."
-End If
-If Not bCheckOnly Then Call WriteTextFile1252(strSite1Path, strSite1New)
-
-' 2. cmd/DownloadUpdates.cmd
+' 1. cmd/DownloadUpdates.cmd
 strSite2Content = ReadTextFile1252(strSite2Path)
 strSite2New = ReplaceBetweenMarkers(strSite2Content, "REM -- BEGIN GENERATED BUILDS WIN11 --", "REM -- END GENERATED BUILDS WIN11 --", strSite2Block, "cmd/DownloadUpdates.cmd")
 If strSite2New <> strSite2Content Then
@@ -418,7 +388,7 @@ If strSite2New <> strSite2Content Then
 End If
 If Not bCheckOnly Then Call WriteTextFile1252(strSite2Path, strSite2New)
 
-' 3. sh/download-updates-tasks/60-main-updates.bash
+' 2. sh/download-updates-tasks/60-main-updates.bash
 strSite3Content = ReadTextFile1252(strSite3Path)
 strSite3New = ReplaceBetweenMarkers(strSite3Content, "# -- BEGIN GENERATED BUILDS --", "# -- END GENERATED BUILDS --", strSite3Block, "sh/download-updates-tasks/60-main-updates.bash")
 If strSite3New <> strSite3Content Then
@@ -427,7 +397,7 @@ If strSite3New <> strSite3Content Then
 End If
 If Not bCheckOnly Then Call WriteTextFile1252(strSite3Path, strSite3New)
 
-' 4. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
+' 3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
 strSite4Content = ReadTextFile1252(strSite4Path)
 strSite4New = ReplaceBetweenMarkers(strSite4Content, "# -- BEGIN GENERATED BUILDS --", "# -- END GENERATED BUILDS --", strSite4Block, "sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash")
 If strSite4New <> strSite4Content Then
@@ -436,7 +406,7 @@ If strSite4New <> strSite4Content Then
 End If
 If Not bCheckOnly Then Call WriteTextFile1252(strSite4Path, strSite4New)
 
-' 5. client/UpdateInstaller.au3
+' 4. client/UpdateInstaller.au3
 strSite5Content = ReadTextFile1252(strSite5Path)
 strSite5New = ReplaceBetweenMarkers(strSite5Content, "; -- BEGIN GENERATED BUILDS TABLE --", "; -- END GENERATED BUILDS TABLE --", strSite5Block, "client/UpdateInstaller.au3 (TABLE)")
 If strSite5New <> strSite5Content Then
@@ -472,11 +442,11 @@ If bCheckOnly Then
     If bDrift Then
         WScript.Quit 1
     Else
-        WScript.Echo "All 5 build sites are in sync with static/builds.ini."
+        WScript.Echo "All 4 build sites are in sync with static/builds.ini."
         WScript.Quit 0
     End If
 Else
-    WScript.Echo "Successfully updated 5 build sites from static/builds.ini."
+    WScript.Echo "Successfully updated 4 build sites from static/builds.ini."
     WScript.Quit 0
 End If
 

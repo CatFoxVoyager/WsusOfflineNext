@@ -5,7 +5,7 @@ UpdateProjectBranding.py
 Automates the renaming and version/build stamping across the entire WSUS Offline Next codebase:
 - Windows Command Scripts (cmd/*.cmd, client/cmd/*.cmd, CompileAutoItScripts.cmd)
 - VBScript (client/cmd/DetermineSystemProperties.vbs)
-- AutoIt 3 applications (UpdateGenerator.au3, client/UpdateInstaller.au3)
+- AutoIt 3 application (client/UpdateInstaller.au3)
 - Bash download/ISO scripts (sh/*.bash, sh/*/*.bash)
 - Version tracking files (static/SelfUpdateVersion-this.txt)
 - Modern applications (src-modern/generator, src-modern/installer: React, C# host, csproj, package.json)
@@ -187,33 +187,9 @@ def apply_branding(name: str, edition: str, version: str, build: str, company: s
     )
 
     # =========================================================================
-    # 3. AutoIt 3 Scripts (*.au3)
+    # 3. AutoIt 3 Script (*.au3)
     # =========================================================================
-    print("\n--- Updating AutoIt 3 GUI Scripts (.au3) ---")
-    # UpdateGenerator.au3
-    total_changes += replace_in_file(
-        "UpdateGenerator.au3",
-        [
-            (re.compile(r"; \*\*\*\s+.* - Generator\s+\*\*\*"),
-             f"; ***  {name} {version} - Generator  ***"),
-            (re.compile(r"; \*\*\*\s+-\s+.*Edition\s+-\s+\*\*\*"),
-             f"; ***         - {edition} -          ***"),
-            (re.compile(r'#pragma compile\(CompanyName, [^)]+\)'),
-             f'#pragma compile(CompanyName, "{company}")'),
-            (re.compile(r'#pragma compile\(FileVersion, [^)]+\)'),
-             f'#pragma compile(FileVersion, {version})'),
-            (re.compile(r'#pragma compile\(ProductName, [^)]+\)'),
-             f'#pragma compile(ProductName, "{name}")'),
-            (re.compile(r'#pragma compile\(ProductVersion, [^)]+\)'),
-             f'#pragma compile(ProductVersion, {version})'),
-            (re.compile(r'Dim Const \$caption\s*=\s*"[^"]+"'),
-             f'Dim Const $caption                      = "{name} - {full_version_build}"'),
-        ],
-        encoding="windows-1252",
-        newline="",
-        dry_run=dry_run
-    )
-
+    print("\n--- Updating AutoIt 3 GUI Script (.au3) ---")
     # client/UpdateInstaller.au3
     total_changes += replace_in_file(
         "client/UpdateInstaller.au3",

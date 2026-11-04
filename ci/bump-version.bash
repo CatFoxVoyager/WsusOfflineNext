@@ -7,13 +7,15 @@
 #
 # The old version is read from the single source of truth
 # (cmd/DownloadUpdates.cmd, "set WSUSOFFLINE_VERSION=X.Y.Z" — with or without
-# the "+YYYY.MM" metadata). The 13-file matrix is the one committed in
+# the "+YYYY.MM" metadata). The 14-file matrix is the one committed in
 # 339f600, retargeted in Phase 24 plan 02 (pure-.cmd launchers replaced the
 # AutoIt launcher twins), in Phase 25 plan 01 (generator GUI source deleted)
 # and in Phase 26 plan 03 (the last au3 left; the native installer's .lpi
-# VersionInfo block joined as the new site family). The build tag
+# VersionInfo block joined as the new site family - one file out, one file
+# in, so the count stays 14; measured by the live bump run, never
+# narrated). The build tag
 # "(b2026.10)" is version-independent and must not move. Exits 1 unless
-# exactly 22 version-token sites land in exactly 13 files.
+# exactly 22 version-token sites land in exactly 14 files.
 #
 # The engine runs TWO LANES over the 22 matrix occurrences (phase 19, D-01):
 # a bounded full-form lane (15 sites: source of truth, headers, captions,
@@ -38,8 +40,11 @@
 #   The shape branch is selected by whether the old version carries '+' —
 #   picking the wrong branch produces a wrong TOTAL and aborts, so the gate
 #   stays fail-closed in both shapes. The after-gates (15 full-form + 7
-#   numeric + 22 core sites) are binding in both shapes because the
-#   after-state is identical whichever shape produced it.
+#   numeric = 22 sites, of which 19 carry the literal core substring and 3
+#   are the .lpi VersionInfo integer fields - Major/Minor/Revision are
+#   separate integers that never contain the "X.Y.Z" substring) are binding
+#   in both shapes because the after-state is identical whichever shape
+#   produced it.
 #
 # Counting/substitution logic lives in ci/lib-bump-version.bash: occurrences
 # are COUNTED and the pattern is bounded at digit boundaries (CISC-08).
@@ -119,6 +124,7 @@ num_before_total=0
 full_after_total=0
 num_after_total=0
 core_after_total=0
+lpi_after_total=0
 files_touched=0
 
 printf '%-55s %s -> %s\n' "file" "${old_version}" "${new_version}"
@@ -141,6 +147,9 @@ for f in ${VERSION_FILES}; do
   full_after_total=$(( full_after_total + after_full ))
   num_after_total=$(( num_after_total + after_num ))
   core_after_total=$(( core_after_total + core_after ))
+  case "${f}" in
+    *.lpi) lpi_after_total=$(( lpi_after_total + after_num )) ;;
+  esac
   if [ "${before_full}" -gt 0 ] || [ "${before_num}" -gt 0 ]; then
     files_touched=$(( files_touched + 1 ))
   fi
@@ -156,19 +165,22 @@ fi
 echo "TOTAL: ${before_gate_total} -> $(( full_after_total + num_after_total )) substitutions in ${files_touched} files"
 echo "shape: ${bump_shape} | before lanes full/num: ${full_before_total}/${num_before_total} | after: full ${full_after_total}, numeric ${num_after_total}, core ${core_after_total}"
 
-if [ "${before_gate_total}" -ne 22 ] || [ "${files_touched}" -ne 13 ]; then
-  echo "bump-version: EXPECTED 22 version-token sites across 13 files — aborting (tree modified, run git checkout -- .)" >&2
+if [ "${before_gate_total}" -ne 22 ] || [ "${files_touched}" -ne 14 ]; then
+  echo "bump-version: EXPECTED 22 version-token sites across 14 files — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 # After-gates — binding in BOTH shapes (the after-state is identical
-# whichever shape produced it): 15 full-form + 7 numeric, 22 core sites.
+# whichever shape produced it): 15 full-form + 7 numeric = 22 sites; the
+# literal-core substring lands in 19 of them (the 3 .lpi integer fields
+# never contain the core substring), so the reconciliation gate is
+# core + lpi sites == full + numeric.
 if [ "${full_after_total}" -ne 15 ] || [ "${num_after_total}" -ne 7 ] \
-   || [ "${core_after_total}" -ne 22 ]; then
-  echo "bump-version: EXPECTED after-state 15 full-form + 7 numeric = 22 core sites — aborting (tree modified, run git checkout -- .)" >&2
+   || [ "${core_after_total}" -ne 19 ]; then
+  echo "bump-version: EXPECTED after-state 15 full-form + 7 numeric = 22 sites (19 literal-core + 3 .lpi integer fields) — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
-if [ $(( full_after_total + num_after_total )) -ne "${core_after_total}" ]; then
-  echo "bump-version: lane split ${full_after_total}+${num_after_total} disagrees with core count ${core_after_total} — aborting (tree modified, run git checkout -- .)" >&2
+if [ $(( core_after_total + lpi_after_total )) -ne $(( full_after_total + num_after_total )) ]; then
+  echo "bump-version: lane split ${full_after_total}+${num_after_total} disagrees with core ${core_after_total} + .lpi fields ${lpi_after_total} — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 echo "bump-version: OK — version ${old_version} -> ${new_version} (${bump_shape})"

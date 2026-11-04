@@ -6,11 +6,12 @@
 # line count 2), digit-boundary safety (2026.10.2 never matches inside
 # 2026.10.20) and border preservation. These probes never touch the tree.
 # Part 2 (real tree, clean tree only): the full bump must land exactly 22
-# substitutions in exactly 13 files with the build tag intact (Phase 24
+# substitutions in exactly 14 files with the build tag intact (Phase 24
 # plan 02 retarget removed the two AutoIt launcher twins; Phase 25 plan 01
 # removed the generator GUI source from the matrix with its deletion;
 # Phase 26 plan 03 removed the last au3 and added the native installer's
-# .lpi VersionInfo block as the new numeric site family).
+# .lpi VersionInfo block - one file out, one file in, so the matrix stays
+# at 14 files / 22 sites, measured by the live bump run).
 set -u
 SANDBOX="$(mktemp -d)"
 # shellcheck disable=SC1091  # sourced on purpose: the library under test
@@ -169,7 +170,7 @@ NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
 BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
-echo "$STAT" | grep -q "13 files changed" || { echo "FAIL: attends 13 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
+echo "$STAT" | grep -q "14 files changed" || { echo "FAIL: attends 14 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
 echo "$STAT" | grep -q "22 insertions" || { echo "FAIL: attends 22 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
 # Comptage de lanes sur l'arbre réel — les tripwire du moteur (22 cœurs /
 # 15 full-form / 7 numériques, split 4 csproj + 3 champs .lpi) re-mesurés
@@ -177,7 +178,7 @@ echo "$STAT" | grep -q "22 insertions" || { echo "FAIL: attends 22 substitutions
 # partitionnement 15/7 n'est PAS l'invariant (il dépend de la forme) : le
 # TOTAL des sites à token de version = 22 l'est, dans les deux formes.
 MATRIX="$(bash ci/bump-version.bash --print-files)"
-[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 13 ] || { echo "FAIL: --print-files ne rend pas 13 chemins"; git checkout -- .; exit 1; }
+[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 14 ] || { echo "FAIL: --print-files ne rend pas 14 chemins"; git checkout -- .; exit 1; }
 new_esc="${NEW//./\\.}"; new_esc="${new_esc//+/\\+}"
 new_core="${NEW%%+*}"; new_core_esc="${new_core//./\\.}"
 IFS="." read -r NEW_MAJ NEW_MIN NEW_REV <<< "${new_core}"
@@ -194,10 +195,15 @@ for f in ${MATRIX}; do
       ;;
   esac
 done
-[ "${core_after}" -eq 22 ] || { echo "FAIL: attendu 22 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
+# Le motif core-littéral compte 19 sites (les 3 champs entiers .lpi ne
+# portent jamais la sous-chaîne "X.Y.Z") : core == full + csproj, et le
+# total des sites = core + .lpi = 22.
+[ "${core_after}" -eq 19 ] || { echo "FAIL: attendu 19 sites au core littéral, obtenu ${core_after}"; git checkout -- .; exit 1; }
 [ "${full_after}" -eq 15 ] || { echo "FAIL: attendu 15 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
 [ "${num_csproj}" -eq 4 ] || { echo "FAIL: attendu 4 ancres csproj, obtenu ${num_csproj}"; git checkout -- .; exit 1; }
 [ "${num_lpi}" -eq 3 ] || { echo "FAIL: attendu 3 ancres .lpi, obtenu ${num_lpi}"; git checkout -- .; exit 1; }
+[ "$(( core_after + num_lpi ))" -eq 22 ] \
+    || { echo "FAIL: le total des sites core+.lpi doit faire 22"; git checkout -- .; exit 1; }
 # The generator GUI and launcher sources were deleted in Phase 25 plan 01;
 # the last au3 (installer) left in Phase 26 plan 03. The *.au3 include in
 # the residue scan stays as zombie-defense: a tracked au3 carrying the old

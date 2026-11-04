@@ -23,7 +23,11 @@
 # numeric-only build contexts (csproj <FileVersion>/<AssemblyVersion>
 # "X.Y.Z.0", the .lpi MajorVersionNr/MinorVersionNr/RevisionNr integer
 # fields - the retired AutoIt "#pragma compile(..., X.Y.Z)" context left
-# with the au3 deletion) MUST carry the bare core. The engine therefore
+# with the au3 deletion) MUST carry the bare core: the csproj anchors
+# embed the literal "X.Y.Z" substring, the .lpi integer fields carry the
+# core as three separate integers (counted by their own anchors, invisible
+# to the literal-core substring motif - the engine reconciles
+# 19 literal-core + 3 .lpi fields = 22). The engine therefore
 # runs TWO LANES (see ci/bump-version.bash).
 
 # ===== Functions =====

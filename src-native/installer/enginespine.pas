@@ -78,6 +78,24 @@ type
   shutdown - "terminated abruptly" IS the success path. }
 function SpineAbruptDeathIsSuccess(const ASwitches: string): Boolean;
 
+{ Complete outcome classification of one spine run (unit-testable matrix):
+  the engine handshake (0 / 1 / 3010 / 3011) mapped onto the GUI's summary
+  states, combined with the finish modes and the cancellation flag.
+  Precedence: cancel wins (the child was killed on purpose); then abrupt
+  death in a finish mode = success (Pitfall C); then no observed exit =
+  no verdict; then the integer handshake. }
+type
+  TSpineOutcomeKind = (
+    soCompleted,         { exit 0 }
+    soError,             { exit 1 or any other integer }
+    soRebootRequired,    { exit 3010 }
+    soRecall,            { exit 3011 }
+    soAbruptFinishSuccess, { died mid-run under /autoreboot|/shutdown }
+    soCanceled,          { user cancel killed the child }
+    soNoVerdict);        { spawn failure / watchdog without finish mode }
+function SpineOutcomeKind(const ASwitches: string; AObserved: Boolean;
+  AExitCode: Integer; ACanceled: Boolean): TSpineOutcomeKind;
+
 { Decode raw OEM console bytes into display text (UTF-8 for the LCL). }
 function SpineOemToDisplay(const ARaw: AnsiString): string;
 
@@ -87,6 +105,25 @@ function SpineAbruptDeathIsSuccess(const ASwitches: string): Boolean;
 begin
   Result := (Pos('/autoreboot', ASwitches) > 0)
     or (Pos('/shutdown', ASwitches) > 0);
+end;
+
+function SpineOutcomeKind(const ASwitches: string; AObserved: Boolean;
+  AExitCode: Integer; ACanceled: Boolean): TSpineOutcomeKind;
+begin
+  if ACanceled then
+    Exit(soCanceled);
+  if not AObserved then
+  begin
+    if SpineAbruptDeathIsSuccess(ASwitches) then
+      Exit(soAbruptFinishSuccess);
+    Exit(soNoVerdict);
+  end;
+  case AExitCode of
+    ENG_EXIT_OK: Result := soCompleted;
+    ENG_EXIT_REBOOT_REQUIRED: Result := soRebootRequired;
+    ENG_EXIT_RECALL: Result := soRecall;
+    else Result := soError;
+  end;
 end;
 
 function SpineOemToDisplay(const ARaw: AnsiString): string;

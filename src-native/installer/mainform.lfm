@@ -1,73 +1,225 @@
 object MainForm: TMainForm
   Left = 60
-  Height = 360
-  Top = 60
-  Width = 560
+  Height = 684
+  Top = 40
+  Width = 604
   Caption = 'WSUS Offline Next - Installer'
-  ClientHeight = 331
-  ClientWidth = 546
+  ClientHeight = 638
+  ClientWidth = 588
   OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  Position = poScreenCenter
   LCLVersion = '4.8.0.0'
   object lblIntro: TLabel
-    Left = 16
-    Height = 30
-    Top = 10
-    Width = 514
+    Left = 12
+    Height = 44
+    Top = 8
+    Width = 360
     AutoSize = False
     Caption = 'Select desired options and click Start to install missing Microsoft updates on your computer.'
     WordWrap = True
   end
-  object chkUpdateCpp: TCheckBox
-    Left = 16
-    Height = 23
-    Top = 48
-    Width = 320
-    Caption = 'Update C++ Runtime Libraries'
+  object grpMedium: TGroupBox
+    Left = 384
+    Height = 56
+    Top = 8
+    Width = 192
+    Caption = 'Medium info'
+    Visible = False
+    object lblBuild: TLabel
+      Left = 12
+      Height = 18
+      Top = 26
+      Width = 168
+    end
+  end
+  object pcTabs: TPageControl
+    Left = 12
+    Height = 400
+    Top = 68
+    Width = 564
+    ActivePage = tsUpdating
+    TabIndex = 0
     TabOrder = 0
-  end
-  object chkVerify: TCheckBox
-    Left = 16
-    Height = 23
-    Top = 76
-    Width = 320
-    Caption = 'Verify installation packages'
-    TabOrder = 1
-  end
-  object chkAuditOnly: TCheckBox
-    Left = 16
-    Height = 23
-    Top = 104
-    Width = 380
-    Caption = 'Audit only (missing updates report)'
-    TabOrder = 2
+    object tsUpdating: TTabSheet
+      Caption = 'Updating'
+      object grpInstallation: TGroupBox
+        AnchorSideLeft.Control = tsUpdating
+        Left = 8
+        Height = 180
+        Top = 4
+        Width = 540
+        Caption = 'Installation'
+        object chkUpgradeBuilds: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 20
+          Width = 252
+          Caption = 'Feature Update via Enablement Package'
+          TabOrder = 0
+        end
+        object chkRcerts: TCheckBox
+          Left = 288
+          Height = 23
+          Top = 20
+          Width = 236
+          Caption = 'Update Root Certificates'
+          TabOrder = 1
+        end
+        object chkDotNet35: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 44
+          Width = 252
+          Caption = 'Install .NET Framework 3.5'
+          TabOrder = 2
+        end
+        object chkDotNet4: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 68
+          Width = 252
+          Caption = 'Install .NET Framework'
+          OnClick = chkDotNet4Click
+          TabOrder = 3
+        end
+        object chkWmf: TCheckBox
+          Left = 288
+          Height = 23
+          Top = 68
+          Width = 236
+          Caption = 'Install Management Framework'
+          TabOrder = 4
+        end
+        object chkDotNet5: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 92
+          Width = 252
+          Caption = 'Update .NET Framework 5 (and newer)'
+          TabOrder = 5
+        end
+        object chkUpdateCpp: TCheckBox
+          Left = 288
+          Height = 23
+          Top = 92
+          Width = 236
+          Caption = 'Update C++ Runtime Libraries'
+          TabOrder = 6
+        end
+        object chkInstEdge: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 116
+          Width = 252
+          Caption = 'Install Microsoft Edge'
+          TabOrder = 7
+        end
+        object chkInstWebView2: TCheckBox
+          Left = 288
+          Height = 23
+          Top = 116
+          Width = 236
+          Caption = 'Install Edge WebView2 Runtime'
+          TabOrder = 8
+        end
+        object chkUpdateOffice: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 140
+          Width = 252
+          Caption = 'Update Microsoft Office'
+          TabOrder = 9
+        end
+        object lblOffice: TLabel
+          Left = 288
+          Height = 18
+          Top = 143
+          Width = 236
+        end
+      end
+      object grpControl: TGroupBox
+        Left = 8
+        Height = 112
+        Top = 192
+        Width = 540
+        Caption = 'Control'
+        object chkVerify: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 20
+          Width = 252
+          Caption = 'Verify installation packages'
+          TabOrder = 0
+        end
+        object chkAutoReboot: TCheckBox
+          Left = 288
+          Height = 23
+          Top = 20
+          Width = 236
+          Caption = 'Automatic reboot and recall'
+          OnClick = chkAutoRebootClick
+          TabOrder = 1
+        end
+        object chkShutdown: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 44
+          Width = 252
+          Caption = 'Shut down on completion'
+          OnClick = chkShutdownClick
+          TabOrder = 2
+        end
+        object chkShowLog: TCheckBox
+          Left = 288
+          Height = 23
+          Top = 44
+          Width = 236
+          Caption = 'Show log file'
+          TabOrder = 3
+        end
+        object chkAuditOnly: TCheckBox
+          Left = 16
+          Height = 23
+          Top = 68
+          Width = 380
+          Caption = 'Audit only (missing updates report)'
+          OnClick = chkAuditOnlyClick
+          TabOrder = 4
+        end
+      end
+    end
   end
   object memoProgress: TMemo
-    Left = 16
-    Height = 150
-    Top = 136
-    Width = 514
+    Left = 12
+    Height = 120
+    Top = 472
+    Width = 564
+    Anchors = [akLeft, akTop, akRight]
     ReadOnly = True
     ScrollBars = ssVertical
-    TabOrder = 3
+    TabOrder = 1
   end
   object btnStart: TButton
-    Left = 16
+    Left = 12
     Height = 30
-    Top = 292
-    Width = 100
+    Top = 600
+    Width = 88
+    Anchors = [akLeft, akBottom]
     Caption = 'Start'
     Default = True
-    TabOrder = 4
+    TabOrder = 2
     OnClick = btnStartClick
   end
   object btnExit: TButton
-    Left = 430
+    Left = 488
     Height = 30
-    Top = 292
-    Width = 100
+    Top = 600
+    Width = 88
+    Anchors = [akRight, akBottom]
     Cancel = True
     Caption = 'Exit'
-    TabOrder = 5
+    TabOrder = 3
     OnClick = btnExitClick
   end
 end

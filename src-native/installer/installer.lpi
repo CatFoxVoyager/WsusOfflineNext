@@ -136,7 +136,7 @@
         <PackageName Value="LCL"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="5">
+    <Units Count="7">
       <Unit0>
         <Filename Value="installer.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -164,6 +164,16 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="strings_de_en"/>
       </Unit4>
+      <Unit5>
+        <Filename Value="detection.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="detection"/>
+      </Unit5>
+      <Unit6>
+        <Filename Value="buildsupgrade.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="buildsupgrade"/>
+      </Unit6>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

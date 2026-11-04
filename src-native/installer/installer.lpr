@@ -2,14 +2,18 @@ program installer;
 
 {$mode objfpc}{$H+}
 
-{*** Entry point of the native installer GUI (tracer scope, plan 26-01).
+{*** Entry point of the native installer GUI.
 
-    Startup order: LCL init, language select (argv 'enu'/'deu' override,
-    else German primary-language autodetect - au3:157-167 parity), the
-    startup OS gate port (au3:998-1005 - blocks XP/2003/Vista/2008/7/
-    2008R2/8.0 with the bilingual error box and exit code 1), then the
-    form. The gate is compiled out ONLY under -dWOU_VALIDATE_OLDOS (the
-    Win7 validation build of plan 04 - never built by any shipped lane). }
+    Startup order (incumbent au3:997-1017 parity): LCL init, language
+    select (argv 'enu'/'deu' override, else German primary-language
+    autodetect - au3:157-167), the startup OS gate port (au3:998-1005 -
+    blocks XP/2003/Vista/2008/7/2008R2/8.0 with the bilingual error box
+    and exit code 1), then the WSH gate (au3:1006-1017 - a disabled
+    Windows Script Host kills the run the same way), then the form
+    (FormCreate carries the scriptdir/path gates, the full toggle
+    gating, and the informational dialogs). The OS gate is compiled out
+    ONLY under -dWOU_VALIDATE_OLDOS (the Win7 validation build of plan
+    04 - never built by any shipped lane). }
 
 uses
   Interfaces, { LCL widgetset }
@@ -18,6 +22,7 @@ uses
   Windows,
   enginecontracts,
   strings_de_en,
+  detection,
   mainform;
 
 { No {$R *.res} yet: lazbuild emits <project>.res only once the project has
@@ -32,12 +37,8 @@ begin
 
   { Language select - the launcher forwards argv verbatim, so the
     incumbent 'enu'/'deu' argument contract persists. }
-  if SameText(ParamStr(1), 'enu') then
-    StringsSetLanguage(False)
-  else if SameText(ParamStr(1), 'deu') then
-    StringsSetLanguage(True)
-  else
-    StringsSetLanguage(StringsPrimaryLangIsGerman);
+  StringsSetLanguage(StringsSelectLanguage(ParamStr(1),
+    StringsPrimaryLangIsGerman));
 
   {$IFNDEF WOU_VALIDATE_OLDOS}
   if not EngOsVersionSupported then
@@ -50,6 +51,15 @@ begin
     Halt(1);
   end;
   {$ENDIF}
+
+  if not DetectWSHAvailable then
+  begin
+    Application.MessageBox(
+      PChar(StringsGet(siWshError)),
+      PChar(StringsGet(siWshTitle)),
+      MB_TASKMODAL or MB_ICONERROR or MB_OK);
+    Halt(1);
+  end;
 
   Application.CreateForm(TMainForm, InstallerForm);
   Application.Run;

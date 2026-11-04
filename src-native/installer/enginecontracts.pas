@@ -19,7 +19,7 @@ unit enginecontracts;
 interface
 
 uses
-  Classes, SysUtils, Windows;
+  Classes, SysUtils, Windows, IniFiles;
 
 const
   { ===== Frozen argv switch table (client/cmd/DoUpdate.cmd:92) =====
@@ -97,6 +97,12 @@ const
   ENG_PATH_MAX_LENGTH = 192;
   ENG_PATH_INVALID_CHARS = '!%&()^+,;=';
 
+  { ===== WUStatusServer INI -> HKLM-policies contract (au3:32,41,1205-1208):
+    a non-empty Miscellaneous/WUStatusServer value is written as REG_SZ to
+    this key right before the engine is spawned. }
+  ENG_REG_KEY_WINDOWSUPDATE = 'Software\Policies\Microsoft\Windows\WindowsUpdate';
+  ENG_REG_VAL_WUSTATUSSERVER = 'WUStatusServer';
+
   { ===== Window caption shape (au3:20) ===== }
   ENG_CAPTION_BASE = 'WSUS Offline Next';
 
@@ -123,6 +129,43 @@ function EngEngineTempDir: string;
   bare name slips in. Never a bare PATH spawn. Returns '' when no absolute
   path can be derived - callers must fail closed. }
 function EngCmdExePath: string;
+
+{ Pure resolution core behind EngCmdExePath with injectable environment -
+  the unit-testable form of the SysNative matrix (32-bit-on-x64 ->
+  SysNative; 64-bit process or missing SysNative dir -> %ComSpec%). }
+function EngCmdExePathFor(const ASysRoot, AComSpec: string;
+  AIs32BitProcess, ASysNativeDirExists: Boolean): string;
+
+{ INI merge-order parity (au3:216-229). EngDefaultIniRead reads the CLIENT
+  ini only (the template next to the exe - the engine's recall path also
+  reads it); EngMyIniRead layers the %TEMP%\UpdateInstaller.ini copy ON
+  TOP of it per key (the GUI<->GUI state channel; the engine deletes that
+  copy after the run, DoUpdate.cmd:2355). Missing files fall back to the
+  default without error, like the incumbent's IniRead. }
+function EngDefaultIniRead(const AClientIniPath, ASection, AKey,
+  ADefault: string): string;
+function EngMyIniRead(const AClientIniPath, ATempIniPath, ASection, AKey,
+  ADefault: string): string;
+
+{ Toggle inputs of the pure argv emission - the 15 GUI checkbox switches
+  plus the 8 INI-driven switches and the /autoreboot emit decision (the
+  incumbent's enabled-AND-checked rule, au3:1264-1266 - a DISABLED box
+  never emits even when its Checked flag was left set). }
+type
+  TArgvToggles = record
+    UpgradeBuilds, Updatercerts, InstDotNet35, InstDotNet4, InstWmf: Boolean;
+    UpdateDotNet5, UpdateCpp, InstEdge, InstWebView2, UpdateOffice: Boolean;
+    Verify, AuditOnly, AutoReboot, Shutdown, ShowLog: Boolean;
+    SkipIeInst, SkipDefs, SkipDynamic, AllUpdates, ExcludeStatics: Boolean;
+    SecOnly, ShowDismProgress, MonitorOn: Boolean;
+  end;
+
+{ Pure argv emission in the incumbent's exact switch order (au3:1210-1281):
+  checkbox switches first, then the INI-driven ones, /autoreboot before
+  /shutdown, INI-driven messaging/misc last. Tokens come ONLY from the
+  frozen table via EngSwitchToken - an unknown toggle name compiles to an
+  empty token, never to raw text (threat T-26-01). }
+function EngBuildArgv(const A: TArgvToggles): string;
 
 { The running exe's own VERSIONINFO ProductVersion ('' when the resource is
   absent - true until plan 03 lands the .lpi VersionInfo). }
@@ -185,33 +228,119 @@ begin
     Result := Result + '\Temp';
 end;
 
-function EngCmdExePath: string;
+function EngCmdExePathFor(const ASysRoot, AComSpec: string;
+  AIs32BitProcess, ASysNativeDirExists: Boolean): string;
 var
-  SysRoot: string;
   ComSpec: string;
 begin
   Result := '';
-  SysRoot := SysUtils.GetEnvironmentVariable('SystemRoot');
-  if SysRoot = '' then
-    SysRoot := SysUtils.GetEnvironmentVariable('windir');
-  ComSpec := SysUtils.GetEnvironmentVariable('ComSpec');
   {$IFDEF WIN32}
   { 32-bit process on 64-bit Windows: SysNative is the supported escape
     hatch - the engine's wusa/dism children must see the native system32. }
-  if (SysRoot <> '') and DirectoryExists(SysRoot + '\SysNative') then
-    Exit(SysRoot + '\SysNative\cmd.exe');
+  if AIs32BitProcess and ASysNativeDirExists and (ASysRoot <> '') then
+    Exit(ASysRoot + '\SysNative\cmd.exe');
   {$ENDIF WIN32}
+  ComSpec := AComSpec;
   if ComSpec = '' then
   begin
-    if SysRoot = '' then
+    if ASysRoot = '' then
       Exit;
     ComSpec := 'cmd.exe';
   end;
   { Guard the contract's absolute-path rule: %ComSpec% is absolute on every
     real install, but a bare name must never reach a PATH spawn. }
-  if (Pos('\', ComSpec) = 0) and (Pos('/', ComSpec) = 0) and (SysRoot <> '') then
-    ComSpec := SysRoot + '\System32\' + ComSpec;
+  if (Pos('\', ComSpec) = 0) and (Pos('/', ComSpec) = 0) and (ASysRoot <> '') then
+    ComSpec := ASysRoot + '\System32\' + ComSpec;
   Result := ComSpec;
+end;
+
+function EngCmdExePath: string;
+var
+  SysRoot: string;
+begin
+  SysRoot := SysUtils.GetEnvironmentVariable('SystemRoot');
+  if SysRoot = '' then
+    SysRoot := SysUtils.GetEnvironmentVariable('windir');
+  {$IFDEF WIN32}
+  Result := EngCmdExePathFor(SysRoot, SysUtils.GetEnvironmentVariable('ComSpec'),
+    True, DirectoryExists(SysRoot + '\SysNative'));
+  {$ELSE WIN32}
+  Result := EngCmdExePathFor(SysRoot, SysUtils.GetEnvironmentVariable('ComSpec'),
+    False, DirectoryExists(SysRoot + '\SysNative'));
+  {$ENDIF WIN32}
+end;
+
+function EngDefaultIniRead(const AClientIniPath, ASection, AKey,
+  ADefault: string): string;
+begin
+  Result := ADefault;
+  if FileExists(AClientIniPath) then
+  begin
+    with TIniFile.Create(AClientIniPath) do
+      try
+        Result := ReadString(ASection, AKey, ADefault);
+      finally
+        Free;
+      end;
+  end;
+end;
+
+function EngMyIniRead(const AClientIniPath, ATempIniPath, ASection, AKey,
+  ADefault: string): string;
+begin
+  Result := EngDefaultIniRead(AClientIniPath, ASection, AKey, ADefault);
+  if FileExists(ATempIniPath) then
+  begin
+    with TIniFile.Create(ATempIniPath) do
+      try
+        Result := ReadString(ASection, AKey, Result);
+      finally
+        Free;
+      end;
+  end;
+end;
+
+function EngBuildArgv(const A: TArgvToggles): string;
+  procedure AddSwitch(const AName: string; AOn: Boolean);
+  var
+    Token: string;
+  begin
+    if not AOn then
+      Exit;
+    Token := EngSwitchToken(AName);
+    if Token <> '' then
+      Result := Result + ' ' + Token;
+  end;
+begin
+  Result := '';
+  { Checkbox switches - the incumbent's emission order (au3:1210-1239). }
+  AddSwitch('upgradebuilds', A.UpgradeBuilds);
+  AddSwitch('updatercerts', A.Updatercerts);
+  AddSwitch('instdotnet35', A.InstDotNet35);
+  AddSwitch('instdotnet4', A.InstDotNet4);
+  AddSwitch('instwmf', A.InstWmf);
+  AddSwitch('updatedotnet5', A.UpdateDotNet5);
+  AddSwitch('updatecpp', A.UpdateCpp);
+  AddSwitch('instedge', A.InstEdge);
+  AddSwitch('instwebview2', A.InstWebView2);
+  AddSwitch('updateoffice', A.UpdateOffice);
+  { INI-driven switches - read from the client INI only (au3:1240-1257). }
+  AddSwitch('skipieinst', A.SkipIeInst);
+  AddSwitch('skipdefs', A.SkipDefs);
+  AddSwitch('skipdynamic', A.SkipDynamic);
+  AddSwitch('all', A.AllUpdates);
+  AddSwitch('excludestatics', A.ExcludeStatics);
+  AddSwitch('seconly', A.SecOnly);
+  { Control + messaging (au3:1258-1281): /autoreboot sits between
+    /auditonly and /shutdown in the emission order. }
+  AddSwitch('verify', A.Verify);
+  AddSwitch('auditonly', A.AuditOnly);
+  AddSwitch('autoreboot', A.AutoReboot);
+  AddSwitch('shutdown', A.Shutdown);
+  AddSwitch('showlog', A.ShowLog);
+  AddSwitch('showdismprogress', A.ShowDismProgress);
+  AddSwitch('monitoron', A.MonitorOn);
+  Result := Trim(Result);
 end;
 
 function EngOwnProductVersion: string;

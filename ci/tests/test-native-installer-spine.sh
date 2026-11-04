@@ -41,6 +41,17 @@ PROBE_LPI="$REPO_ROOT/src-native/installer/tests/spineprobe.lpi"
 [ -f "$INSTALLER_LPI" ] || fail "installer project not found: $INSTALLER_LPI"
 [ -f "$PROBE_LPI" ] || fail "spine probe project not found: $PROBE_LPI"
 
+echo "== [0/5] Pre-clean build outputs (a stale artifact must never mask a locked build)..."
+# A leftover running installer/spineprobe instance holds its exe image
+# locked and the rebuild fails with a confusing compiler error 5; removing
+# the outputs up front turns that into this named precondition failure.
+rm -f "$REPO_ROOT/src-native/installer/bin/installer-i386.exe" \
+      "$REPO_ROOT/src-native/installer/bin/installer-x64.exe" \
+      "$REPO_ROOT/src-native/installer/bin/installer-win7val.exe" \
+      "$REPO_ROOT/src-native/installer/tests/bin/spineprobe-i386.exe" \
+      "$REPO_ROOT/src-native/installer/tests/bin/spineprobe-x64.exe" \
+    || fail "stale build output is locked - close any running installer/spineprobe instance and retry"
+
 echo "== [1/5] lazbuild installer Release-i386 (i386-win32)..."
 "$LAZBUILD" --build-mode=Release-i386 "$(cygpath -w "$INSTALLER_LPI")" \
     || fail "lazbuild Release-i386 failed for the installer"

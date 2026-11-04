@@ -131,6 +131,10 @@ wwwroot/
 client/wwwroot/
 *.orig.exe
 
+# Native installer build output (FPC/Lazarus)
+src-native/**/lib/
+src-native/**/bin/
+
 
 # runner Docker: token
 self-hosted/compose.env

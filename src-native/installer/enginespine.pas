@@ -34,11 +34,14 @@ type
   { Outcome of one spine run. ExitCode >= 0 with Observed=True means an
     integer engine exit code was observed (the 0/1/3010/3011 handshake);
     Observed=False with ExitCode=-1 means no engine verdict exists (spawn
-    failure or watchdog abort - TimedOut distinguishes the watchdog case). }
+    failure or watchdog abort - TimedOut distinguishes the watchdog case).
+    Canceled=True marks a user-cancel kill - the summary reports the
+    canceled state regardless of any exit code the kill produced. }
   TSpineResult = record
     ExitCode: Integer;
     Observed: Boolean;
     TimedOut: Boolean;
+    Canceled: Boolean;
     LineCount: Integer;
   end;
 
@@ -96,6 +99,36 @@ type
 function SpineOutcomeKind(const ASwitches: string; AObserved: Boolean;
   AExitCode: Integer; ACanceled: Boolean): TSpineOutcomeKind;
 
+{ Per-update progress parser (unit-testable): recognizes the engine's
+  stdout shape '!TIME! - Installing update N of M (stage size: ...)'
+  (InstallListedUpdates.cmd:44,59) and exposes (N, M). Unknown lines pass
+  through to the pane untouched - the parser never consumes them. }
+function SpineParseProgressLine(const ALine: string;
+  out ANum, ACount: Integer): Boolean;
+
+{ Live outcome counts over the five wou_*.txt files (DoUpdate.cmd:53-58;
+  appended by the engine during the run). Absent file = 0 for that
+  compartment. The GUI calls this on every pump tick via OnWatch. }
+type
+  TSpineOutcomeCounts = record
+    Installed, Failed, Corrupt, CleanSkipped, VerificationSkipped: Integer;
+  end;
+function SpineCountFileLines(const APath: string): Integer;
+function SpineReadOutcomeCounts(const ATempDir: string): TSpineOutcomeCounts;
+
+{ Audit report parser (unit-testable): the 5 compartments (LCU / SSU /
+  Defender / Office / Runtimes) plus the optional Other compartment, the
+  Total line and the Audit Result line, from MissingUpdates.txt
+  (DoUpdate.cmd:2607-2614 emission shape). Returns True when at least the
+  Total line and one compartment header were recognized. }
+type
+  TSpineAuditCounts = record
+    Total, Lcu, Ssu, Defender, Office, Runtimes, Other: Integer;
+    ResultLine: string;
+  end;
+function SpineParseAuditReport(ALines: TStrings;
+  out ACounts: TSpineAuditCounts): Boolean;
+
 { Decode raw OEM console bytes into display text (UTF-8 for the LCL). }
 function SpineOemToDisplay(const ARaw: AnsiString): string;
 
@@ -124,6 +157,158 @@ begin
     ENG_EXIT_RECALL: Result := soRecall;
     else Result := soError;
   end;
+end;
+
+function ParseIntAt(const ALine: string; var APos: Integer;
+  out AValue: Integer): Boolean;
+var
+  StartPos: Integer;
+begin
+  Result := False;
+  AValue := 0;
+  while (APos <= Length(ALine)) and
+        ((ALine[APos] < '0') or (ALine[APos] > '9')) do
+    Inc(APos);
+  StartPos := APos;
+  while (APos <= Length(ALine)) and
+        (ALine[APos] >= '0') and (ALine[APos] <= '9') do
+    Inc(APos);
+  if APos = StartPos then
+    Exit;
+  AValue := StrToInt(Copy(ALine, StartPos, APos - StartPos));
+  Result := True;
+end;
+
+function SpineParseProgressLine(const ALine: string;
+  out ANum, ACount: Integer): Boolean;
+var
+  P: Integer;
+begin
+  Result := False;
+  ANum := 0;
+  ACount := 0;
+  P := Pos('Installing update ', ALine);
+  if P = 0 then
+    Exit;
+  P := P + Length('Installing update ');
+  if not ParseIntAt(ALine, P, ANum) then
+    Exit;
+  { au3-parity: only the exact ' of ' separator counts. }
+  if Copy(ALine, P, 4) <> ' of ' then
+    Exit;
+  Inc(P, 4);
+  if not ParseIntAt(ALine, P, ACount) then
+    Exit;
+  Result := (ANum >= 1) and (ACount >= ANum);
+end;
+
+function SpineCountFileLines(const APath: string): Integer;
+var
+  Sl: TStringList;
+begin
+  Result := 0;
+  if not FileExists(APath) then
+    Exit;
+  Sl := TStringList.Create;
+  try
+    try
+      Sl.LoadFromFile(APath);
+      Result := Sl.Count;
+    except
+      Result := 0;
+    end;
+  finally
+    Sl.Free;
+  end;
+end;
+
+function SpineReadOutcomeCounts(const ATempDir: string): TSpineOutcomeCounts;
+var
+  Base: string;
+begin
+  Base := IncludeTrailingPathDelimiter(ATempDir);
+  Result.Installed := SpineCountFileLines(Base + ENG_OUTCOME_INSTALLED);
+  Result.Failed := SpineCountFileLines(Base + ENG_OUTCOME_FAILED);
+  Result.Corrupt := SpineCountFileLines(Base + ENG_OUTCOME_CORRUPT);
+  Result.CleanSkipped := SpineCountFileLines(Base + ENG_OUTCOME_CLEAN_SKIPPED);
+  Result.VerificationSkipped :=
+    SpineCountFileLines(Base + ENG_OUTCOME_VERIFICATION_SKIPPED);
+end;
+
+function ExtractCountSuffix(const ALine: string): Integer;
+var
+  P: Integer;
+begin
+  Result := -1;
+  P := Pos('[Count:', ALine);
+  if P = 0 then
+    Exit;
+  Inc(P, Length('[Count:'));
+  if not ParseIntAt(ALine, P, Result) then
+    Result := -1;
+end;
+
+function SpineParseAuditReport(ALines: TStrings;
+  out ACounts: TSpineAuditCounts): Boolean;
+var
+  I, V: Integer;
+  Line: string;
+  Compartments: Integer;
+begin
+  FillChar(ACounts, SizeOf(ACounts), 0);
+  ACounts.ResultLine := '';
+  Compartments := 0;
+  for I := 0 to ALines.Count - 1 do
+  begin
+    Line := ALines.Strings[I];
+    if Pos('Total Missing Items:', Line) > 0 then
+    begin
+      { The Total line shape is 'Total Missing Items:     N' - a plain
+        integer after the colon, not a [Count: n] suffix. }
+      V := StrToIntDef(Trim(Copy(Line,
+        Pos(':', Line) + 1, MaxInt)), 0);
+      ACounts.Total := V;
+    end
+    else if Pos('[Windows Cumulative', Line) > 0 then
+    begin
+      ACounts.Lcu := ExtractCountSuffix(Line);
+      if ACounts.Lcu >= 0 then
+        Inc(Compartments);
+    end
+    else if Pos('[Integrated Servicing Stack', Line) > 0 then
+    begin
+      ACounts.Ssu := ExtractCountSuffix(Line);
+      if ACounts.Ssu >= 0 then
+        Inc(Compartments);
+    end
+    else if Pos('[Windows Defender', Line) > 0 then
+    begin
+      ACounts.Defender := ExtractCountSuffix(Line);
+      if ACounts.Defender >= 0 then
+        Inc(Compartments);
+    end
+    else if Pos('[Microsoft Office Updates', Line) > 0 then
+    begin
+      ACounts.Office := ExtractCountSuffix(Line);
+      if ACounts.Office >= 0 then
+        Inc(Compartments);
+    end
+    else if Pos('[Modern Extras', Line) > 0 then
+    begin
+      ACounts.Runtimes := ExtractCountSuffix(Line);
+      if ACounts.Runtimes >= 0 then
+        Inc(Compartments);
+    end
+    else if Pos('[Other Components', Line) > 0 then
+    begin
+      ACounts.Other := ExtractCountSuffix(Line);
+      if ACounts.Other >= 0 then
+        Inc(Compartments);
+    end
+    else if Pos('Audit Result:', Line) > 0 then
+      ACounts.ResultLine := Trim(Line);
+  end;
+  Result := (ACounts.Total >= 0) and (Compartments >= 1);
 end;
 
 function SpineOemToDisplay(const ARaw: AnsiString): string;
@@ -226,6 +411,7 @@ begin
   AResult.ExitCode := -1;
   AResult.Observed := False;
   AResult.TimedOut := False;
+  AResult.Canceled := False;
   AResult.LineCount := 0;
   Result := False;
   FOutBuf := '';
@@ -268,6 +454,7 @@ begin
         FOnIdle();
       if FCancelRequested then
       begin
+        AResult.Canceled := True;
         CancelChild;
         Break;
       end;

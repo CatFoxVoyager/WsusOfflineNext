@@ -94,6 +94,28 @@ const
   ENG_MSI_LISTING_NAME = 'wouallmsi.txt';
   ENG_MSI_SELECTION_NAME = 'wouselmsi.txt';
 
+  { The five engine outcome files (DoUpdate.cmd:53-58 lifecycle; appended
+    live during the run - the observation spine watches them on the pump
+    tick and the completion summary is built from them). All in the
+    caller %TEMP%. }
+  ENG_OUTCOME_INSTALLED = 'wou_installed_updates.txt';
+  ENG_OUTCOME_FAILED = 'wou_failed_updates.txt';
+  ENG_OUTCOME_CORRUPT = 'wou_corrupt_updates.txt';
+  ENG_OUTCOME_CLEAN_SKIPPED = 'wou_clean_skipped_updates.txt';
+  ENG_OUTCOME_VERIFICATION_SKIPPED = 'wou_verification_skipped.txt';
+
+  { Engine staging across reboots, in %SystemRoot%\Temp
+    (InstallListedUpdates.cmd:26-30, 80-84): SetWOUpdateStage.cmd is
+    deleted-on-read by the engine; WOUpdatesToInstall.txt is the moved
+    remaining-updates list. Their EXISTENCE is the GUI's resume decision
+    input - never touched by the GUI. }
+  ENG_STAGING_STAGE_CMD = 'SetWOUpdateStage.cmd';
+  ENG_STAGING_UPDATES = 'WOUpdatesToInstall.txt';
+
+  { The engine's own log (DoUpdate.cmd UPDATE_LOGFILE default), used for
+    the /showlog parity open. }
+  ENG_ENGINE_LOG_NAME = 'wsusofflineupdate.log';
+
   { ===== Incumbent PathValid rule (au3:92-93, 262-278) ===== }
   ENG_PATH_MAX_LENGTH = 192;
   ENG_PATH_INVALID_CHARS = '!%&()^+,;=';

@@ -31,8 +31,9 @@ interface
 
 uses
   Classes, SysUtils, Windows, Messages, IniFiles,
-  Forms, Controls, Graphics, Dialogs, StdCtrls, ComCtrls, Process,
-  enginecontracts, strings_de_en, enginespine, detection, buildsupgrade;
+  Forms, Controls, Graphics, Dialogs, StdCtrls, ComCtrls, Process, ShellApi,
+  enginecontracts, strings_de_en, enginespine, detection, buildsupgrade,
+  resume;
 
 type
 
@@ -41,6 +42,7 @@ type
   TMainForm = class(TForm)
     btnStart: TButton;
     btnExit: TButton;
+    btnCancel: TButton;
     lblIntro: TLabel;
     grpMedium: TGroupBox;
     lblBuild: TLabel;
@@ -65,7 +67,11 @@ type
     chkShowLog: TCheckBox;
     chkAuditOnly: TCheckBox;
     memoProgress: TMemo;
+    lblStatus: TLabel;
+    btnOpenReport: TButton;
+    procedure btnCancelClick(Sender: TObject);
     procedure btnExitClick(Sender: TObject);
+    procedure btnOpenReportClick(Sender: TObject);
     procedure btnStartClick(Sender: TObject);
     procedure chkAuditOnlyClick(Sender: TObject);
     procedure chkAutoRebootClick(Sender: TObject);
@@ -73,6 +79,11 @@ type
     procedure chkShutdownClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
+  public
+    { Headless resume entry (INST-05): the /resume startup path calls
+      this after the form has restored the toggle set from the INI. }
+    procedure StartRun;
+  private
   private
     FExeDir: string;
     FScriptDir: string;
@@ -82,6 +93,10 @@ type
     FMapped: Boolean;
     FRunning: Boolean;
     FSpine: TEngineSpine;
+    FLastCounts: TSpineOutcomeCounts;
+    FLastCountsRaw: string; { change-guard for the live status label }
+    FAuditReportPath: string;
+    FSwitches: string;      { the argv of the current/last run }
     { Detection snapshot for the cross-gating click handlers. }
     FOs: TOsInfo;
     FOsModern: Boolean;
@@ -119,6 +134,10 @@ type
     procedure BuildArgvFromToggles(out AToggles: TArgvToggles);
     procedure SpineLine(const ALine: string);
     procedure SpineIdle;
+    procedure SpineWatch;
+    procedure RenderOutcomeState(Res: TSpineResult);
+    procedure RenderAuditView;
+    procedure HandleRebootOutcome(Res: TSpineResult);
   end;
 
 var
@@ -173,8 +192,15 @@ begin
   chkAuditOnly.Caption := StringsGet(siToggleAudit);
   btnStart.Caption := StringsGet(siBtnStart);
   btnExit.Caption := StringsGet(siBtnExit);
+  btnCancel.Caption := StringsGet(siBtnCancel);
+  btnOpenReport.Caption := StringsGet(siBtnOpenReport);
   lblOffice.Font.Color := DET_OFFICE_LABEL_COLOR;
   memoProgress.Lines.Clear;
+  lblStatus.Caption := '';
+  btnOpenReport.Visible := False;
+  FillChar(FLastCounts, SizeOf(FLastCounts), 0);
+  FLastCountsRaw := '';
+  FAuditReportPath := '';
 
   { Script directory + share mapping (au3:614 / 170-202). The mapped
     drive stays alive while the GUI runs (the incumbent unmaps only on
@@ -793,7 +819,151 @@ begin
     'monitoron', ENG_INI_DISABLED), ENG_INI_ENABLED);
 end;
 
-procedure TMainForm.btnStartClick(Sender: TObject);
+procedure TMainForm.btnExitClick(Sender: TObject);
+begin
+  Close;
+end;
+
+procedure TMainForm.btnCancelClick(Sender: TObject);
+begin
+  { Bilingual confirm, then kill the child on the spine's next pump tick. }
+  if not FRunning then
+    Exit;
+  if Application.MessageBox(
+      PChar(StringsGet(siCancelConfirm)),
+      PChar(StringsGet(siWarnTitle)),
+      MB_TASKMODAL or MB_ICONEXCLAMATION or MB_YESNO) = IDYES then
+    FSpine.Cancel;
+end;
+
+procedure TMainForm.btnOpenReportClick(Sender: TObject);
+begin
+  { ShellExecute on the engine-produced report file (audit view). }
+  if FAuditReportPath = '' then
+    Exit;
+  if ShellExecute(0, 'open', PChar(FAuditReportPath), nil, nil,
+      SW_SHOWNORMAL) <= 32 then
+    ShowBox(StringsGet(siOpenReportFailed), siErrorTitle, False);
+end;
+
+procedure TMainForm.SpineWatch;
+var
+  Raw: string;
+begin
+  { Live counts over the five wou_*.txt outcome files - refreshed on
+    every pump tick; the last snapshot doubles as the summary basis for
+    abrupt finish-mode deaths (Pitfall C: persist the basis BEFORE any
+    reboot lands - the counts already sit in memory and the summary is
+    rendered immediately at completion). }
+  FLastCounts := SpineReadOutcomeCounts(EngCallerTempDir);
+  Raw := Format(StringsGet(siCountsLine),
+    [FLastCounts.Installed, FLastCounts.Failed, FLastCounts.Corrupt,
+     FLastCounts.CleanSkipped, FLastCounts.VerificationSkipped]);
+  if Raw <> FLastCountsRaw then
+  begin
+    FLastCountsRaw := Raw;
+    lblStatus.Caption := Raw;
+  end;
+end;
+
+procedure TMainForm.RenderOutcomeState(Res: TSpineResult);
+var
+  Kind: TSpineOutcomeKind;
+begin
+  Kind := SpineOutcomeKind(FSwitches, Res.Observed, Res.ExitCode,
+    Res.Canceled);
+  case Kind of
+    soCompleted:
+      memoProgress.Lines.Add(StringsGet(siOutcomeCompleted));
+    soError:
+      memoProgress.Lines.Add(StringsGet(siOutcomeError));
+    soRebootRequired:
+      memoProgress.Lines.Add(StringsGet(siOutcomeRebootRequired));
+    soRecall:
+      memoProgress.Lines.Add(StringsGet(siOutcomeRecall));
+    soAbruptFinishSuccess:
+      memoProgress.Lines.Add(StringsGet(siOutcomeAbruptFinish));
+    soCanceled:
+      memoProgress.Lines.Add(StringsGet(siOutcomeCanceled));
+    soNoVerdict:
+      memoProgress.Lines.Add(StringsGet(siOutcomeNoVerdict));
+  end;
+end;
+
+procedure TMainForm.RenderAuditView;
+var
+  Sl: TStringList;
+  Counts: TSpineAuditCounts;
+  Candidates: TStringList;
+  I: Integer;
+begin
+  if (Pos('/auditonly', FSwitches) = 0) then
+    Exit;
+  { Report candidates: the engine's own primary log location
+    (..\..\log\MissingUpdates.txt relative to the cmd dir), the engine's
+    %SystemRoot% fallback, and the caller %TEMP% spelling the plan names.
+    First existing file wins. }
+  Candidates := TStringList.Create;
+  try
+    Candidates.Add(ExpandFileName(FCmdDir + '\..\..\log\MissingUpdates.txt'));
+    Candidates.Add(IncludeTrailingPathDelimiter(EngEngineTempDir)
+      + '..\wsusofflineupdate_MissingUpdates.txt');
+    Candidates.Add(IncludeTrailingPathDelimiter(EngCallerTempDir)
+      + 'MissingUpdates.txt');
+    FAuditReportPath := '';
+    for I := 0 to Candidates.Count - 1 do
+      if FileExists(Candidates.Strings[I]) then
+      begin
+        FAuditReportPath := Candidates.Strings[I];
+        Break;
+      end;
+  finally
+    Candidates.Free;
+  end;
+  if FAuditReportPath = '' then
+    Exit;
+  Sl := TStringList.Create;
+  try
+    Sl.LoadFromFile(FAuditReportPath);
+    if SpineParseAuditReport(Sl, Counts) then
+    begin
+      memoProgress.Lines.Add('');
+      memoProgress.Lines.Add(Format(StringsGet(siAuditPaneLabel),
+        [FAuditReportPath]));
+      memoProgress.Lines.Add(StringsGet(siCountsLine));
+      memoProgress.Lines.Add(Sl.Text); { the full report, read-only pane }
+      btnOpenReport.Visible := True;
+    end;
+  finally
+    Sl.Free;
+  end;
+end;
+
+procedure TMainForm.HandleRebootOutcome(Res: TSpineResult);
+begin
+  { INST-05: on 3010/3011 prompt (countdown = the 30-second shutdown
+    timer + the Windows cancel toast), register the RunOnce value BEFORE
+    issuing the reboot. }
+  if SpineOutcomeKind(FSwitches, Res.Observed, Res.ExitCode,
+      Res.Canceled) in [soRebootRequired, soRecall] then
+  begin
+    if Application.MessageBox(
+        PChar(StringsGet(siRebootPrompt)),
+        PChar(StringsGet(siWarnTitle)),
+        MB_TASKMODAL or MB_DEFBUTTON1 or MB_ICONEXCLAMATION
+          or MB_YESNO) = IDYES then
+    begin
+      if not ResRegisterResume(Application.ExeName) then
+        memoProgress.Lines.Add(StringsGet(siResumeRegisterFailed))
+      else
+        ShellExecute(0, 'open', 'shutdown', '/r /t 30', nil, SW_SHOWNORMAL);
+    end
+    else
+      ResDeleteResume; { decline = no dangling persistence (T-26-06) }
+  end;
+end;
+
+procedure TMainForm.StartRun;
 var
   Toggles: TArgvToggles;
   Switches: string;
@@ -802,11 +972,10 @@ var
   Selection: TStringList;
   I: Integer;
 begin
-  if FRunning then
-    Exit;
   FRunning := True;
   btnStart.Enabled := False;
   btnExit.Enabled := False;
+  btnCancel.Enabled := True;
   Selection := TStringList.Create;
   try
     { WUStatusServer pre-launch write (au3:1205-1208) - MyIniRead, i.e.
@@ -823,6 +992,7 @@ begin
       IniCopyAll;
 
     Switches := EngBuildArgv(Toggles);
+    FSwitches := Switches;
 
     { MSI selection write-or-delete at %SystemRoot%\Temp (au3:1282-1293;
       research Pitfall F - NEVER %TEMP%). }
@@ -833,22 +1003,49 @@ begin
       IncludeTrailingPathDelimiter(EngEngineTempDir)
       + ENG_MSI_SELECTION_NAME, Selection);
 
+    { INST-05: with /autoreboot in the argv the ENGINE issues the reboot
+      itself - the RunOnce resume must be registered BEFORE the spawn or
+      the machine dies before the GUI could react. }
+    if Toggles.AutoReboot then
+      if not ResRegisterResume(Application.ExeName) then
+        memoProgress.Lines.Add(StringsGet(siResumeRegisterFailed));
+
     FSpine.OnLine := @SpineLine;
     FSpine.OnIdle := @SpineIdle;
+    FSpine.OnWatch := @SpineWatch;
     FSpine.Run(FCmdDir, Switches, 0, Res);
+
+    { Summary basis FIRST (outcome files snapshot), the raw code line,
+      then the state line - rendered before any reboot lands. }
     memoProgress.Lines.Add(Format(StringsGet(siSummaryExitCode),
       [Res.ExitCode]));
+    RenderOutcomeState(Res);
+
+    { /showlog parity: open the engine-produced log when requested. }
+    if (Pos('/showlog', Switches) > 0) and Res.Observed then
+      ShellExecute(0, 'open',
+        PChar(IncludeTrailingPathDelimiter(EngEngineTempDir)
+          + '..\' + ENG_ENGINE_LOG_NAME), nil, nil, SW_SHOWNORMAL);
+
+    { /auditonly: switch the completion view to the report pane. }
+    RenderAuditView;
+
+    { 3010/3011 reboot prompt (INST-05). }
+    HandleRebootOutcome(Res);
   finally
     Selection.Free;
+    btnCancel.Enabled := False;
     btnExit.Enabled := True;
     btnStart.Enabled := True;
     FRunning := False;
   end;
 end;
 
-procedure TMainForm.btnExitClick(Sender: TObject);
+procedure TMainForm.btnStartClick(Sender: TObject);
 begin
-  Close;
+  if FRunning then
+    Exit;
+  StartRun;
 end;
 
 procedure TMainForm.SpineLine(const ALine: string);

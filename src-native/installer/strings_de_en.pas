@@ -83,8 +83,25 @@ type
                           (au3:1140-1152), %s = launcher name }
     siSpawnError,       { engine spawn failure (au3:1313-1319 shape),
                           %d = error code, %s = command, %s = directory }
-    siSummaryExitCode   { completion summary line, %d = observed engine
+    siSummaryExitCode,  { completion summary line, %d = observed engine
                           exit code (native GUI addition) }
+    siBtnCancel,        { cancel button (native GUI addition, task 3) }
+    siCancelConfirm,    { cancel confirmation body }
+    siOutcomeCompleted, { completion state: exit 0 }
+    siOutcomeError,     { completion state: exit 1 / unexpected }
+    siOutcomeRebootRequired, { completion state: exit 3010 }
+    siOutcomeRecall,    { completion state: exit 3011 }
+    siOutcomeAbruptFinish, { completion state: abrupt death under a
+                          finish mode (Pitfall C success path) }
+    siOutcomeCanceled,  { completion state: user cancel }
+    siOutcomeNoVerdict, { completion state: no engine verdict }
+    siCountsLine,       { live outcome counts, 5 x %d (task 3 watcher) }
+    siRebootPrompt,     { reboot prompt on 3010/3011 (INST-05) }
+    siBtnOpenReport,    { open-report button on the audit view }
+    siAuditPaneLabel,   { audit view header, %s = report path }
+    siNothingToResume,  { /resume with absent staging (INST-05) }
+    siOpenReportFailed, { report open failure feedback }
+    siResumeRegisterFailed { RunOnce write failure feedback }
   );
 
 { Select the active language: True = German (incumbent $gergui), False =
@@ -218,7 +235,39 @@ const
     (EN: 'Error #%d when calling'#10'%s'#10'in %s.';
      DE: 'Fehler #%d beim Aufruf von'#10'%s'#10'in %s.'),
     (EN: 'Engine run finished. Exit code: %d';
-     DE: 'Engine-Lauf beendet. Exit-Code: %d')
+     DE: 'Engine-Lauf beendet. Exit-Code: %d'),
+    (EN: 'Cancel';
+     DE: 'Abbrechen'),
+    (EN: 'Cancel the running update installation?';
+     DE: 'Die laufende Update-Installation abbrechen?'),
+    (EN: 'Updates installed.';
+     DE: 'Updates installiert.'),
+    (EN: 'The update run ended with errors.';
+     DE: 'Der Update-Durchlauf wurde mit Fehlern beendet.'),
+    (EN: 'A restart is required to complete the updates.';
+     DE: 'Ein Neustart ist erforderlich, um die Updates abzuschließen.'),
+    (EN: 'Updates remain staged for a follow-up run.';
+     DE: 'Updates wurden für einen Folgedurchlauf vorgemerkt.'),
+    (EN: 'The system is rebooting or shutting down as requested.';
+     DE: 'Das System wird wie angefordert neu gestartet oder heruntergefahren.'),
+    (EN: 'The update run was canceled.';
+     DE: 'Der Update-Durchlauf wurde abgebrochen.'),
+    (EN: 'The engine could not be started.';
+     DE: 'Die Engine konnte nicht gestartet werden.'),
+    (EN: 'Installed: %d  Failed: %d  Corrupt: %d  Skipped: %d  Unverified: %d';
+     DE: 'Installiert: %d  Fehlgeschlagen: %d  Beschädigt: %d  Übersprungen: %d  Unverifiziert: %d'),
+    (EN: 'A restart is required to complete the updates. Restart now?'#10'The system restarts after 30 seconds; Windows then shows a short cancel window.';
+     DE: 'Ein Neustart ist erforderlich, um die Updates abzuschließen. Jetzt neu starten?'#10'Das System startet nach 30 Sekunden neu; Windows zeigt dabei ein kurzes Abbruchfenster.'),
+    (EN: 'Open report';
+     DE: 'Bericht öffnen'),
+    (EN: 'Audit report (%s)';
+     DE: 'Audit-Bericht (%s)'),
+    (EN: 'Nothing to resume - no staged updates were found.';
+     DE: 'Nichts fortzusetzen - es wurden keine gestaffelten Updates gefunden.'),
+    (EN: 'The report file could not be opened.';
+     DE: 'Die Berichtsdatei konnte nicht geöffnet werden.'),
+    (EN: 'The resume registration could not be written.';
+     DE: 'Die Wiederaufnahme-Registrierung konnte nicht geschrieben werden.')
   );
 
 var

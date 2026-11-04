@@ -1,10 +1,10 @@
 object MainForm: TMainForm
   Left = 60
-  Height = 684
+  Height = 690
   Top = 40
   Width = 604
   Caption = 'WSUS Offline Next - Installer'
-  ClientHeight = 638
+  ClientHeight = 644
   ClientWidth = 588
   OnCreate = FormCreate
   OnDestroy = FormDestroy
@@ -192,7 +192,7 @@ object MainForm: TMainForm
   end
   object memoProgress: TMemo
     Left = 12
-    Height = 120
+    Height = 112
     Top = 472
     Width = 564
     Anchors = [akLeft, akTop, akRight]
@@ -200,26 +200,53 @@ object MainForm: TMainForm
     ScrollBars = ssVertical
     TabOrder = 1
   end
+  object lblStatus: TLabel
+    Left = 12
+    Height = 18
+    Top = 588
+    Width = 360
+    Anchors = [akLeft, akBottom]
+  end
+  object btnOpenReport: TButton
+    Left = 376
+    Height = 24
+    Top = 586
+    Width = 100
+    Anchors = [akRight, akBottom]
+    Visible = False
+    TabOrder = 2
+    OnClick = btnOpenReportClick
+  end
   object btnStart: TButton
     Left = 12
     Height = 30
-    Top = 600
+    Top = 606
     Width = 88
     Anchors = [akLeft, akBottom]
     Caption = 'Start'
     Default = True
-    TabOrder = 2
+    TabOrder = 3
     OnClick = btnStartClick
+  end
+  object btnCancel: TButton
+    Left = 250
+    Height = 30
+    Top = 606
+    Width = 88
+    Anchors = [akBottom]
+    Enabled = False
+    TabOrder = 4
+    OnClick = btnCancelClick
   end
   object btnExit: TButton
     Left = 488
     Height = 30
-    Top = 600
+    Top = 606
     Width = 88
     Anchors = [akRight, akBottom]
     Cancel = True
     Caption = 'Exit'
-    TabOrder = 3
+    TabOrder = 5
     OnClick = btnExitClick
   end
 end

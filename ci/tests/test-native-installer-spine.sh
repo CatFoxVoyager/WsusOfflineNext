@@ -75,31 +75,38 @@ PROBE_X64="$REPO_ROOT/src-native/installer/tests/bin/spineprobe-x64.exe"
 [ -f "$PROBE_X64" ] || fail "spineprobe-x64.exe was not produced"
 
 echo "== [4/5] Staging fixture client tree (read-only copies from client/)..."
+# The tree lives under $FIXTURE/client so the engine's primary report
+# path (..\..\log relative to its cwd) lands in $FIXTURE/log - the probe
+# asserts on exactly that file.
 FIXTURE="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE"' EXIT
-mkdir -p "$FIXTURE/cmd" "$FIXTURE/cpp" "$FIXTURE/md"
-cp -r "$REPO_ROOT/client/cmd/." "$FIXTURE/cmd/" \
+mkdir -p "$FIXTURE/client/cmd" "$FIXTURE/client/cpp" "$FIXTURE/client/md" "$FIXTURE/log"
+# Steer the engine's audit report into the fixture (the engine's own
+# fallback env, DoUpdate.cmd:2610-2615) so the probe can assert the
+# engine-produced report shape deterministically.
+export WOU_MISSING_LOG_FALLBACK="$(cygpath -w "$FIXTURE/log/MissingUpdates.txt")"
+cp -r "$REPO_ROOT/client/cmd/." "$FIXTURE/client/cmd/" \
     || fail "cannot copy client/cmd/ into the fixture"
-cp -r "$REPO_ROOT/client/UpdateTable" "$FIXTURE/UpdateTable" \
+cp -r "$REPO_ROOT/client/UpdateTable" "$FIXTURE/client/UpdateTable" \
     || fail "cannot copy client/UpdateTable into the fixture"
 [ -f "$REPO_ROOT/client/builddate.txt" ] \
     || fail "client/builddate.txt missing from the repo - fixture incomplete"
-cp "$REPO_ROOT/client/builddate.txt" "$FIXTURE/builddate.txt" \
+cp "$REPO_ROOT/client/builddate.txt" "$FIXTURE/client/builddate.txt" \
     || fail "cannot copy client/builddate.txt into the fixture"
 [ -f "$REPO_ROOT/client/UpdateInstaller.ini" ] \
     || fail "client/UpdateInstaller.ini missing from the repo - fixture incomplete"
-cp "$REPO_ROOT/client/UpdateInstaller.ini" "$FIXTURE/UpdateInstaller.ini" \
+cp "$REPO_ROOT/client/UpdateInstaller.ini" "$FIXTURE/client/UpdateInstaller.ini" \
     || fail "cannot copy client/UpdateInstaller.ini into the fixture"
-printf 'stub vcredist fixture for the cpp presence gate\n' > "$FIXTURE/cpp/vcredist-x.exe" \
+printf 'stub vcredist fixture for the cpp presence gate\n' > "$FIXTURE/client/cpp/vcredist-x.exe" \
     || fail "cannot write the cpp stub into the fixture"
-printf 'stub hash fixture for the md presence gate\n' > "$FIXTURE/md/hashes-fixture.txt" \
+printf 'stub hash fixture for the md presence gate\n' > "$FIXTURE/client/md/hashes-fixture.txt" \
     || fail "cannot write the md stub into the fixture"
 
 echo "== [5/5] Running the spine probe against the real engine (both arches)..."
 run_probe() {
     probe_exe="$1"
     log="$FIXTURE/probe-$(basename "$probe_exe" .exe).log"
-    "$probe_exe" "$(cygpath -w "$FIXTURE")" > "$log" 2>&1
+    "$probe_exe" "$(cygpath -w "$FIXTURE/client")" "$WOU_MISSING_LOG_FALLBACK" > "$log" 2>&1
     rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "--- probe output ($log) ---"
@@ -124,9 +131,15 @@ run_probe() {
         cat "$log"
         fail "$(basename "$probe_exe") did not drive the real engine (no 'Starting WSUS Offline Next' startup line)"
     }
+    # Plan 26-03: the audit report must exist and parse (5 compartments).
+    grep -q "AUDIT-REPORT-OK" "$log" || {
+        echo "--- probe output ($log) ---"
+        cat "$log"
+        fail "$(basename "$probe_exe") produced no parseable audit report (AUDIT-REPORT-OK missing)"
+    }
     echo "--- $(basename "$probe_exe"): first lines + observed exit ---"
     grep "STREAM:" "$log" | head -3
-    grep "OBSERVED-EXIT:" "$log"
+    grep "OBSERVED-EXIT:\|AUDIT-REPORT-OK" "$log"
 }
 
 run_probe "$PROBE_I386"

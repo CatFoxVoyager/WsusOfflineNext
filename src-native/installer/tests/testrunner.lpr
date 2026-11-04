@@ -24,7 +24,8 @@ program testrunner;
 
 uses
   Classes, SysUtils, Windows, IniFiles,
-  enginecontracts, enginespine, detection, buildsupgrade, strings_de_en;
+  enginecontracts, enginespine, detection, buildsupgrade, strings_de_en,
+  resume;
 
 var
   GCaseCount: Integer = 0;
@@ -509,6 +510,151 @@ begin
   end;
 end;
 
+procedure TestProgressParsing;
+var
+  N, M: Integer;
+begin
+  { Exact engine shape (InstallListedUpdates.cmd:44,59). }
+  Check(SpineParseProgressLine(
+    '13:25:08,32 - Installing update 3 of 40 (stage size: 5)...', N, M)
+    and (N = 3) and (M = 40),
+    'progress: exact engine line parses (N=3, M=40)');
+  Check(SpineParseProgressLine(
+    '08:01:02,03 - Installing update 1 of 1 (stage size: 12)...', N, M)
+    and (N = 1) and (M = 1),
+    'progress: single-update stage parses');
+
+  { Off-format lines pass through unparsed. }
+  Check(not SpineParseProgressLine(
+    'Info: Installed 3 of 40 updates', N, M),
+    'progress: completion-summary line does not parse');
+  Check(not SpineParseProgressLine(
+    'Checking user''s privileges...', N, M),
+    'progress: lifecycle line does not parse');
+  Check(not SpineParseProgressLine('', N, M),
+    'progress: empty line does not parse');
+  Check(not SpineParseProgressLine(
+    'Installing update x of y (stage size: 5)...', N, M),
+    'progress: non-numeric counters do not parse');
+  Check(not SpineParseProgressLine(
+    'Installing update 0 of 40 (stage size: 5)...', N, M),
+    'progress: zero counter rejected');
+  Check(not SpineParseProgressLine(
+    'Installing update 41 of 40 (stage size: 5)...', N, M),
+    'progress: N > M rejected');
+  Check(not SpineParseProgressLine(
+    'Installing update 12 off 40 (stage size: 5)...', N, M),
+    'progress: wrong separator rejected');
+end;
+
+procedure TestWatcherCounts;
+var
+  Counts: TSpineOutcomeCounts;
+  Dir: string;
+begin
+  { Live counts over the five outcome files on temp fixtures. }
+  Dir := IncludeTrailingPathDelimiter(GTempDir) + 'watcher';
+  ForceDirectories(Dir);
+  WriteFixture('watcher\wou_installed_updates.txt',
+    'u1' + LineEnding + 'u2' + LineEnding + 'u3' + LineEnding);
+  WriteFixture('watcher\wou_failed_updates.txt',
+    'f1' + LineEnding);
+  Counts := SpineReadOutcomeCounts(Dir);
+  Check((Counts.Installed = 3) and (Counts.Failed = 1)
+        and (Counts.Corrupt = 0) and (Counts.CleanSkipped = 0)
+        and (Counts.VerificationSkipped = 0),
+    'watcher: counts over fixture outcome files (3/1/0/0/0)');
+  Check(SpineCountFileLines(Dir + '\wou_installed_updates.txt') = 3,
+    'watcher: line counting');
+  Check(SpineCountFileLines(Dir + '\absent-file.txt') = 0,
+    'watcher: absent outcome file counts 0');
+end;
+
+procedure TestAuditReportParsing;
+var
+  Sl: TStringList;
+  Counts: TSpineAuditCounts;
+begin
+  { The engine's emission shape (DoUpdate.cmd:2722-2766). }
+  Sl := TStringList.Create;
+  try
+    Sl.Text :=
+      '================================================================================' + LineEnding +
+      'WSUS Offline Update - Offline Applicability & Missing Updates Report' + LineEnding +
+      'Timestamp: 11/04/2026 13:00:00,00' + LineEnding +
+      'Target System: Microsoft Windows w100 10.0.26300.0 (x64)' + LineEnding +
+      'Execution Mode:          Audit Only [/auditonly - Zero System Modifications]' + LineEnding +
+      '--------------------------------------------------------------------------------' + LineEnding +
+      'Total Missing Items:     7' + LineEnding +
+      LineEnding +
+      '[Windows Cumulative & Checkpoint Updates] [Count: 3]' + LineEnding +
+      '  C:\\w100-x64\\glb\\windows10.0-kbX-x64.exe' + LineEnding +
+      '[Integrated Servicing Stack Updates] [Count: 1]' + LineEnding +
+      '[Windows Defender Security Intelligence] [Count: 0]' + LineEnding +
+      '  None missing / Not requested' + LineEnding +
+      '[Microsoft Office Updates] [Count: 2]' + LineEnding +
+      '[Modern Extras & Runtimes] [Count: 1]' + LineEnding +
+      '[Other Components] [Count: 0]' + LineEnding +
+      '--------------------------------------------------------------------------------' + LineEnding +
+      'Audit Result: Updates required [7 item(s) missing]' + LineEnding +
+      '================================================================================';
+    Check(SpineParseAuditReport(Sl, Counts), 'audit parse: report recognized');
+    Check((Counts.Total = 7) and (Counts.Lcu = 3) and (Counts.Ssu = 1)
+          and (Counts.Defender = 0) and (Counts.Office = 2)
+          and (Counts.Runtimes = 1) and (Counts.Other = 0),
+      'audit parse: all compartment counts extracted');
+    Check(Pos('Updates required [7 item(s) missing]', Counts.ResultLine) > 0,
+      'audit parse: result line captured');
+
+    Sl.Text := 'just some log noise' + LineEnding;
+    Check(not SpineParseAuditReport(Sl, Counts),
+      'audit parse: non-report text rejected');
+  finally
+    Sl.Free;
+  end;
+end;
+
+procedure TestRunOnceResume;
+var
+  Name, Data: string;
+  LongPath: string;
+begin
+  { Builder shape (threat T-26-06): '!'-prefixed name, quoted exe +
+    /resume only. }
+  Check(ResBuildRunOnceValue('C:\client\UpdateInstallerLegacy.exe', Name, Data),
+    'runonce: builder succeeds for a normal path');
+  CheckEq(Name, '!WOUResume', 'runonce: value name carries the ! prefix');
+  Check(Copy(Data, 1, 1) = '"', 'runonce: data opens with a quote');
+  Check(Copy(Data, Length(Data) - Length(' /resume') + 1,
+        Length(' /resume')) = ' /resume',
+    'runonce: data ends with the /resume flag');
+  Check(Pos('\', Data) > 0, 'runonce: data carries the exe path');
+  Check(Length(Data) <= RES_RUNONCE_MAX,
+    'runonce: composed command within the 260-char limit');
+
+  { Hard 260-char refusal on an oversized path. }
+  LongPath := 'C:\client\' + StringOfChar('d', 300) + '.exe';
+  Check(not ResBuildRunOnceValue(LongPath, Name, Data),
+    'runonce: oversized command line refused');
+  CheckEq(Data, '', 'runonce: refused build leaves the data empty');
+
+  { /resume decision matrix (staging present/absent). }
+  Check(ResStagingPresentIn(GTempDir) = False,
+    'resume: empty staging dir -> nothing to resume');
+  ForceDirectories(IncludeTrailingPathDelimiter(GTempDir) + 'staging');
+  WriteFixture('staging\' + ENG_STAGING_UPDATES, 'u1' + LineEnding);
+  Check(ResStagingPresentIn(
+      IncludeTrailingPathDelimiter(GTempDir) + 'staging'),
+    'resume: WOUpdatesToInstall.txt present -> resume the stage');
+  SysUtils.DeleteFile(IncludeTrailingPathDelimiter(GTempDir) + 'staging'
+    + '\' + ENG_STAGING_UPDATES);
+  WriteFixture('staging\' + ENG_STAGING_STAGE_CMD,
+    '@set UPDATE_STAGE=1' + LineEnding);
+  Check(ResStagingPresentIn(
+      IncludeTrailingPathDelimiter(GTempDir) + 'staging'),
+    'resume: SetWOUpdateStage.cmd present -> resume the stage');
+end;
+
 procedure TestCompletionMatrix;
 begin
   { exit 0/1/3010/3011 x finish-mode present/absent. }
@@ -555,6 +701,10 @@ begin
     TestSysNativeMatrix;
     TestArgvEmission;
     TestMsiContract;
+    TestProgressParsing;
+    TestWatcherCounts;
+    TestAuditReportParsing;
+    TestRunOnceResume;
     TestCompletionMatrix;
   finally
     { Best-effort fixture cleanup - the gate is output-based. }

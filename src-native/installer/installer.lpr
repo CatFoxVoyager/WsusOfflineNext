@@ -23,6 +23,7 @@ uses
   enginecontracts,
   strings_de_en,
   detection,
+  resume,
   mainform;
 
 { No {$R *.res} yet: lazbuild emits <project>.res only once the project has
@@ -61,6 +62,32 @@ begin
     Halt(1);
   end;
 
-  Application.CreateForm(TMainForm, InstallerForm);
+  { INST-05 /resume startup path: the RunOnce relaunch lands here after
+    a reboot. The GUI deletes its OWN value defensively on BOTH paths
+    (successful resume AND nothing-to-resume - threat T-26-06); the
+    engine's wourecall.1-9 guard stays the ONLY loop protection, the GUI
+    adds no counter. }
+  if ResWantsResume then
+  begin
+    ResDeleteResume;
+    if ResStagingPresent then
+    begin
+      { FormCreate restores the prior toggle set from the INI (the same
+        MyIniRead layering the interrupted run wrote); StartRun re-emits
+        the frozen argv and continues the engine's stage. }
+      Application.CreateForm(TMainForm, InstallerForm);
+      InstallerForm.StartRun;
+    end
+    else
+    begin
+      Application.MessageBox(
+        PChar(StringsGet(siNothingToResume)),
+        PChar(StringsGet(siInfoTitle)),
+        MB_TASKMODAL or MB_ICONINFORMATION or MB_OK);
+      Halt(0);
+    end;
+  end
+  else
+    Application.CreateForm(TMainForm, InstallerForm);
   Application.Run;
 end.

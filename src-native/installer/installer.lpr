@@ -26,10 +26,11 @@ uses
   resume,
   mainform;
 
-{ No {$R *.res} yet: lazbuild emits <project>.res only once the project has
-  resource content (XPManifest / VersionInfo / icon), which plan 03 wires
-  into the .lpi - restore the directive together with those options. The
-  form streams from the unit-level {$R *.lfm}. }
+{ The .lpi carries the declarative resource set (XPManifest requireAdmin +
+  PerMonitorV2 + LongPathAware, VERSIONINFO global block, icon from the
+  side-by-side installer.ico), so lazbuild emits <project>.res and this
+  directive links it. The form streams from the unit-level {$R *.lfm}. }
+{$R *.res}
 
 begin
   RequireDerivedFormResource := True;

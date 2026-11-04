@@ -6,7 +6,24 @@
       <SessionStorage Value="InProjectDir"/>
       <Title Value="installer"/>
       <ResourceType Value="res"/>
+      <Icon Value="False"/>
+      <UseXPManifest Value="True"/>
+      <XPManifest>
+        <ExecutionLevel Value="requireAdministrator"/>
+        <DpiAware Value="True/PM_V2"/>
+        <LongPathAware Value="True"/>
+        <TextName Value="WSUSOfflineNext.UpdateInstallerLegacy"/>
+        <TextDesc Value="WSUS Offline Update Installer"/>
+      </XPManifest>
     </General>
+    <VersionInfo>
+      <UseVersionInfo Value="True"/>
+      <MajorVersionNr Value="5"/>
+      <MinorVersionNr Value="2"/>
+      <RevisionNr Value="0"/>
+      <BuildNr Value="0"/>
+      <StringTable CompanyName="WSUS Offline Next Project" FileDescription="WSUS Offline Update Installer" InternalName="Installer" LegalCopyright="GNU GPLv3" OriginalFilename="UpdateInstallerLegacy.exe" ProductName="WSUS Offline Next" ProductVersion="5.2.0+2026.11"/>
+    </VersionInfo>
     <BuildModes Count="3">
       <Item1 Name="Release-i386" Default="True">
         <CompilerOptions>

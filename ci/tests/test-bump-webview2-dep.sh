@@ -12,17 +12,25 @@
 # Sections:
 #   a. bump old -> new applied to BOTH fixtures, decoys intact, prerelease
 #      entries (higher-numbered, hyphenated) filtered out
-#   b. no-op when the pin already equals the latest stable (byte-identical)
+#   b. no-op when the pin already equals the latest stable (byte-identical;
+#      the floor rewrite is idempotent because the consumer fixtures carry
+#      the lane's floor constant)
 #   c. never-downgrade: an index whose max is older than the pin fails
 #      closed and leaves the fixtures intact
 #   d. ONLY the PackageReference line moves — exactly one changed line per fixture
 #   e. absent index (WEBVIEW2_INDEX_FILE to a missing file) fails closed
-#   f. --print-files prints exactly the two csproj paths
+#   f. --print-files prints exactly the two csproj paths plus the four
+#      floor consumers (6 lines)
 #   g. generator/installer divergence fails closed before any mutation
+#   h. the MIN_WEBVIEW2_FLOOR single-sourcing lane: a drifted consumer is
+#      healed to the constant exactly once per site; a stale floor (floor
+#      build below the resolved SDK build) fails closed with NO writes; a
+#      duplicated floor site in a consumer fails the lane before any write
 set -u
 SANDBOX="$(mktemp -d)"
 SCRIPT_SRC="$(cd "$(dirname "$0")/.." && pwd)/bump-webview2-dep.bash"
 FAILED_CASES=0
+FLOOR_CURRENT="156.0.4314.35"
 
 fail_case () {
     echo "FAIL: $1"
@@ -49,6 +57,40 @@ write_fixture_csproj () {
 EOF
 }
 
+write_fixture_cs_program () {
+    # $1 = destination, $2 = floor literal carried by the const line.
+    # Mirrors the real consumer site shape (line-start-anchored const) and
+    # carries a comment decoy citing the symbol WITHOUT the literal.
+    cat > "$1" <<EOF
+namespace Wson.Host
+{
+    public static class WebView2Compat
+    {
+        // The floor is rewritten by ci/bump-webview2-dep.bash; the
+        // WebView2Compat.MinWebView2Version usages must not recopy it.
+        public const string MinWebView2Version = "$2";
+
+        public static bool IsVersionAtLeast(string detected, string min) => true;
+    }
+}
+EOF
+}
+
+write_fixture_cmd_launcher () {
+    # $1 = destination, $2 = floor literal carried by the set-line.
+    # Mirrors the real consumer site shape (line-start-anchored set "...")
+    # and carries a comment decoy naming the variable WITHOUT a literal.
+    cat > "$1" <<EOF
+@echo off
+rem Minimum WebView2 runtime version accepted by the modern interface.
+rem This literal is rewritten automatically by ci/bump-webview2-dep.bash
+rem and must not be recopied or duplicated anywhere else in this file.
+set "MIN_WEBVIEW2_VERSION=$2"
+
+rem The gate expands %MIN_WEBVIEW2_VERSION% at the comparator call.
+EOF
+}
+
 make_index () {
     # $@ = versions listed in the fixture index (prerelease entries carry '-')
     {
@@ -64,15 +106,23 @@ make_index () {
 }
 
 make_sandbox_tree () {
-    # $1 = SDK version written in both fixtures
-    rm -rf "${SANDBOX}/ci" "${SANDBOX}/src-modern"
-    rm -f "${SANDBOX}/index.json" "${SANDBOX}/does-not-exist.json"
+    # $1 = SDK version written in both fixtures. The four floor-consumer
+    # fixtures carry the lane's floor constant (FLOOR_CURRENT) so every
+    # section runs the floor rewrite as an idempotent no-op unless a
+    # section deliberately drifts them.
+    rm -rf "${SANDBOX}/ci" "${SANDBOX}/src-modern" "${SANDBOX}/client"
+    rm -f "${SANDBOX}/index.json" "${SANDBOX}/does-not-exist.json" "${SANDBOX}/UpdateGenerator.cmd"
     mkdir -p "${SANDBOX}/ci" \
         "${SANDBOX}/src-modern/generator/host" \
-        "${SANDBOX}/src-modern/installer/host"
+        "${SANDBOX}/src-modern/installer/host" \
+        "${SANDBOX}/client"
     cp "${SCRIPT_SRC}" "${SANDBOX}/ci/bump-webview2-dep.bash"
     write_fixture_csproj "${SANDBOX}/src-modern/generator/host/UpdateGenerator.csproj" "$1"
     write_fixture_csproj "${SANDBOX}/src-modern/installer/host/UpdateInstaller.csproj" "$1"
+    write_fixture_cs_program "${GEN_CS_FIX}" "${FLOOR_CURRENT}"
+    write_fixture_cs_program "${INS_CS_FIX}" "${FLOOR_CURRENT}"
+    write_fixture_cmd_launcher "${GEN_CMD_FIX}" "${FLOOR_CURRENT}"
+    write_fixture_cmd_launcher "${INS_CMD_FIX}" "${FLOOR_CURRENT}"
 }
 
 # The index variable MUST be exported (a plain assignment does not reach the
@@ -100,6 +150,10 @@ count_decoys () {
 
 GEN_FIX="${SANDBOX}/src-modern/generator/host/UpdateGenerator.csproj"
 INST_FIX="${SANDBOX}/src-modern/installer/host/UpdateInstaller.csproj"
+GEN_CS_FIX="${SANDBOX}/src-modern/generator/host/Program.cs"
+INS_CS_FIX="${SANDBOX}/src-modern/installer/host/Program.cs"
+GEN_CMD_FIX="${SANDBOX}/UpdateGenerator.cmd"
+INS_CMD_FIX="${SANDBOX}/client/UpdateInstaller.cmd"
 OLD_SDK="1.0.2903.1"
 NEW_SDK="1.0.4314.35"
 
@@ -178,16 +232,24 @@ unpoint_index
 cmp -s "${GEN_FIX}" "${GEN_FIX}.pre" || fail_case "e — fixture generator modifiée malgré l'index absent"
 cmp -s "${INST_FIX}" "${INST_FIX}.pre" || fail_case "e — fixture installer modifiée malgré l'index absent"
 
-# ---- section f: --print-files prints exactly the two csproj paths -----------
+# ---- section f: --print-files prints 2 csproj + 4 floor consumers ----------
 PRINTED="$(cd "${SANDBOX}" && bash "${SANDBOX}/ci/bump-webview2-dep.bash" --print-files)"
 RCF=$?
-[ "${RCF}" -eq 0 ] || fail_case "f — --print-files doit réussir (rc=${RCF})"
-[ "$(printf '%s\n' "${PRINTED}" | wc -l)" -eq 2 ] \
-    || fail_case "f — --print-files doit imprimer exactement 2 lignes (lu: $(printf '%s\n' "${PRINTED}" | wc -l))"
+[ "${RCF}" -eq 0 ] || fail_case "f — --print-files must succeed (rc=${RCF})"
+[ "$(printf '%s\n' "${PRINTED}" | wc -l)" -eq 6 ] \
+    || fail_case "f — --print-files must print exactly 6 lines (got: $(printf '%s\n' "${PRINTED}" | wc -l))"
 printf '%s\n' "${PRINTED}" | grep -qx "src-modern/generator/host/UpdateGenerator.csproj" \
-    || fail_case "f — chemin generator manquant de --print-files"
+    || fail_case "f — generator csproj path missing from --print-files"
 printf '%s\n' "${PRINTED}" | grep -qx "src-modern/installer/host/UpdateInstaller.csproj" \
-    || fail_case "f — chemin installer manquant de --print-files"
+    || fail_case "f — installer csproj path missing from --print-files"
+printf '%s\n' "${PRINTED}" | grep -qx "src-modern/generator/host/Program.cs" \
+    || fail_case "f — floor consumer Program.cs (generator) missing from --print-files"
+printf '%s\n' "${PRINTED}" | grep -qx "src-modern/installer/host/Program.cs" \
+    || fail_case "f — floor consumer Program.cs (installer) missing from --print-files"
+printf '%s\n' "${PRINTED}" | grep -qx "UpdateGenerator.cmd" \
+    || fail_case "f — floor consumer launcher (generator) missing from --print-files"
+printf '%s\n' "${PRINTED}" | grep -qx "client/UpdateInstaller.cmd" \
+    || fail_case "f — floor consumer launcher (installer) missing from --print-files"
 
 # ---- section g: generator/installer divergence fails closed ------------------
 make_sandbox_tree "${OLD_SDK}"
@@ -202,11 +264,69 @@ unpoint_index
 cmp -s "${GEN_FIX}" "${GEN_FIX}.pre" || fail_case "g — fixture generator modifiée malgré la divergence"
 cmp -s "${INST_FIX}" "${INST_FIX}.pre" || fail_case "g — fixture installer modifiée malgré la divergence"
 
+# ---- section h: MIN_WEBVIEW2_FLOOR single-sourcing lane ----------------------
+
+# h1: a drifted consumer is healed to the lane's floor constant — exactly
+# one floor site per consumer after the run, symmetric across all four.
+make_sandbox_tree "${NEW_SDK}"
+write_fixture_cs_program "${GEN_CS_FIX}" "156.0.4314.34"
+write_fixture_cs_program "${INS_CS_FIX}" "156.0.4314.34"
+write_fixture_cmd_launcher "${GEN_CMD_FIX}" "156.0.4314.34"
+write_fixture_cmd_launcher "${INS_CMD_FIX}" "156.0.4314.34"
+make_index "${NEW_SDK}"
+point_index "${SANDBOX}/index.json"
+run_bumper
+unpoint_index
+[ "${BUMP_RC}" -eq 0 ] \
+    || fail_case "h1 — the floor-heal run must succeed (rc=${BUMP_RC}; stderr: $(tr '\n' ' ' < "${SANDBOX}/bump-stderr.txt"))"
+for fixture in "${GEN_CS_FIX}" "${INS_CS_FIX}" "${GEN_CMD_FIX}" "${INS_CMD_FIX}"; do
+    [ "$(grep -cF "156.0.4314.34" "${fixture}")" -eq 0 ] \
+        || fail_case "h1 — stale floor literal still present in ${fixture}"
+    [ "$(grep -cF "${FLOOR_CURRENT}" "${fixture}")" -eq 1 ] \
+        || fail_case "h1 — floor literal must appear exactly once in ${fixture}"
+done
+
+# h2: a stale floor (floor build below the resolved SDK build) fails closed
+# with NO writes anywhere in the sandbox tree.
+make_sandbox_tree "${NEW_SDK}"
+sed -i 's/readonly MIN_WEBVIEW2_FLOOR="156\.0\.4314\.35"/readonly MIN_WEBVIEW2_FLOOR="156.0.0000.1"/' \
+    "${SANDBOX}/ci/bump-webview2-dep.bash"
+grep -qF 'MIN_WEBVIEW2_FLOOR="156.0.0000.1"' "${SANDBOX}/ci/bump-webview2-dep.bash" \
+    || fail_case "h2 — the stale-floor mutation of the sandbox lane did not land"
+for fixture in "${GEN_FIX}" "${INST_FIX}" "${GEN_CS_FIX}" "${INS_CS_FIX}" "${GEN_CMD_FIX}" "${INS_CMD_FIX}"; do
+    cp "${fixture}" "${fixture}.pre"
+done
+run_bumper
+unpoint_index
+[ "${BUMP_RC}" -ne 0 ] || fail_case "h2 — a stale floor must fail the lane (rc=0 obtained)"
+grep -qF "raise MIN_WEBVIEW2_FLOOR in ci/bump-webview2-dep.bash" "${SANDBOX}/bump-stderr.txt" \
+    || fail_case "h2 — the stale-floor refusal must name the operator action (stderr: $(tr '\n' ' ' < "${SANDBOX}/bump-stderr.txt"))"
+for fixture in "${GEN_FIX}" "${INST_FIX}" "${GEN_CS_FIX}" "${INS_CS_FIX}" "${GEN_CMD_FIX}" "${INS_CMD_FIX}"; do
+    cmp -s "${fixture}" "${fixture}.pre" \
+        || fail_case "h2 — ${fixture} was written despite the stale-floor refusal"
+done
+
+# h3: a duplicated floor site in a consumer fails the lane before any write.
+make_sandbox_tree "${NEW_SDK}"
+printf 'set "MIN_WEBVIEW2_VERSION=%s"\n' "${FLOOR_CURRENT}" >> "${GEN_CMD_FIX}"
+grep -cE '^set "MIN_WEBVIEW2_VERSION=' "${GEN_CMD_FIX}" | grep -qx "2" \
+    || fail_case "h3 — the duplicated-site mutation of the sandbox fixture did not land"
+for fixture in "${GEN_FIX}" "${INST_FIX}" "${GEN_CS_FIX}" "${INS_CS_FIX}" "${GEN_CMD_FIX}" "${INS_CMD_FIX}"; do
+    cp "${fixture}" "${fixture}.pre"
+done
+run_bumper
+unpoint_index
+[ "${BUMP_RC}" -ne 0 ] || fail_case "h3 — a duplicated floor site must fail the lane (rc=0 obtained)"
+for fixture in "${GEN_FIX}" "${INST_FIX}" "${GEN_CS_FIX}" "${INS_CS_FIX}" "${GEN_CMD_FIX}" "${INS_CMD_FIX}"; do
+    cmp -s "${fixture}" "${fixture}.pre" \
+        || fail_case "h3 — ${fixture} was written despite the duplicated-site refusal"
+done
+
 rm -rf "${SANDBOX}"
 if [ "${FAILED_CASES}" -gt 0 ]
 then
-    echo "FAIL bump-webview2-dep: ${FAILED_CASES} cas en échec"
+    echo "FAIL bump-webview2-dep: ${FAILED_CASES} case(s) failed"
     exit "${FAILED_CASES}"
 fi
-echo "PASS bump-webview2-dep (bump symétrique + leurres intacts, no-op byte-identique, jamais-downgrade, 1 ligne/fixture, index absent fail-closed, print-files, divergence fail-closed)"
+echo "PASS bump-webview2-dep (symmetric bump + decoys intact, byte-identical no-op, never-downgrade, 1 line/fixture, absent index fail-closed, print-files 6, divergence fail-closed, floor single-sourcing: heal + stale-floor + duplicate-site fail-closed)"
 exit 0

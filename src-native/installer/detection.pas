@@ -105,6 +105,15 @@ function DetectOsArchToken: string;
 { ---- Registry probes (default view unless stated otherwise) ---- }
 { au3:349-365: HKLM via the 64-bit view (KEY_WOW64_64KEY, ignored on a
   32-bit OS), then HKCU default view; value "0" disables. }
+{ au3-RegRead parity (26-04 Win7 x86 battery finding): AutoIt's RegRead
+  returns ANY value type as its string spelling, while TRegistry.ReadString
+  RAISES ERegistryException on a REG_DWORD-typed value. On 32-bit Windows
+  the .NET v4 Full 'Release' key sits in the native (only) view as a DWORD,
+  so the strict read killed the GUI there; the 64-bit dev host never saw it
+  because the redirected 32-bit view lacks the key. RegValueToString is the
+  tolerant reader every probe in this unit goes through (testrunner pin:
+  DWORD -> decimal string, REG_SZ/EXPAND_SZ -> text, other types -> ''). }
+function RegValueToString(const R: TRegistry; const AValue: string): string;
 function DetectWSHAvailable: Boolean;
 function DetectIEVersion: string;
 function DetectDotNet35Version: string;
@@ -302,6 +311,16 @@ begin
   Result := AOs.Major >= 10;
 end;
 
+function RegValueToString(const R: TRegistry; const AValue: string): string;
+begin
+  case R.GetDataType(AValue) of
+    rdString, rdExpandString: Result := R.ReadString(AValue);
+    rdInteger: Result := IntToStr(R.ReadInteger(AValue));
+  else
+    Result := '';
+  end;
+end;
+
 function DetectWSHAvailable: Boolean;
 var
   R: TRegistry;
@@ -317,7 +336,7 @@ begin
     if R.OpenKeyReadOnly(DET_REG_KEY_WSH_SETTINGS) then
     begin
       if R.ValueExists(DET_REG_VAL_ENABLED)
-         and (R.ReadString(DET_REG_VAL_ENABLED) = '0') then
+         and (RegValueToString(R, DET_REG_VAL_ENABLED) = '0') then
         Exit(False);
     end;
     R.CloseKey;
@@ -326,7 +345,7 @@ begin
     if R.OpenKeyReadOnly(DET_REG_KEY_WSH_SETTINGS) then
     begin
       if R.ValueExists(DET_REG_VAL_ENABLED)
-         and (R.ReadString(DET_REG_VAL_ENABLED) = '0') then
+         and (RegValueToString(R, DET_REG_VAL_ENABLED) = '0') then
         Exit(False);
     end;
   finally
@@ -343,7 +362,7 @@ begin
   try
     R.RootKey := HKEY_LOCAL_MACHINE;
     if R.OpenKeyReadOnly(AKey) and R.ValueExists(AValue) then
-      Result := R.ReadString(AValue);
+      Result := RegValueToString(R, AValue);
   finally
     R.Free;
   end;

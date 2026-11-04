@@ -23,7 +23,7 @@ program testrunner;
     malformed-line tolerance), and the mode-aware completion matrix. }
 
 uses
-  Classes, SysUtils, Windows, IniFiles,
+  Classes, SysUtils, Windows, IniFiles, Registry,
   enginecontracts, enginespine, detection, buildsupgrade, strings_de_en,
   resume;
 
@@ -685,6 +685,87 @@ begin
     'completion: finish-mode detector /shutdown only');
 end;
 
+procedure TestRegistryValueToString;
+const
+  CKEY = 'Software\WOUTest26Val';
+var
+  R: TRegistry;
+  B: array[0..1] of Byte;
+  KeyExisted: Boolean;
+  Probe: TRegistry;
+begin
+  { 26-04 Win7 x86 battery regression pin: TRegistry.ReadString RAISES
+    ERegistryException on a DWORD-typed value; RegValueToString is the
+    au3-RegRead-tolerant reader every registry probe goes through
+    (DWORD -> decimal string, REG_SZ/EXPAND_SZ -> text, other types ->
+    ''). Staged under HKCU, deleted after; the WSH end-to-end leg runs
+    only when the real policy key is absent on this host. }
+  Probe := TRegistry.Create(KEY_ALL_ACCESS);
+  try
+    Probe.RootKey := HKEY_CURRENT_USER;
+    KeyExisted := Probe.KeyExists(CKEY);
+    if KeyExisted then
+      Probe.DeleteKey(CKEY); { stale scratch from a crashed prior run }
+  finally
+    Probe.Free;
+  end;
+  R := TRegistry.Create(KEY_ALL_ACCESS);
+  try
+    R.RootKey := HKEY_CURRENT_USER;
+    if not R.OpenKey(CKEY, True) then
+    begin
+      Check(False, 'regval: could not stage the HKCU scratch key');
+      Exit;
+    end;
+    R.WriteInteger('DwordVal', 528029);
+    R.WriteInteger('DwordZero', 0);
+    R.WriteString('SzVal', 'abc');
+    R.WriteExpandString('ExpSzVal', '%SystemRoot%');
+    B[0] := 1;
+    B[1] := 2;
+    R.WriteBinaryData('BinVal', B[0], SizeOf(B));
+    Check(RegValueToString(R, 'DwordVal') = '528029',
+      'regval: DWORD value reads as its decimal string (au3 RegRead parity)');
+    Check(RegValueToString(R, 'DwordZero') = '0',
+      'regval: DWORD zero reads as 0 (the WSH Enabled=0 spelling)');
+    Check(RegValueToString(R, 'SzVal') = 'abc',
+      'regval: REG_SZ reads as text');
+    Check(RegValueToString(R, 'ExpSzVal') <> '',
+      'regval: REG_EXPAND_SZ reads without raising');
+    Check(RegValueToString(R, 'BinVal') = '',
+      'regval: binary value reads as empty (au3 absent-comparison behavior)');
+    Check(RegValueToString(R, 'MissingVal') = '',
+      'regval: missing value reads as empty');
+    R.CloseKey;
+    R.DeleteKey(CKEY);
+    Check(not R.KeyExists(CKEY), 'regval: scratch key deleted after the test');
+  finally
+    R.Free;
+  end;
+  if KeyExisted then
+    Exit; { pre-existing policy key on this host - skip the WSH leg }
+  R := TRegistry.Create(KEY_ALL_ACCESS);
+  try
+    R.RootKey := HKEY_CURRENT_USER;
+    if not R.OpenKey('Software\Microsoft\Windows Script Host\Settings', True) then
+    begin
+      Check(False, 'wsh-e2e: could not stage the HKCU WSH scratch key');
+      Exit;
+    end;
+    R.WriteInteger('Enabled', 0);
+    Check(not DetectWSHAvailable,
+      'wsh-e2e: DWORD Enabled=0 reads without raising and disables WSH');
+    R.WriteInteger('Enabled', 1);
+    Check(DetectWSHAvailable,
+      'wsh-e2e: DWORD Enabled=1 keeps WSH available');
+    R.DeleteValue('Enabled');
+    Check(DetectWSHAvailable,
+      'wsh-e2e: value removed restores the default');
+  finally
+    R.Free;
+  end;
+end;
+
 var
   I: Integer;
 begin
@@ -706,6 +787,7 @@ begin
     TestAuditReportParsing;
     TestRunOnceResume;
     TestCompletionMatrix;
+    TestRegistryValueToString;
   finally
     { Best-effort fixture cleanup - the gate is output-based. }
     for I := 0 to GFixtures.Count - 1 do

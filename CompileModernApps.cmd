@@ -72,16 +72,16 @@ xcopy /e /i /y bin\wwwroot "%~dp0client\wwwroot"
 
 cd /d "%~dp0"
 echo.
-echo Compilation des launchers adaptatifs et des binaires legacy...
+echo Compiling the AutoIt legacy GUIs (the pure .cmd launchers need no compile)...
 call "%~dp0CompileAutoItScripts.cmd"
 
 echo.
 echo =======================================================================
 echo [SUCCES] L'ecosysteme complet WSUS Offline Next est genere et deploye !
-echo  - %~dp0UpdateGenerator.exe (Launcher adaptatif universel)
+echo  - %~dp0UpdateGenerator.cmd (adaptive launcher entry point, pure .cmd)
 echo  - %~dp0UpdateGeneratorModern.exe (Interface moderne .NET 8)
 echo  - %~dp0UpdateGeneratorLegacy.exe (Interface classique AutoIt Win32)
-echo  - %~dp0client\UpdateInstaller.exe (Launcher adaptatif universel)
+echo  - %~dp0client\UpdateInstaller.cmd (adaptive launcher entry point, pure .cmd)
 echo  - %~dp0client\UpdateInstallerModern.exe (Interface moderne .NET 8)
 echo  - %~dp0client\UpdateInstallerLegacy.exe (Interface classique AutoIt Win32)
 echo =======================================================================

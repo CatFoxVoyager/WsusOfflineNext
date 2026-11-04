@@ -75,3 +75,5 @@ doc\RELEASING.md
 doc\coverage.txt
 doc\branding\
 doc\screenshots\
+UpdateGeneratorLauncher.au3
+UpdateInstallerLauncher.au3

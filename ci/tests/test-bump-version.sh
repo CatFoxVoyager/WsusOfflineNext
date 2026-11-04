@@ -5,8 +5,9 @@
 # probed on synthetic files - occurrence counting (two occurrences on one
 # line count 2), digit-boundary safety (2026.10.2 never matches inside
 # 2026.10.20) and border preservation. These probes never touch the tree.
-# Part 2 (real tree, clean tree only): the full bump must land exactly 32
-# substitutions in exactly 17 files with the build tag intact.
+# Part 2 (real tree, clean tree only): the full bump must land exactly 26
+# substitutions in exactly 15 files with the build tag intact (Phase 24
+# plan 02 retarget: the two AutoIt launcher twins left the matrix).
 set -u
 SANDBOX="$(mktemp -d)"
 # shellcheck disable=SC1091  # sourced on purpose: the library under test
@@ -146,15 +147,15 @@ NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
 BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
-echo "$STAT" | grep -q "17 files changed" || { echo "FAIL: attends 17 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
-echo "$STAT" | grep -q "32 insertions" || { echo "FAIL: attends 32 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
-# Comptage de lanes sur l'arbre réel — les tripwire du moteur (32 cœurs /
-# 20 full-form / 12 numériques, split 4 csproj + 8 au3) re-mesurés ici
+echo "$STAT" | grep -q "15 files changed" || { echo "FAIL: attends 15 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
+echo "$STAT" | grep -q "26 insertions" || { echo "FAIL: attends 26 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
+# Comptage de lanes sur l'arbre réel — les tripwire du moteur (26 cœurs /
+# 18 full-form / 8 numériques, split 4 csproj + 4 au3) re-mesurés ici
 # indépendamment via count_occurrences, jamais un grep -c brut. Le
-# partitionnement 20/12 n'est PAS l'invariant (il dépend de la forme) : le
-# TOTAL des sites à token de version = 32 l'est, dans les deux formes.
+# partitionnement 18/8 n'est PAS l'invariant (il dépend de la forme) : le
+# TOTAL des sites à token de version = 26 l'est, dans les deux formes.
 MATRIX="$(bash ci/bump-version.bash --print-files)"
-[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 17 ] || { echo "FAIL: --print-files ne rend pas 17 chemins"; git checkout -- .; exit 1; }
+[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 15 ] || { echo "FAIL: --print-files ne rend pas 15 chemins"; git checkout -- .; exit 1; }
 new_esc="${NEW//./\\.}"; new_esc="${new_esc//+/\\+}"
 new_core="${NEW%%+*}"; new_core_esc="${new_core//./\\.}"
 full_after=0; num_csproj=0; num_au3=0; core_after=0
@@ -166,11 +167,14 @@ for f in ${MATRIX}; do
     *.au3)    num_au3=$(( num_au3 + $(count_occurrences "${new_core_esc}\)" "${f}") )) ;;
   esac
 done
-[ "${core_after}" -eq 32 ] || { echo "FAIL: attendu 32 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
-[ "${full_after}" -eq 20 ] || { echo "FAIL: attendu 20 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
+[ "${core_after}" -eq 26 ] || { echo "FAIL: attendu 26 sites à token de version, obtenu ${core_after}"; git checkout -- .; exit 1; }
+[ "${full_after}" -eq 18 ] || { echo "FAIL: attendu 18 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
 [ "${num_csproj}" -eq 4 ] || { echo "FAIL: attendu 4 ancres csproj, obtenu ${num_csproj}"; git checkout -- .; exit 1; }
-[ "${num_au3}" -eq 8 ] || { echo "FAIL: attendu 8 ancres au3, obtenu ${num_au3}"; git checkout -- .; exit 1; }
-grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
+[ "${num_au3}" -eq 4 ] || { echo "FAIL: attendu 4 ancres au3, obtenu ${num_au3}"; git checkout -- .; exit 1; }
+# The two version-frozen launcher sources left the matrix (Phase 24 plan 02)
+# and keep the old version until Phase 25/26 deletes them — they are excluded
+# from the residue scan so a frozen source cannot read as residue.
+grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright|UpdateGeneratorLauncher\.au3|UpdateInstallerLauncher\.au3" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
 grep -q "${NEW}" cmd/DownloadUpdates.cmd || { echo "FAIL: nouvelle version absente du moteur"; git checkout -- .; exit 1; }
 # Invariant capture/compare (le littéral figé pourrit à chaque changement de
 # mois) : la capture du build tag doit être byte-identique avant/après.
@@ -179,4 +183,4 @@ BT_AFTER="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 grep -q "${NEW},release" static/SelfUpdateVersion-this.txt || { echo "FAIL: marqueur selfupdate non bumpé"; git checkout -- .; exit 1; }
 git checkout -- .
 [ -z "$(git diff --name-only --ignore-cr-at-eol)" ] || { echo "FAIL: revert incomplet"; exit 1; }
-echo "PASS bump-version (17 fichiers, 32 substitutions, build tag intact, revert propre)"
+echo "PASS bump-version (15 fichiers, 26 substitutions, build tag intact, revert propre)"

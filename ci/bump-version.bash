@@ -7,48 +7,48 @@
 #
 # The old version is read from the single source of truth
 # (cmd/DownloadUpdates.cmd, "set WSUSOFFLINE_VERSION=X.Y.Z" — with or without
-# the "+YYYY.MM" metadata). The 17-file matrix is the one committed in
-# 339f600. The build tag "(b2026.10)" is version-independent and must not
-# move. Exits 1 unless exactly 32 version-token sites land in exactly 17
-# files.
+# the "+YYYY.MM" metadata). The 15-file matrix is the one committed in
+# 339f600, retargeted in Phase 24 plan 02 when the two pure-.cmd launchers
+# replaced the AutoIt launcher twins (their .au3 sources left the matrix;
+# they are version-frozen pending deletion in Phase 25/26). The build tag
+# "(b2026.10)" is version-independent and must not move. Exits 1 unless
+# exactly 26 version-token sites land in exactly 15 files.
 #
-# The engine runs TWO LANES over the 32 matrix occurrences (phase 19, D-01):
-# a bounded full-form lane (20 sites: source of truth, headers, captions,
+# The engine runs TWO LANES over the 26 matrix occurrences (phase 19, D-01):
+# a bounded full-form lane (18 sites: source of truth, headers, captions,
 # marker, <Version>, package.json, App.tsx) and a numeric-anchored core lane
-# (12 build contexts: csproj <FileVersion>/<AssemblyVersion> "X.Y.Z.0",
-# AutoIt "#pragma compile(..., X.Y.Z)" — a '+' metadata there breaks
-# CompileModernApps.cmd and Aut2Exe).
+# (8 build contexts: csproj <FileVersion>/<AssemblyVersion> "X.Y.Z.0" plus
+# AutoIt "#pragma compile(..., X.Y.Z)" on the two legacy GUI sources — a '+'
+# metadata there breaks CompileModernApps.cmd and Aut2Exe).
 #
 # The before-accounting is SHAPE-CONDITIONAL — the binding invariant in BOTH
-# shapes is TOTAL version-token sites = 32 across the 17 files, never a
+# shapes is TOTAL version-token sites = 26 across the 15 files, never a
 # per-lane number alone:
 #   STEADY STATE (old carries "+YYYY.MM"): the two before-motifs enumerate
-#     DISJOINT site sets (20 full-form + 12 numeric); the before gate asserts
-#     sum(before_full) + sum(before_num) = 32.
+#     DISJOINT site sets (18 full-form + 8 numeric); the before gate asserts
+#     sum(before_full) + sum(before_num) = 26.
 #   MIGRATION (old is a bare core): the bounded bare-core motif matches ALL
-#     32 sites, so the full-form lane already enumerates every site; the
-#     before gate asserts sum(before_full) = 32 and sum(before_num) is
-#     INFORMATIVE only (printed, never gate-binding) — those 12 are the
-#     numeric subset of the 32 that the numeric lane re-repairs after the
+#     26 sites, so the full-form lane already enumerates every site; the
+#     before gate asserts sum(before_full) = 26 and sum(before_num) is
+#     INFORMATIVE only (printed, never gate-binding) — those 8 are the
+#     numeric subset of the 26 that the numeric lane re-repairs after the
 #     full lane carried the "+YYYY.MM" form there.
 #   The shape branch is selected by whether the old version carries '+' —
 #   picking the wrong branch produces a wrong TOTAL and aborts, so the gate
-#   stays fail-closed in both shapes. The after-gates (20 full-form + 12
-#   numeric + 32 core sites) are binding in both shapes because the
+#   stays fail-closed in both shapes. The after-gates (18 full-form + 8
+#   numeric + 26 core sites) are binding in both shapes because the
 #   after-state is identical whichever shape produced it.
 #
 # Counting/substitution logic lives in ci/lib-bump-version.bash: occurrences
 # are COUNTED and the pattern is bounded at digit boundaries (CISC-08).
 
 # ===== Configuration =====
-readonly script_version="1.2"
+readonly script_version="1.3"
 VERSION_FILES="
 cmd/DownloadUpdates.cmd
 client/cmd/DoUpdate.cmd
 client/UpdateInstaller.au3
-client/UpdateInstallerLauncher.au3
 UpdateGenerator.au3
-UpdateGeneratorLauncher.au3
 CompileModernApps.cmd
 README.md
 sh/download-updates.bash
@@ -146,7 +146,7 @@ for f in ${VERSION_FILES}; do
   printf '%-55s %4d -> %4d\n' "${f}" "$(( before_full + before_num ))" "$(( after_full + after_num ))"
 done
 
-# Shape-conditional before-accounting: the invariant is TOTAL sites = 32.
+# Shape-conditional before-accounting: the invariant is TOTAL sites = 26.
 if [ "${bump_shape}" = "steady" ]; then
   before_gate_total=$(( full_before_total + num_before_total ))
 else
@@ -155,15 +155,15 @@ fi
 echo "TOTAL: ${before_gate_total} -> $(( full_after_total + num_after_total )) substitutions in ${files_touched} files"
 echo "shape: ${bump_shape} | before lanes full/num: ${full_before_total}/${num_before_total} | after: full ${full_after_total}, numeric ${num_after_total}, core ${core_after_total}"
 
-if [ "${before_gate_total}" -ne 32 ] || [ "${files_touched}" -ne 17 ]; then
-  echo "bump-version: EXPECTED 32 version-token sites across 17 files — aborting (tree modified, run git checkout -- .)" >&2
+if [ "${before_gate_total}" -ne 26 ] || [ "${files_touched}" -ne 15 ]; then
+  echo "bump-version: EXPECTED 26 version-token sites across 15 files — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 # After-gates — binding in BOTH shapes (the after-state is identical
-# whichever shape produced it): 20 full-form + 12 numeric, 32 core sites.
-if [ "${full_after_total}" -ne 20 ] || [ "${num_after_total}" -ne 12 ] \
-   || [ "${core_after_total}" -ne 32 ]; then
-  echo "bump-version: EXPECTED after-state 20 full-form + 12 numeric = 32 core sites — aborting (tree modified, run git checkout -- .)" >&2
+# whichever shape produced it): 18 full-form + 8 numeric, 26 core sites.
+if [ "${full_after_total}" -ne 18 ] || [ "${num_after_total}" -ne 8 ] \
+   || [ "${core_after_total}" -ne 26 ]; then
+  echo "bump-version: EXPECTED after-state 18 full-form + 8 numeric = 26 core sites — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 if [ $(( full_after_total + num_after_total )) -ne "${core_after_total}" ]; then

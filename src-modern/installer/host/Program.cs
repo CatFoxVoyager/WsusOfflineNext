@@ -133,7 +133,7 @@ namespace WSUSOffline.Installer
                 + "Requis : " + WebView2Compat.MinWebView2Version + " ou plus récent.\n\n"
                 + "Journal de diagnostic : " + GetStartupDiagnosticsLogPath() + "\n\n"
                 + "Installez le WebView2 Evergreen Runtime :\n"
-                + "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+                + EvergreenUrl + "\n\n"
                 + "Ouvrir l'interface classique (Legacy) à la place ?";
             if (MessageBox.Show(message, "WSUS Offline Next Installer",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
@@ -207,8 +207,62 @@ namespace WSUSOffline.Installer
             return null;
         }
 
-        // Hand off to the sibling legacy exe; absent next to a bare dev
-        // build, which must degrade to a message, never a crash.
+        // Compile-time constant: the official Microsoft Evergreen page.
+        // NEVER derived from user input (argv, INI, registry content) —
+        // the dialog is the first surface a stranded user reads and its
+        // URL must not be spoofable.
+        private const string EvergreenUrl =
+            "https://developer.microsoft.com/microsoft-edge/webview2/";
+
+        // Evergreen-offer dialog for the paths where the classic interface
+        // cannot be started: explains that the WebView2 Runtime requirement
+        // (version MinWebView2Version or newer) was not met and offers the
+        // Evergreen runtime — the bundled offline bootstrapper when it
+        // ships in the tree, the official Microsoft page otherwise. Does
+        // not change the caller's exit flow.
+        private static void ShowWebView2EvergreenOffer(string? failureDetail)
+        {
+            string bootstrapperPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "edge",
+                "MicrosoftEdgeWebView2RuntimeInstallerX64.exe");
+            bool bootstrapperPresent = File.Exists(bootstrapperPath);
+            string message =
+                "The classic AutoIt installer interface is not available in this"
+                + " deployment, and the Microsoft Edge WebView2 Runtime requirement"
+                + " (version " + WebView2Compat.MinWebView2Version
+                + " or newer) was not met.\n";
+            if (!string.IsNullOrEmpty(failureDetail))
+            {
+                message += failureDetail + "\n";
+            }
+            message += "\nInstall the Evergreen WebView2 Runtime:\n" + EvergreenUrl + "\n";
+            if (bootstrapperPresent)
+            {
+                message += "\nAn offline installer is bundled with this package:\n"
+                    + bootstrapperPath + "\n";
+            }
+            message += "\nInstall it now?";
+            if (MessageBox.Show(message, "WSUS Offline Next Installer",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+            {
+                try
+                {
+                    if (bootstrapperPresent)
+                    {
+                        Process.Start(new ProcessStartInfo(bootstrapperPath) { UseShellExecute = true });
+                    }
+                    else
+                    {
+                        Process.Start(new ProcessStartInfo(EvergreenUrl) { UseShellExecute = true });
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // Hand off to the sibling legacy exe; when neither probe finds one
+        // (bare dev build, trimmed deployment), degrade to the Evergreen
+        // offer dialog — never a crash, never a dead-end message.
         private static void StartLegacyInterfaceOrExplain()
         {
             string? legacyPath = ResolveLegacyExe();
@@ -221,10 +275,7 @@ namespace WSUSOffline.Installer
                 }
             }
             catch { }
-            MessageBox.Show(
-                "L'interface classique (Legacy) est introuvable :\n"
-                + (legacyPath ?? AppDomain.CurrentDomain.BaseDirectory),
-                "WSUS Offline Next Installer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowWebView2EvergreenOffer(null);
         }
 
         private static void LogFatal(Exception ex)
@@ -438,8 +489,8 @@ namespace WSUSOffline.Installer
             catch (Exception ex)
             {
                 // Fallback for air-gapped machines without a usable WebView2
-                // runtime: hand off to the shipped legacy interface, else
-                // explain the root cause.
+                // runtime: hand off to the shipped legacy interface when it
+                // is present, else offer the Evergreen runtime.
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string fallbackExe = Path.Combine(baseDir, "UpdateInstaller.orig.exe");
                 if (File.Exists(fallbackExe))
@@ -459,7 +510,7 @@ namespace WSUSOffline.Installer
                     return;
                 }
 
-                MessageBox.Show(DescribeWebView2Failure(ex), "WSUS Offline Next Installer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowWebView2EvergreenOffer(DescribeWebView2Failure(ex));
             }
         }
 
@@ -847,12 +898,11 @@ namespace WSUSOffline.Installer
     // (exercised by ci/tests/test-webview2-version-gate.sh).
     public static class WebView2Compat
     {
-        // Keep in sync with $MIN_WEBVIEW2_VERSION in
-        // UpdateGeneratorLauncher.au3 and client/UpdateInstallerLauncher.au3
-        // (the launcher-side twin of the in-host gate): the runtime version
-        // paired with the pinned WebView2 SDK. The battery cross-checks
-        // the const against both launcher literals, so a drift fails the
-        // build instead of the users.
+        // Keep in sync with MIN_WEBVIEW2_VERSION in
+        // client/UpdateInstaller.cmd (the launcher-side twin of the in-host
+        // gate since Phase 24): the runtime version paired with the pinned
+        // WebView2 SDK. The battery cross-checks the const against the
+        // launcher literal, so a drift fails the build instead of the users.
         public const string MinWebView2Version = "156.0.4314.35";
 
         // 4-part numeric comparison with launcher-parity semantics: any

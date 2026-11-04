@@ -132,12 +132,12 @@ namespace WSUSOffline.Generator
                 + "Requis : " + WebView2Compat.MinWebView2Version + " ou plus récent.\n\n"
                 + "Journal de diagnostic : " + GetStartupDiagnosticsLogPath() + "\n\n"
                 + "Installez le WebView2 Evergreen Runtime :\n"
-                + "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+                + EvergreenUrl + "\n\n"
                 + "Ouvrir l'interface classique (Legacy) à la place ?";
             if (MessageBox.Show(message, "WSUS Offline Next",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
             {
-                StartLegacyInterfaceOrExplain();
+                ShowEvergreenFallbackOrExit();
                 Environment.Exit(0);
             }
             Environment.Exit(1);
@@ -145,7 +145,7 @@ namespace WSUSOffline.Generator
 
         // Single sink of the global exception net. A second fatal while the
         // dialog is up exits immediately; the dialog owner performs the
-        // Legacy hand-off before the exit so the AppDomain event's
+        // Evergreen fallback offer before the exit so the AppDomain event's
         // cannot-continue semantics stay best-effort but never silent.
         private static int _fatalInProgress;
 
@@ -164,7 +164,7 @@ namespace WSUSOffline.Generator
                             "WSUS Offline Next",
                             MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                     {
-                        StartLegacyInterfaceOrExplain();
+                        ShowEvergreenFallbackOrExit();
                     }
                 }
                 else
@@ -192,25 +192,65 @@ namespace WSUSOffline.Generator
                     ?? new Exception(e.ExceptionObject?.ToString() ?? "unknown"));
         }
 
-        // Hand off to the sibling legacy exe — the name produced by
-        // CompileAutoItScripts.cmd in every release tree; absent next to a
-        // bare dev build, which must degrade to a message, never a crash.
-        private static void StartLegacyInterfaceOrExplain()
+        // Compile-time constant: the official Microsoft Evergreen page.
+        // NEVER derived from user input (argv, INI, registry content) —
+        // the dialog is the first surface a stranded user reads and its
+        // URL must not be spoofable.
+        private const string EvergreenUrl =
+            "https://developer.microsoft.com/microsoft-edge/webview2/";
+
+        // The classic AutoIt generator interface was retired as part of the
+        // anti-false-positive migration: when the WebView2 Runtime
+        // requirement is not met there is no legacy exe to hand off to, so
+        // this dialog offers the Evergreen runtime instead — the bundled
+        // offline bootstrapper when it ships in the tree, the official
+        // Microsoft page otherwise. Does not change the caller's exit flow.
+        private static void ShowWebView2EvergreenOffer(string? failureDetail)
         {
-            string legacyPath = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory, "UpdateGeneratorLegacy.exe");
-            try
+            string bootstrapperPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "client", "edge",
+                "MicrosoftEdgeWebView2RuntimeInstallerX64.exe");
+            bool bootstrapperPresent = File.Exists(bootstrapperPath);
+            string message =
+                "The classic AutoIt generator interface was retired as part of the"
+                + " anti-false-positive migration, and the Microsoft Edge WebView2"
+                + " Runtime requirement (version " + WebView2Compat.MinWebView2Version
+                + " or newer) was not met.\n";
+            if (!string.IsNullOrEmpty(failureDetail))
             {
-                if (File.Exists(legacyPath))
-                {
-                    Process.Start(new ProcessStartInfo(legacyPath) { UseShellExecute = true });
-                    return;
-                }
+                message += failureDetail + "\n";
             }
-            catch { }
-            MessageBox.Show(
-                "L'interface classique (Legacy) est introuvable :\n" + legacyPath,
-                "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            message += "\nInstall the Evergreen WebView2 Runtime:\n" + EvergreenUrl + "\n";
+            if (bootstrapperPresent)
+            {
+                message += "\nAn offline installer is bundled with this package:\n"
+                    + bootstrapperPath + "\n";
+            }
+            message += "\nInstall it now?";
+            if (MessageBox.Show(message, "WSUS Offline Next",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+            {
+                try
+                {
+                    if (bootstrapperPresent)
+                    {
+                        Process.Start(new ProcessStartInfo(bootstrapperPath) { UseShellExecute = true });
+                    }
+                    else
+                    {
+                        Process.Start(new ProcessStartInfo(EvergreenUrl) { UseShellExecute = true });
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // Failure path shared by the startup gate and the global exception
+        // net: no legacy exe exists anymore, so the fallback IS the
+        // Evergreen offer dialog.
+        private static void ShowEvergreenFallbackOrExit()
+        {
+            ShowWebView2EvergreenOffer(null);
         }
 
         private static void LogFatal(Exception ex)
@@ -423,17 +463,10 @@ namespace WSUSOffline.Generator
             }
             catch (Exception ex)
             {
-                // WebView2 startup failed: hand off to the legacy interface
-                // when it ships in the same directory, else explain.
-                string fallbackExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "UpdateGeneratorLegacy.exe");
-                if (File.Exists(fallbackExe))
-                {
-                    Process.Start(new ProcessStartInfo(fallbackExe) { UseShellExecute = true });
-                    Application.Exit();
-                    return;
-                }
-
-                MessageBox.Show(DescribeWebView2Failure(ex), "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                // WebView2 startup failed: the classic AutoIt generator is
+                // retired, so there is no legacy exe to hand off to —
+                // offer the Evergreen runtime instead.
+                ShowWebView2EvergreenOffer(DescribeWebView2Failure(ex));
             }
         }
 
@@ -994,12 +1027,11 @@ namespace WSUSOffline.Generator
     // (exercised by ci/tests/test-webview2-version-gate.sh).
     public static class WebView2Compat
     {
-        // Keep in sync with $MIN_WEBVIEW2_VERSION in
-        // UpdateGeneratorLauncher.au3 and client/UpdateInstallerLauncher.au3
-        // (the launcher-side twin of the in-host gate): the runtime version
-        // paired with the pinned WebView2 SDK. The battery cross-checks
-        // the const against both launcher literals, so a drift fails the
-        // build instead of the users.
+        // Keep in sync with MIN_WEBVIEW2_VERSION in UpdateGenerator.cmd
+        // (the launcher-side twin of the in-host gate since Phase 24): the
+        // runtime version paired with the pinned WebView2 SDK. The battery
+        // cross-checks the const against the launcher literal, so a drift
+        // fails the build instead of the users.
         public const string MinWebView2Version = "156.0.4314.35";
 
         // 4-part numeric comparison with launcher-parity semantics: any

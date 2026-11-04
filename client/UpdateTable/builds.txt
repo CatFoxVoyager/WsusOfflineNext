@@ -1,0 +1,15 @@
+# client/UpdateTable/builds.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT
+# Format: build|arch|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_prereq_kb|ekb_min_revision|is_enforced
+# Consumed at GUI runtime by src-native/installer/buildsupgrade.pas
+19041|x86|win10|19041|active|||||0
+19041|x64|win10|19041|active|||||0
+19042|x86|win10|19041|eol|19041|kb4562830|kb5008212|572|1
+19042|x64|win10|19041|eol|19041|kb4562830|kb5008212|572|1
+19044|x86|win10|19041|eol|19041|kb5003791|kb5008212|1237|0
+19044|x64|win10|19041|eol|19041|kb5003791|kb5008212|1237|0
+19045|x86|win10|19041|active|19041|kb5015684|kb5021233|1865|0
+19045|x64|win10|19041|active|19041|kb5015684|kb5021233|1865|0
+26100|x64|win11|26100|active|||||0
+26200|x64|win11|26100|active|26100|kb5054156|kb5064081|5074|0
+26300|x64|win11|26100|active|26100|kb5054156|||0
+28000|x64|win11|28000|ineligible|||||0

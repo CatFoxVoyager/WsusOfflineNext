@@ -31,7 +31,7 @@ interface
 
 uses
   Classes, SysUtils, Windows, Messages, IniFiles,
-  Forms, Controls, Graphics, Dialogs, StdCtrls, ComCtrls,
+  Forms, Controls, Graphics, Dialogs, StdCtrls, ComCtrls, Process,
   enginecontracts, strings_de_en, enginespine, detection, buildsupgrade;
 
 type
@@ -91,6 +91,13 @@ type
     FScriptDirIsNetwork: Boolean;
     { Enablement data (shipped builds.txt; empty until the file ships). }
     FBuildRows: TBuildRows;
+    { Software tab state - the $msimax=10 cap of the au3 array is GONE:
+      the dynamic checkbox list grows with the actual package census. }
+    tsSoftware: TTabSheet;
+    FMsiAll: TCheckBox;
+    sbMsi: TScrollBox;
+    FMsiChecks: array of TCheckBox;
+    FMsiNames: TStringList;
     { MyIniRead parity (au3:220-229) - client INI default, %TEMP% copy
       overrides per key. }
     function IniState(const ASection, AKey, ADefault: string): string;
@@ -104,6 +111,10 @@ type
     procedure ShowStartupInfoDialogs;
     procedure ShowBox(const AMsg: string; const ATitle: TStringId;
       AWarning: Boolean);
+    procedure ListMsiPackages;
+    procedure BuildSoftwareTab;
+    procedure MsiAllClick(Sender: TObject);
+    procedure MsiCheckClick(Sender: TObject);
     procedure IniCopyAll;
     procedure BuildArgvFromToggles(out AToggles: TArgvToggles);
     procedure SpineLine(const ALine: string);
@@ -203,6 +214,11 @@ begin
   { Informational dialogs (au3:1058-1096) - after the toggles, like the
     incumbent's pre-loop sequence. }
   ShowStartupInfoDialogs;
+
+  { Software tab - /listall once at construction, read-then-delete of the
+    listing, tab built ONLY when packages exist (au3:944-977). }
+  FMsiNames := TStringList.Create;
+  ListMsiPackages;
 end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
@@ -211,6 +227,7 @@ begin
   if FMapped then
     DetectReleaseScriptDirectory(FScriptDir);
   FreeAndNil(FSpine);
+  FreeAndNil(FMsiNames);
 end;
 
 procedure TMainForm.ShowBox(const AMsg: string; const ATitle: TStringId;
@@ -544,7 +561,144 @@ begin
     chkShowLog.Enabled := True;
 end;
 
+procedure TMainForm.ListMsiPackages;
+var
+  P: TProcess;
+  Buf: AnsiString;
+  Chunk: AnsiString;
+  Count: DWord;
+  ListingPath: string;
+begin
+  { au3 ListMSIPackages (548-556): RunWait of TouchMSITree.cmd /listall
+    in the cmd dir, hidden window. TProcess parity: absolute cmd.exe,
+    pre-quoted single payload, pipes drained (never poWaitOnExit with
+    pipes). Failures leave the listing absent = no Software tab, exactly
+    the au3 FileExists branch (947). }
+  ListingPath := IncludeTrailingPathDelimiter(EngCallerTempDir)
+    + ENG_MSI_LISTING_NAME;
+  if FileExists(ListingPath) then
+    SysUtils.DeleteFile(ListingPath); { a stale listing must never mask a failed /listall }
+
+  if (EngCmdExePath = '') or not FileExists(FCmdDir + '\TouchMSITree.cmd') then
+    Exit;
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := EngCmdExePath;
+    P.Parameters.Add('/D');
+    P.Parameters.Add('/C');
+    P.Parameters.Add('".\TouchMSITree.cmd /listall"');
+    P.CurrentDirectory := FCmdDir;
+    P.Options := [poUsePipes, poNoConsole];
+    try
+      P.Execute;
+    except
+      Exit;
+    end;
+    Buf := '';
+    while P.Running do
+    begin
+      Count := P.Output.NumBytesAvailable;
+      if Count > 0 then
+      begin
+        SetLength(Chunk, Count);
+        SetLength(Chunk, P.Output.Read(Chunk[1], Count));
+        Buf := Buf + Chunk;
+      end;
+      Sleep(50);
+    end;
+    { Final drain + exit code ignored: the listing file is the contract. }
+    Count := P.Output.NumBytesAvailable;
+    if Count > 0 then
+    begin
+      SetLength(Chunk, Count);
+      SetLength(Chunk, P.Output.Read(Chunk[1], Count));
+      Buf := Buf + Chunk;
+    end;
+  finally
+    P.Free;
+  end;
+
+  if not FileExists(ListingPath) then
+    Exit;
+  EngReadMsiListing(ListingPath, FMsiNames);
+  SysUtils.DeleteFile(ListingPath); { read-then-DELETE (au3:975) }
+  if FMsiNames.Count > 0 then
+    BuildSoftwareTab;
+end;
+
+procedure TMainForm.BuildSoftwareTab;
+var
+  I: Integer;
+  Chk: TCheckBox;
+begin
+  { au3:944-977 with the $msimax=10 cap lifted: one checkbox per listed
+    package inside a scrollable container, per-package INI state, plus
+    the select-all checkbox (au3:950-957). }
+  tsSoftware := TTabSheet.Create(Self);
+  tsSoftware.Caption := StringsGet(siTabSoftware);
+  tsSoftware.PageControl := pcTabs;
+
+  FMsiAll := TCheckBox.Create(tsSoftware);
+  FMsiAll.Parent := tsSoftware;
+  FMsiAll.Left := 8;
+  FMsiAll.Top := 8;
+  FMsiAll.Width := 252;
+  FMsiAll.Caption := StringsGet(siMsiSelectAll);
+  FMsiAll.OnClick := @MsiAllClick;
+
+  sbMsi := TScrollBox.Create(tsSoftware);
+  sbMsi.Parent := tsSoftware;
+  sbMsi.Left := 8;
+  sbMsi.Top := 34;
+  sbMsi.Width := 528;
+  sbMsi.Height := 300;
+  sbMsi.Anchors := [akLeft, akTop, akRight, akBottom];
+  sbMsi.BorderStyle := bsNone;
+  sbMsi.VertScrollBar.Tracking := True;
+
+  SetLength(FMsiChecks, FMsiNames.Count);
+  for I := 0 to FMsiNames.Count - 1 do
+  begin
+    Chk := TCheckBox.Create(sbMsi);
+    Chk.Parent := sbMsi;
+    Chk.Left := 8;
+    Chk.Top := 4 + I * 24;
+    Chk.Width := 500;
+    Chk.Caption := FMsiNames.Strings[I];
+    Chk.Checked := IniEnabled(ENG_INI_SECTION_MSI, FMsiNames.Strings[I],
+      ENG_INI_DISABLED);
+    Chk.OnClick := @MsiCheckClick;
+    FMsiChecks[I] := Chk;
+  end;
+end;
+
+procedure TMainForm.MsiAllClick(Sender: TObject);
+var
+  I: Integer;
+begin
+  { au3:1185-1194 verbatim. }
+  for I := 0 to High(FMsiChecks) do
+    FMsiChecks[I].Checked := FMsiAll.Checked;
+end;
+
+procedure TMainForm.MsiCheckClick(Sender: TObject);
+var
+  I: Integer;
+begin
+  { au3:1196-1202 verbatim: any unchecked package unchecks select-all
+    (never the reverse). }
+  for I := 0 to High(FMsiChecks) do
+    if not FMsiChecks[I].Checked then
+    begin
+      FMsiAll.Checked := False;
+      Break;
+    end;
+end;
+
 procedure TMainForm.IniCopyAll;
+var
+  I: Integer;
 begin
   { au3 IniCopy (231-260) parity: byte copy of the client INI, read-only
     bit cleared, then every GUI toggle state written on top. The
@@ -586,8 +740,11 @@ begin
         CheckedState(chkAuditOnly.Checked));
       WriteString(ENG_INI_SECTION_MESSAGING, 'showlog',
         CheckedState(chkShowLog.Checked));
-      { Per-MSI-package keys (au3:255-257) - wired with the Software tab
-        in task 2; the loop covers every listed package by name. }
+      { Per-MSI-package keys (au3:255-257): one key per listed package,
+        keyed by the raw package file name. }
+      for I := 0 to High(FMsiChecks) do
+        WriteString(ENG_INI_SECTION_MSI, FMsiNames.Strings[I],
+          CheckedState(FMsiChecks[I].Checked));
       UpdateFile;
     finally
       Free;
@@ -642,12 +799,15 @@ var
   Switches: string;
   StatusServer: string;
   Res: TSpineResult;
+  Selection: TStringList;
+  I: Integer;
 begin
   if FRunning then
     Exit;
   FRunning := True;
   btnStart.Enabled := False;
   btnExit.Enabled := False;
+  Selection := TStringList.Create;
   try
     { WUStatusServer pre-launch write (au3:1205-1208) - MyIniRead, i.e.
       the %TEMP% copy may carry it. }
@@ -664,8 +824,14 @@ begin
 
     Switches := EngBuildArgv(Toggles);
 
-    { MSI selection write-or-delete - wired with the Software tab in
-      task 2. }
+    { MSI selection write-or-delete at %SystemRoot%\Temp (au3:1282-1293;
+      research Pitfall F - NEVER %TEMP%). }
+    for I := 0 to High(FMsiChecks) do
+      if FMsiChecks[I].Checked then
+        Selection.Add(FMsiNames.Strings[I]);
+    EngWriteMsiSelection(
+      IncludeTrailingPathDelimiter(EngEngineTempDir)
+      + ENG_MSI_SELECTION_NAME, Selection);
 
     FSpine.OnLine := @SpineLine;
     FSpine.OnIdle := @SpineIdle;
@@ -673,6 +839,7 @@ begin
     memoProgress.Lines.Add(Format(StringsGet(siSummaryExitCode),
       [Res.ExitCode]));
   finally
+    Selection.Free;
     btnExit.Enabled := True;
     btnStart.Enabled := True;
     FRunning := False;

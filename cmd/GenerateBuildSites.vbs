@@ -7,6 +7,9 @@
 '   2. sh/download-updates-tasks/60-main-updates.bash
 '   3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
 '   4. client/UpdateInstaller.au3
+'   5. client/UpdateTable/builds.txt (whole-file emission - the native
+'      installer's Enablement-Package data file, consumed at GUI runtime
+'      by src-native/installer/buildsupgrade.pas)
 '
 ' Preserves CRLF line endings and Windows-1252 ANSI encoding.
 ' =======================================================================
@@ -326,6 +329,25 @@ For i = 0 To UBound(arrRegistrySections)
 Next
 strSite5Block = strSite5Block & "]"
 
+' client/UpdateTable/builds.txt - the native installer's Enablement data
+' file (plan 26-02). Pipe-delimited rows, hash-comment header, CRLF.
+' Same 12-row census and is_enforced formula as the au3 site above; the
+' au3 site itself dies with plan 03 (sites then step to 3).
+Dim strBuildsTxtPath, strBuildsTxtNew, strBuildsTxtContent
+strBuildsTxtPath = objFSO.BuildPath(strRepoRoot, "client\UpdateTable\builds.txt")
+strBuildsTxtNew = "# client/UpdateTable/builds.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT" & vbCrLf & _
+                  "# Format: build|arch|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_prereq_kb|ekb_min_revision|is_enforced" & vbCrLf & _
+                  "# Consumed at GUI runtime by src-native/installer/buildsupgrade.pas" & vbCrLf
+For i = 0 To UBound(arrRegistrySections)
+    sSec = arrRegistrySections(i)
+    Set dictSection = dictSections(sSec)
+    enf = 0
+    If dictSection("build") = "19042" Then enf = 1
+    strBuildsTxtNew = strBuildsTxtNew & dictSection("build") & "|" & dictSection("arch") & "|" & dictSection("os_family") & "|" & dictSection("servicing_branch") & "|" & dictSection("status") & "|" & _
+                      dictSection("ekb_source_build") & "|" & dictSection("ekb_kb") & "|" & dictSection("ekb_prereq_kb") & "|" & dictSection("ekb_min_revision") & "|" & _
+                      enf & vbCrLf
+Next
+
 ' StaticUpdateIds-BuildUpgrades.txt
 Dim strStaticUpgradesPath, strStaticUpgradesContent, strStaticUpgradesNew
 strStaticUpgradesPath = objFSO.BuildPath(strRepoRoot, "client\static\StaticUpdateIds-BuildUpgrades.txt")
@@ -435,6 +457,24 @@ If strStaticCheckpointsNew <> strStaticCheckpointsContent Then
 End If
 If Not bCheckOnly Then Call WriteTextFile1252(strStaticCheckpointsPath, strStaticCheckpointsNew)
 
+' Synchronize client/UpdateTable/builds.txt - whole-file emission (NOT a
+' marker rewrite; the au3 marker site dies with plan 03)
+If objFSO.FileExists(strBuildsTxtPath) Then
+    strBuildsTxtContent = ReadTextFile1252(strBuildsTxtPath)
+Else
+    strBuildsTxtContent = ""
+End If
+If strBuildsTxtNew <> strBuildsTxtContent Then
+    bDrift = True
+    If bCheckOnly Then WScript.Echo "ERROR: File client/UpdateTable/builds.txt is out of sync with static/builds.ini."
+End If
+If Not bCheckOnly Then
+    Dim strBuildsTxtDir
+    strBuildsTxtDir = objFSO.GetParentFolderName(strBuildsTxtPath)
+    If Not objFSO.FolderExists(strBuildsTxtDir) Then objFSO.CreateFolder(strBuildsTxtDir)
+    Call WriteTextFile1252(strBuildsTxtPath, strBuildsTxtNew)
+End If
+
 ' -----------------------------------------------------------------------
 ' Exit status report
 ' -----------------------------------------------------------------------
@@ -442,11 +482,11 @@ If bCheckOnly Then
     If bDrift Then
         WScript.Quit 1
     Else
-        WScript.Echo "All 4 build sites are in sync with static/builds.ini."
+        WScript.Echo "All 4 build sites plus the builds.txt data file are in sync with static/builds.ini."
         WScript.Quit 0
     End If
 Else
-    WScript.Echo "Successfully updated 4 build sites from static/builds.ini."
+    WScript.Echo "Successfully updated 4 build sites plus the builds.txt data file from static/builds.ini."
     WScript.Quit 0
 End If
 

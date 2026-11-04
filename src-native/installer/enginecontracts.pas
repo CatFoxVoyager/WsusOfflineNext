@@ -89,7 +89,8 @@ const
   ENG_TEMP_INI_NAME = 'UpdateInstaller.ini';
   { MSI listing lands in the caller %TEMP%; the selection file lives in
     %SystemRoot%\Temp where the engine reads it (au3:121,1282;
-    DoUpdate.cmd:1701) - research Pitfall F. }
+    DoUpdate.cmd:1701) - research Pitfall F. Never move the selection
+    file to %TEMP% - the engine would silently never see it. }
   ENG_MSI_LISTING_NAME = 'wouallmsi.txt';
   ENG_MSI_SELECTION_NAME = 'wouselmsi.txt';
 
@@ -188,6 +189,21 @@ function EngOsVersionDisplay: string;
 { Byte copy used by the INI-copy contract (au3 IniCopy parity); callers
   clear the read-only bit on the destination afterwards. }
 procedure EngCopyFileRaw(const ASrc, ADest: string);
+
+{ MSI listing parse (au3:968 shape): bare package file names, one per
+  line; empty lines dropped. The caller owns the read-then-DELETE of the
+  listing file (au3:975). }
+procedure EngReadMsiListing(const APath: string; ANames: TStrings);
+
+{ MSI selection write-or-delete (au3:1282-1293; threat T-26-05): one RAW
+  package file name per line (CRLF-terminated, no quoting, no added
+  decoration - the engine consumes the file with find /I exact
+  substring), written as ANSI bytes (CP_ACP - the incumbent's
+  FileWriteLine byte semantics; the LCL strings are UTF-8). An EMPTY
+  selection DELETES the file (the engine then skips the MSI pass
+  entirely). Never call this with a %TEMP% path - see
+  ENG_MSI_SELECTION_NAME. }
+procedure EngWriteMsiSelection(const APath: string; ANames: TStrings);
 
 implementation
 
@@ -456,6 +472,72 @@ begin
     end;
   finally
     Src.Free;
+  end;
+end;
+
+procedure EngReadMsiListing(const APath: string; ANames: TStrings);
+var
+  Sl: TStringList;
+  I: Integer;
+  Line: string;
+begin
+  ANames.Clear;
+  if not FileExists(APath) then
+    Exit;
+  Sl := TStringList.Create;
+  try
+    Sl.LoadFromFile(APath);
+    for I := 0 to Sl.Count - 1 do
+    begin
+      Line := Trim(Sl.Strings[I]);
+      if Line <> '' then
+        ANames.Add(Line);
+    end;
+  finally
+    Sl.Free;
+  end;
+end;
+
+function EngUtf8ToAnsi(const AValue: string): AnsiString;
+var
+  W: WideString;
+  WLen: Integer;
+  Len: Integer;
+begin
+  { CP_ACP = the incumbent's ANSI FileWrite bytes. }
+  W := UTF8Decode(AValue);
+  WLen := Length(W);
+  if WLen = 0 then
+    Exit('');
+  Len := WideCharToMultiByte(CP_ACP, 0, PWideChar(W), WLen, nil, 0, nil, nil);
+  if Len <= 0 then
+    Exit('');
+  SetLength(Result, Len);
+  WideCharToMultiByte(CP_ACP, 0, PWideChar(W), WLen, PAnsiChar(Result), Len, nil, nil);
+end;
+
+procedure EngWriteMsiSelection(const APath: string; ANames: TStrings);
+var
+  Fs: TFileStream;
+  S: AnsiString;
+  I: Integer;
+begin
+  if ANames.Count = 0 then
+  begin
+    { Empty selection = the engine skips the MSI pass (au3:1291-1293). }
+    if FileExists(APath) then
+      SysUtils.DeleteFile(APath);
+    Exit;
+  end;
+  S := '';
+  for I := 0 to ANames.Count - 1 do
+    S := S + EngUtf8ToAnsi(ANames.Strings[I]) + #13#10;
+  Fs := TFileStream.Create(APath, fmCreate);
+  try
+    if Length(S) > 0 then
+      Fs.WriteBuffer(PAnsiChar(S)^, Length(S));
+  finally
+    Fs.Free;
   end;
 end;
 

@@ -459,6 +459,56 @@ begin
   CheckEq(EngSwitchToken('updatecpp'), '/updatecpp', 'argv: token lookup');
 end;
 
+procedure TestMsiContract;
+var
+  Names: TStringList;
+  SelPath: string;
+  Raw: AnsiString;
+  Fs: TFileStream;
+begin
+  { EngReadMsiListing: bare names, empty lines dropped. }
+  Names := TStringList.Create;
+  try
+    EngReadMsiListing(WriteFixture('msi-listing.txt',
+      'pkg-a.msi' + LineEnding + LineEnding + 'pkg-b.msi' + LineEnding), Names);
+    Check((Names.Count = 2) and (Names.Strings[0] = 'pkg-a.msi') and
+          (Names.Strings[1] = 'pkg-b.msi'),
+      'msi listing: bare names parsed, blank lines dropped');
+    EngReadMsiListing(GTempDir + '\wou-testrunner-missing.txt', Names);
+    Check(Names.Count = 0, 'msi listing: missing file -> empty');
+
+    { EngWriteMsiSelection: raw one-filename-per-line, CRLF-terminated,
+      no quoting or decoration (threat T-26-05). }
+    SelPath := GTempDir + '\wouselmsi-test.txt';
+    Names.Clear;
+    Names.Add('pkg-a.msi');
+    Names.Add('pkg-b.msi');
+    EngWriteMsiSelection(SelPath, Names);
+    Fs := TFileStream.Create(SelPath, fmOpenRead);
+    try
+      SetLength(Raw, Fs.Size);
+      if Fs.Size > 0 then
+        Fs.ReadBuffer(PAnsiChar(Raw)^, Fs.Size);
+    finally
+      Fs.Free;
+    end;
+    CheckEq(string(Raw), 'pkg-a.msi' + #13#10 + 'pkg-b.msi' + #13#10,
+      'msi selection: raw lines written (no quoting, trailing CRLF)');
+
+    { Empty selection DELETES the file (au3:1291-1293). }
+    Names.Clear;
+    EngWriteMsiSelection(SelPath, Names);
+    Check(not FileExists(SelPath),
+      'msi selection: empty selection deletes the file');
+    { Deleting when absent stays a no-op. }
+    EngWriteMsiSelection(SelPath, Names);
+    Check(not FileExists(SelPath),
+      'msi selection: empty selection on absent file stays absent');
+  finally
+    Names.Free;
+  end;
+end;
+
 procedure TestCompletionMatrix;
 begin
   { exit 0/1/3010/3011 x finish-mode present/absent. }
@@ -504,6 +554,7 @@ begin
     TestIniMergeOrder;
     TestSysNativeMatrix;
     TestArgvEmission;
+    TestMsiContract;
     TestCompletionMatrix;
   finally
     { Best-effort fixture cleanup - the gate is output-based. }

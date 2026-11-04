@@ -8,6 +8,9 @@
 #   2. sh/download-updates-tasks/60-main-updates.bash
 #   3. sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.bash
 #   4. client/UpdateInstaller.au3
+#   5. client/UpdateTable/builds.txt (whole-file emission - the native
+#      installer's Enablement-Package data file, consumed at GUI runtime
+#      by src-native/installer/buildsupgrade.pas)
 #
 # Preserves CRLF line endings and Windows-1252 bytes.
 # =======================================================================
@@ -204,6 +207,27 @@ END {
     close(f5)
 
     # -------------------------------------------------------------------
+    # client/UpdateTable/builds.txt - the native installer Enablement
+    # data file (plan 26-02). Pipe-delimited rows, hash-comment lines,
+    # CRLF. Same 12-row census and is_enforced formula as the au3 site
+    # above; the au3 site itself dies with plan 03 (sites step to 3).
+    # -------------------------------------------------------------------
+    f6 = tmp_dir "/builds_txt_data.txt"
+    printf "# client/UpdateTable/builds.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT\n" > f6
+    printf "# Format: build|arch|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_prereq_kb|ekb_min_revision|is_enforced\n" > f6
+    printf "# Consumed at GUI runtime by src-native/installer/buildsupgrade.pas\n" > f6
+    for (i = 1; i <= n_rs; i++) {
+        sec = arr_rs[i]
+        printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%d\n", \
+            data[sec, "build"], data[sec, "arch"], data[sec, "os_family"], \
+            data[sec, "servicing_branch"], data[sec, "status"], \
+            data[sec, "ekb_source_build"], data[sec, "ekb_kb"], \
+            data[sec, "ekb_prereq_kb"], data[sec, "ekb_min_revision"], \
+            (data[sec, "build"] == "19042" ? 1 : 0) > f6
+    }
+    close(f6)
+
+    # -------------------------------------------------------------------
     # Synchronize client/static/StaticUpdateIds-BuildUpgrades.txt
     # -------------------------------------------------------------------
     f_upg = tmp_dir "/static_upgrades.txt"
@@ -342,6 +366,25 @@ process_site "sh/update-generator-tasks/10-show-selection-dialogs-with-dialog.ba
 
 # 4. client/UpdateInstaller.au3
 process_site "client/UpdateInstaller.au3" "; -- BEGIN GENERATED BUILDS TABLE --" "; -- END GENERATED BUILDS TABLE --" "$tmp_dir/block5.txt"
+
+# Synchronize client/UpdateTable/builds.txt - whole-file emission (NOT a
+# process_site marker rewrite; the process_site call count stays 4 until
+# plan 03 deletes the au3 site)
+builds_txt="${repo_root}/client/UpdateTable/builds.txt"
+tmp_builds_txt="$tmp_dir/builds_txt_crlf.txt"
+sed 's/\r*$//' "$tmp_dir/builds_txt_data.txt" | sed 's/$/\r/' > "$tmp_builds_txt"
+
+if [ ! -f "$builds_txt" ] || ! cmp -s "$builds_txt" "$tmp_builds_txt"; then
+    drift_detected=true
+    if [ "$check_only" = true ]; then
+        echo "ERROR: File client/UpdateTable/builds.txt is out of sync with static/builds.ini."
+    fi
+fi
+
+if [ "$check_only" = false ]; then
+    mkdir -p "$(dirname "$builds_txt")"
+    cp -f "$tmp_builds_txt" "$builds_txt"
+fi
 
 # Synchronize client/static/StaticUpdateIds-BuildUpgrades.txt
 static_upgrades_file="${repo_root}/client/static/StaticUpdateIds-BuildUpgrades.txt"

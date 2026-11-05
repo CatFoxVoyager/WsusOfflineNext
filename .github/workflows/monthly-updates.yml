@@ -700,16 +700,26 @@ jobs:
           REL="WsusOfflineNext-${VER_CORE}"
           cp "$TEMP/wsusofflineCE${VER_CORE}.zip" "$TEMP/${REL}.zip"
           cp "$TEMP/wsusofflineCE${VER_CORE}_hashes.txt" "$TEMP/${REL}_hashes.txt"
-          git tag "v${VER_CORE}"
+          # -f: a re-published release (deleted broken zip, bump commit already
+          # on main) re-tags and re-uploads over the existing ref/assets
+          git tag -f "v${VER_CORE}"
           REPO_URL="https://x-access-token:${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch -q "$REPO_URL" main
           git merge-base --is-ancestor FETCH_HEAD HEAD \
             || { echo "REFUS: main a avance pendant le run - push non fast-forward evite; relancer le train mensuel" >&2; exit 1; }
-          git push "$REPO_URL" HEAD:main "v${VER_CORE}"
-          gh release create "v${VER_CORE}" \
-            --title "WSUS Offline Next ${VER_FULL}" \
-            --notes-file "$TEMP/release-body.md" \
-            "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
+          git push --force "$REPO_URL" HEAD:main "v${VER_CORE}"
+          if gh release view "v${VER_CORE}" >/dev/null 2>&1; then
+            echo "release v${VER_CORE} exists - updating assets and notes (clobber)"
+            gh release upload "v${VER_CORE}" --clobber "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
+            gh release edit "v${VER_CORE}" \
+              --title "WSUS Offline Next ${VER_FULL}" \
+              --notes-file "$TEMP/release-body.md"
+          else
+            gh release create "v${VER_CORE}" \
+              --title "WSUS Offline Next ${VER_FULL}" \
+              --notes-file "$TEMP/release-body.md" \
+              "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
+          fi
 
       - name: Publish self-update channel
         if: env.DRY_RUN != 'true'

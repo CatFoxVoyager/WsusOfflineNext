@@ -171,7 +171,15 @@ BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
 echo "$STAT" | grep -q "14 files changed" || { echo "FAIL: attends 14 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
-echo "$STAT" | grep -q "22 insertions" || { echo "FAIL: attends 22 substitutions, obtenu: $STAT"; git checkout -- .; exit 1; }
+# The 22-site total is asserted independently by the count_occurrences lanes
+# below: git diff counts LINES, and a physical line can carry more than one
+# substitution site (README's pair, the .lpi version block), so the site
+# count never maps 1:1 onto diff insertions. The diff-level property of a
+# pure substitution bump is symmetry - every changed line is a modification,
+# never an addition or a removal.
+INS="$(git diff --numstat --ignore-cr-at-eol | awk '{i += $1} END {print i + 0}')"
+DEL="$(git diff --numstat --ignore-cr-at-eol | awk '{d += $2} END {print d + 0}')"
+[ "${INS}" = "${DEL}" ] || { echo "FAIL: bump diff is not substitution-symmetric (${INS} insertions / ${DEL} deletions)"; git checkout -- .; exit 1; }
 # Comptage de lanes sur l'arbre réel — les tripwire du moteur (22 cœurs /
 # 15 full-form / 7 numériques, split 4 csproj + 3 champs .lpi) re-mesurés
 # ici indépendamment via count_occurrences, jamais un grep -c brut. Le

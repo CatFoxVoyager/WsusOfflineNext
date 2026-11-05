@@ -203,6 +203,32 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      # Force CRLF on Windows scripts (milestone v4.2): files whose blob is
+      # LF-normalized AND whose stale working-tree copy is also LF are treated
+      # as up-to-date by checkout (normalized contents match), so the
+      # eol=crlf smudge never re-applies and cmd.exe misparses them
+      # ("Option was unexpected" — the 6.0.0 zip defect). Delete + re-checkout
+      # forces the smudge to run on every batch/script file.
+      - name: Force CRLF smudge on Windows scripts
+        run: |
+          SCRIPTS="$(git ls-files '*.cmd' '*.bat' '*.vbs' | tr '\n' ' ')"
+          echo "re-smudging CRLF on: $SCRIPTS"
+          for f in $SCRIPTS; do rm -f "$f"; done
+          git checkout -- $SCRIPTS
+          # fail closed: any script still containing a bare LF aborts the train
+          BARE_LF_FAIL=0
+          for f in $SCRIPTS; do
+            if grep -qIv $'\r$' "$f" 2>/dev/null && [ -s "$f" ]; then
+              LAST_CHAR_NOCR=$(tail -c 1 "$f" | od -An -t x1 | grep -qv "0a" || true)
+              if grep -q $'\n' "$f" && [ "$(grep -c $'\r$' "$f" 2>/dev/null)" != "$(grep -c '' "$f" 2>/dev/null)" ]; then
+                echo "FAIL: $f is not fully CRLF-terminated after forced re-smudge"
+                BARE_LF_FAIL=1
+              fi
+            fi
+          done
+          if [ "${BARE_LF_FAIL}" -eq 1 ]; then exit 1; fi
+          echo "crlf-force: all Windows scripts re-smudged CRLF"
+
       - name: Comparator battery (windows)
         run: bash ci/tests/test-compare-versions.sh
 

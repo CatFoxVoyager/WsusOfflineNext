@@ -217,7 +217,7 @@ npm --prefix src-modern/installer ci
 .\CompileModernApps.cmd --no-pause
 ```
 
-The script builds both React frontends and publishes the hosts to `UpdateGenerator.exe` and `client/UpdateInstaller.exe`, with corresponding `wwwroot/` assets. Keep these generated files together with the project's scripts and data when preparing a distributable copy.
+The script builds both React frontends, publishes the modern hosts to `UpdateGeneratorModern.exe` and `client\UpdateInstallerModern.exe`, compiles the native installer GUI (Free Pascal / Lazarus, both x64 and i386) into `UpdateInstallerLegacy.exe` / `UpdateInstallerLegacy64.exe`, and emits the pure-batch entry points `UpdateGenerator.cmd` and `client\UpdateInstaller.cmd` — with the corresponding build assets. When preparing a distributable copy, ship the `.cmd` entry points, the `*Modern.exe` hosts and the native installer binaries together with the project's scripts and data; the migration to 6.0.0 removed every AutoIt-built executable from that set (see [the AutoIt removal note](#antivirus-false-positives)).
 
 <details>
 <summary><strong>Development and verification</strong></summary>

@@ -211,7 +211,7 @@ jobs:
 
       - name: Download regeneration report
         if: env.DRY_RUN != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: regen-report
           path: ${{ runner.temp }}

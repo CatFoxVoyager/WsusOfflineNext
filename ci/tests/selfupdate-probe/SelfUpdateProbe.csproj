@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <!-- UpdateCheck.cs references WinForms types, so the probe needs
+         UseWindowsForms to compile the shared sources - it never opens
+         a form itself. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Deliberately NO Version/FileVersion/AssemblyVersion properties:
+         this probe is a test harness and must NOT join the release bump
+         matrix (14 files / 22 sites, selected by an explicit list). -->
+  </PropertyGroup>
+
+  <!-- The shared self-update engine sources under test, linked the same
+       way both hosts link them (no project reference, pure source). -->
+  <ItemGroup>
+    <Compile Include="..\..\..\src-modern\common\selfupdate\SelfUpdateCore.cs" Link="selfupdate\SelfUpdateCore.cs" />
+    <Compile Include="..\..\..\src-modern\common\selfupdate\UpdateCheck.cs" Link="selfupdate\UpdateCheck.cs" />
+  </ItemGroup>
+
+</Project>

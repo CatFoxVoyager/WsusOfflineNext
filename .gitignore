@@ -132,6 +132,10 @@ wwwroot/
 client/wwwroot/
 *.orig.exe
 
+# Self-update probe build output (Phase 28 battery harness)
+ci/tests/selfupdate-probe/bin/
+ci/tests/selfupdate-probe/obj/
+
 # Native installer build output (FPC/Lazarus)
 src-native/**/lib/
 src-native/**/bin/

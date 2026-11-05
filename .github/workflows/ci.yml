@@ -50,6 +50,7 @@ jobs:
           bash ci/tests/test-runner-entrypoint.sh
           bash ci/tests/test-bump-webview2-dep.sh
           bash ci/tests/test-webview2-version-gate.sh
+          bash ci/tests/test-selfupdate-check.sh
 
   # Closes deferred item 20-01: the repo bash gate (bash -n + shellcheck over the repo bash surface) runs on every clean checkout.
   bash-syntax:

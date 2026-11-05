@@ -21,6 +21,12 @@ md "%TEMP%\wsusoffline"
 call "%~dps0PrepareReleaseTree.cmd" "%TEMP%\wsusoffline"
 del /Q "%TEMP%\wsusoffline\log\*.log" >nul 2>&1
 del /S /Q "%TEMP%\wsusoffline\*.orig.exe" >nul 2>&1
+rem Convert every shipped batch/script to CRLF at the assembly point
+rem (milestone v4.2): cmd.exe misparses multi-line parenthesized blocks in
+rem LF-only files ("Option was unexpected" — the 6.0.0 zip shipped
+rem DownloadUpdates.cmd LF-only). Independent of any git smudge state.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop'; $n=0; Get-ChildItem -Recurse -File -Include *.cmd,*.bat,*.vbs -Path '%TEMP%\wsusoffline' | ForEach-Object { $b=[IO.File]::ReadAllBytes($_.FullName); $lf=[int]($b | Where-Object {$_ -eq 10}).Count; $crlf=[regex]::Matches([Text.Encoding]::ASCII.GetString($b), '\r\n').Count; if ($lf -gt 0 -and $crlf -ne $lf) { $t=[Text.Encoding]::ASCII.GetString($b) -replace '(?<!\r)\n', \"`r`n\"; [IO.File]::WriteAllText($_.FullName, $t, [Text.Encoding]::ASCII); $n++ } }; Write-Host \"crlf-converted: $n script file(s)\""
 pushd "%TEMP%"
 if exist wsusofflineCE%1.zip del wsusofflineCE%1.zip
 if exist wsusofflineCE%1.mds del wsusofflineCE%1.mds

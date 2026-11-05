@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>false</UseWindowsForms>
+    <AssemblyName>WsusOfflineUpdater</AssemblyName>
+    <RootNamespace>WsusOfflineNext.Updater</RootNamespace>
+    <Product>WSUS Offline Next</Product>
+    <Description>WSUS Offline Next - Self-update updater</Description>
+    <Version>6.0.2+2026.11</Version>
+    <FileVersion>6.0.2.0</FileVersion>
+    <AssemblyVersion>6.0.2.0</AssemblyVersion>
+    <ApplicationIcon>..\..\..\ico\wson.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Single File Output Settings -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <!-- Shared self-update engine sources (Phase 28): only the UI-free core -
+       the updater gets paths and the event log from the single source, with
+       zero PackageReference (pure BCL, threat T-28-SC). -->
+  <ItemGroup>
+    <Compile Include="..\..\common\selfupdate\SelfUpdateCore.cs" Link="selfupdate\SelfUpdateCore.cs" />
+  </ItemGroup>
+
+</Project>

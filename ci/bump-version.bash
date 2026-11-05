@@ -7,40 +7,43 @@
 #
 # The old version is read from the single source of truth
 # (cmd/DownloadUpdates.cmd, "set WSUSOFFLINE_VERSION=X.Y.Z" — with or without
-# the "+YYYY.MM" metadata). The 14-file matrix is the one committed in
+# the "+YYYY.MM" metadata). The 15-file matrix is the one committed in
 # 339f600, retargeted in Phase 24 plan 02 (pure-.cmd launchers replaced the
-# AutoIt launcher twins), in Phase 25 plan 01 (generator GUI source deleted)
-# and in Phase 26 plan 03 (the last au3 left; the native installer's .lpi
+# AutoIt launcher twins), in Phase 25 plan 01 (generator GUI source deleted),
+# in Phase 26 plan 03 (the last au3 left; the native installer's .lpi
 # VersionInfo block joined as the new site family - one file out, one file
-# in, so the count stays 14; measured by the live bump run, never
-# narrated). The build tag
+# in, so the count stays 14) and in Phase 28 plan 02 (the self-update
+# updater csproj joined the matrix: one file in, +3 sites - one full-form
+# <Version> plus two numeric <FileVersion>/<AssemblyVersion> - moving the
+# matrix from 14 files / 22 sites to 15 files / 25 sites, measured by the
+# live bump run, never narrated). The build tag
 # "(b2026.10)" is version-independent and must not move. Exits 1 unless
-# exactly 22 version-token sites land in exactly 14 files.
+# exactly 25 version-token sites land in exactly 15 files.
 #
-# The engine runs TWO LANES over the 22 matrix occurrences (phase 19, D-01):
-# a bounded full-form lane (15 sites: source of truth, headers, captions,
+# The engine runs TWO LANES over the 25 matrix occurrences (phase 19, D-01):
+# a bounded full-form lane (16 sites: source of truth, headers, captions,
 # marker, <Version>, package.json, App.tsx, the .lpi ProductVersion string)
-# and a numeric-anchored core lane (7 build contexts: csproj
-# <FileVersion>/<AssemblyVersion> "X.Y.Z.0" plus the .lpi MajorVersionNr/
-# MinorVersionNr/RevisionNr fields — a '+' metadata there is impossible by
-# construction, the fields are integers).
+# and a numeric-anchored core lane (9 build contexts: csproj
+# <FileVersion>/<AssemblyVersion> "X.Y.Z.0" across the three csprojs plus
+# the .lpi MajorVersionNr/MinorVersionNr/RevisionNr fields — a '+' metadata
+# there is impossible by construction, the fields are integers).
 #
 # The before-accounting is SHAPE-CONDITIONAL — the binding invariant in BOTH
-# shapes is TOTAL version-token sites = 22 across the 14 files, never a
+# shapes is TOTAL version-token sites = 25 across the 15 files, never a
 # per-lane number alone:
 #   STEADY STATE (old carries "+YYYY.MM"): the two before-motifs enumerate
-#     DISJOINT site sets (16 full-form + 6 numeric); the before gate asserts
-#     sum(before_full) + sum(before_num) = 22.
+#     DISJOINT site sets (16 full-form + 9 numeric); the before gate asserts
+#     sum(before_full) + sum(before_num) = 25.
 #   MIGRATION (old is a bare core): the bounded bare-core motif matches ALL
-#     22 sites, so the full-form lane already enumerates every site; the
-#     before gate asserts sum(before_full) = 22 and sum(before_num) is
-#     INFORMATIVE only (printed, never gate-binding) — those 7 are the
-#     numeric subset of the 22 that the numeric lane re-repairs after the
+#     25 sites, so the full-form lane already enumerates every site; the
+#     before gate asserts sum(before_full) = 25 and sum(before_num) is
+#     INFORMATIVE only (printed, never gate-binding) — those 9 are the
+#     numeric subset of the 25 that the numeric lane re-repairs after the
 #     full lane carried the "+YYYY.MM" form there.
 #   The shape branch is selected by whether the old version carries '+' —
 #   picking the wrong branch produces a wrong TOTAL and aborts, so the gate
-#   stays fail-closed in both shapes. The after-gates (15 full-form + 7
-#   numeric = 22 sites, of which 19 carry the literal core substring and 3
+#   stays fail-closed in both shapes. The after-gates (16 full-form + 9
+#   numeric = 25 sites, of which 22 carry the literal core substring and 3
 #   are the .lpi VersionInfo integer fields - Major/Minor/Revision are
 #   separate integers that never contain the "X.Y.Z" substring) are binding
 #   in both shapes because the after-state is identical whichever shape
@@ -61,6 +64,7 @@ sh/download-updates.bash
 sh/update-generator.bash
 src-modern/generator/host/UpdateGenerator.csproj
 src-modern/installer/host/UpdateInstaller.csproj
+src-modern/updater/host/WsusOfflineUpdater.csproj
 src-modern/generator/package.json
 src-modern/installer/package.json
 src-modern/generator/src/App.tsx
@@ -173,18 +177,18 @@ fi
 echo "TOTAL: ${before_gate_total} -> $(( full_after_total + num_after_total )) substitutions in ${files_touched} files"
 echo "shape: ${bump_shape} | before lanes full/num: ${full_before_total}/${num_before_total} | after: full ${full_after_total}, numeric ${num_after_total}, core ${core_after_total}"
 
-if [ "${before_gate_total}" -ne 22 ] || [ "${files_touched}" -ne 14 ]; then
-  echo "bump-version: EXPECTED 22 version-token sites across 14 files — aborting (tree modified, run git checkout -- .)" >&2
+if [ "${before_gate_total}" -ne 25 ] || [ "${files_touched}" -ne 15 ]; then
+  echo "bump-version: EXPECTED 25 version-token sites across 15 files — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 # After-gates — binding in BOTH shapes (the after-state is identical
-# whichever shape produced it): 15 full-form + 7 numeric = 22 sites; the
-# literal-core substring lands in 19 of them (the 3 .lpi integer fields
+# whichever shape produced it): 16 full-form + 9 numeric = 25 sites; the
+# literal-core substring lands in 22 of them (the 3 .lpi integer fields
 # never contain the core substring), so the reconciliation gate is
 # core + lpi sites == full + numeric.
-if [ "${full_after_total}" -ne 15 ] || [ "${num_after_total}" -ne 7 ] \
-   || [ "${core_after_total}" -ne 19 ]; then
-  echo "bump-version: EXPECTED after-state 15 full-form + 7 numeric = 22 sites (19 literal-core + 3 .lpi integer fields) — aborting (tree modified, run git checkout -- .)" >&2
+if [ "${full_after_total}" -ne 16 ] || [ "${num_after_total}" -ne 9 ] \
+   || [ "${core_after_total}" -ne 22 ]; then
+  echo "bump-version: EXPECTED after-state 16 full-form + 9 numeric = 25 sites (22 literal-core + 3 .lpi integer fields) — aborting (tree modified, run git checkout -- .)" >&2
   exit 1
 fi
 if [ $(( core_after_total + lpi_after_total )) -ne $(( full_after_total + num_after_total )) ]; then

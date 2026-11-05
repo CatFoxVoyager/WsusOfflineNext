@@ -5,13 +5,15 @@
 # probed on synthetic files - occurrence counting (two occurrences on one
 # line count 2), digit-boundary safety (2026.10.2 never matches inside
 # 2026.10.20) and border preservation. These probes never touch the tree.
-# Part 2 (real tree, clean tree only): the full bump must land exactly 22
-# substitutions in exactly 14 files with the build tag intact (Phase 24
+# Part 2 (real tree, clean tree only): the full bump must land exactly 25
+# substitutions in exactly 15 files with the build tag intact (Phase 24
 # plan 02 retarget removed the two AutoIt launcher twins; Phase 25 plan 01
 # removed the generator GUI source from the matrix with its deletion;
 # Phase 26 plan 03 removed the last au3 and added the native installer's
-# .lpi VersionInfo block - one file out, one file in, so the matrix stays
-# at 14 files / 22 sites, measured by the live bump run).
+# .lpi VersionInfo block - one file out, one file in, so the matrix stayed
+# at 14 files / 22 sites; Phase 28 plan 02 added the self-update updater
+# csproj: one file in, +3 sites, so the matrix now counts 15 files / 25
+# sites, measured by the live bump run).
 set -u
 SANDBOX="$(mktemp -d)"
 # shellcheck disable=SC1091  # sourced on purpose: the library under test
@@ -170,7 +172,7 @@ NEW="$(next_full_version "v$(strip_version_metadata "${OLD}")" "${MONTH}" "")"
 BT_BEFORE="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 bash ci/bump-version.bash "${NEW}" || { echo "FAIL: bump-version exited $?"; git checkout -- .; exit 1; }
 STAT="$(git diff --stat --ignore-cr-at-eol | tail -1)"
-echo "$STAT" | grep -q "14 files changed" || { echo "FAIL: attends 14 fichiers, obtenu: $STAT"; git checkout -- .; exit 1; }
+echo "$STAT" | grep -q "15 files changed" || { echo "FAIL: attends 15 fichiers (retarget Phase 28), obtenu: $STAT"; git checkout -- .; exit 1; }
 # The 22-site total is asserted independently by the count_occurrences lanes
 # below: git diff counts LINES, and a physical line can carry more than one
 # substitution site (README's pair, the .lpi version block), so the site
@@ -186,7 +188,7 @@ DEL="$(git diff --numstat --ignore-cr-at-eol | awk '{d += $2} END {print d + 0}'
 # partitionnement 15/7 n'est PAS l'invariant (il dépend de la forme) : le
 # TOTAL des sites à token de version = 22 l'est, dans les deux formes.
 MATRIX="$(bash ci/bump-version.bash --print-files)"
-[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 14 ] || { echo "FAIL: --print-files ne rend pas 14 chemins"; git checkout -- .; exit 1; }
+[ "$(printf '%s\n' "${MATRIX}" | wc -l)" -eq 15 ] || { echo "FAIL: --print-files ne rend pas 15 chemins (retarget Phase 28)"; git checkout -- .; exit 1; }
 new_esc="${NEW//./\\.}"; new_esc="${new_esc//+/\\+}"
 new_core="${NEW%%+*}"; new_core_esc="${new_core//./\\.}"
 IFS="." read -r NEW_MAJ NEW_MIN NEW_REV <<< "${new_core}"
@@ -206,12 +208,16 @@ done
 # Le motif core-littéral compte 19 sites (les 3 champs entiers .lpi ne
 # portent jamais la sous-chaîne "X.Y.Z") : core == full + csproj, et le
 # total des sites = core + .lpi = 22.
-[ "${core_after}" -eq 19 ] || { echo "FAIL: attendu 19 sites au core littéral, obtenu ${core_after}"; git checkout -- .; exit 1; }
-[ "${full_after}" -eq 15 ] || { echo "FAIL: attendu 15 sites full-form, obtenu ${full_after}"; git checkout -- .; exit 1; }
-[ "${num_csproj}" -eq 4 ] || { echo "FAIL: attendu 4 ancres csproj, obtenu ${num_csproj}"; git checkout -- .; exit 1; }
+# Phase 28 plan 02 retarget (English numbers, French comment above kept per
+# the 25-01 precedent): the updater csproj joined the matrix, so the
+# literals are now 22 literal-core sites, 16 full-form sites, 6 csproj
+# numeric anchors (three csprojs), still 3 .lpi fields, and a 25-site total.
+[ "${core_after}" -eq 22 ] || { echo "FAIL: attendu 22 sites au core littéral (retarget Phase 28), obtenu ${core_after}"; git checkout -- .; exit 1; }
+[ "${full_after}" -eq 16 ] || { echo "FAIL: attendu 16 sites full-form (retarget Phase 28), obtenu ${full_after}"; git checkout -- .; exit 1; }
+[ "${num_csproj}" -eq 6 ] || { echo "FAIL: attendu 6 ancres csproj (retarget Phase 28), obtenu ${num_csproj}"; git checkout -- .; exit 1; }
 [ "${num_lpi}" -eq 3 ] || { echo "FAIL: attendu 3 ancres .lpi, obtenu ${num_lpi}"; git checkout -- .; exit 1; }
-[ "$(( core_after + num_lpi ))" -eq 22 ] \
-    || { echo "FAIL: le total des sites core+.lpi doit faire 22"; git checkout -- .; exit 1; }
+[ "$(( core_after + num_lpi ))" -eq 25 ] \
+    || { echo "FAIL: le total des sites core+.lpi doit faire 25 (retarget Phase 28)"; git checkout -- .; exit 1; }
 # The generator GUI and launcher sources were deleted in Phase 25 plan 01;
 # the last au3 (installer) left in Phase 26 plan 03. The *.au3 include in
 # the residue scan stays as zombie-defense: a tracked au3 carrying the old
@@ -225,4 +231,4 @@ BT_AFTER="$(grep -oE '\(b[0-9.]+\)' cmd/DownloadUpdates.cmd | head -1)"
 grep -q "${NEW},release" static/SelfUpdateVersion-this.txt || { echo "FAIL: marqueur selfupdate non bumpé"; git checkout -- .; exit 1; }
 git checkout -- .
 [ -z "$(git diff --name-only --ignore-cr-at-eol)" ] || { echo "FAIL: revert incomplet"; exit 1; }
-echo "PASS bump-version (14 fichiers, 22 substitutions, build tag intact, revert propre)"
+echo "PASS bump-version (15 fichiers, 25 substitutions, build tag intact, revert propre)"

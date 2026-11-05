@@ -8,7 +8,7 @@ echo =======================================================================
 echo.
 
 rem 1. UpdateGenerator.exe
-echo [1/3] Building React frontend for WSUS Offline Next Generator...
+echo [1/4] Building React frontend for WSUS Offline Next Generator...
 cd /d "%~dp0src-modern\generator"
 call npm run build
 if %errorlevel% neq 0 (
@@ -28,7 +28,7 @@ if "%EMPTY_DIST%"=="1" (
     exit /b 1
 )
 
-echo [1/3] .NET 8 single-file publish of UpdateGenerator.exe...
+echo [1/4] .NET 8 single-file publish of UpdateGenerator.exe...
 dotnet publish host\UpdateGenerator.csproj -c Release -r win-x64 /p:PublishSingleFile=true /p:SelfContained=false -o bin
 if %errorlevel% neq 0 (
     echo [ERROR] dotnet publish failed for UpdateGenerator.
@@ -40,7 +40,7 @@ xcopy /e /i /y bin\wwwroot "%~dp0wwwroot"
 
 rem 2. UpdateInstaller.exe
 echo.
-echo [2/3] Building the React frontend of UpdateInstaller...
+echo [2/4] Building the React frontend of UpdateInstaller...
 cd /d "%~dp0src-modern\installer"
 call npm run build
 if %errorlevel% neq 0 (
@@ -60,7 +60,7 @@ if "%EMPTY_DIST%"=="1" (
     exit /b 1
 )
 
-echo [2/3] .NET 8 single-file publish of UpdateInstaller.exe...
+echo [2/4] .NET 8 single-file publish of UpdateInstaller.exe...
 dotnet publish host\UpdateInstaller.csproj -c Release -r win-x64 /p:PublishSingleFile=true /p:SelfContained=false -o bin
 if %errorlevel% neq 0 (
     echo [ERROR] dotnet publish failed for UpdateInstaller.
@@ -72,7 +72,7 @@ xcopy /e /i /y bin\wwwroot "%~dp0client\wwwroot"
 
 cd /d "%~dp0"
 echo.
-echo [3/3] Building the native installer GUI (Lazarus, both architectures)...
+echo [3/4] Building the native installer GUI (Lazarus, both architectures)...
 rem Toolchain resolution: WO_LAZARUS_ROOT override, else the scratch default.
 rem The CI lane is WIRED: the monthly-updates.yml release job feeds this
 rem override from the WO_LAZARUS_ROOT repository variable (27-01). The
@@ -125,6 +125,30 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
+rem 4. WsusOfflineUpdater.exe - the self-update updater console app.
+echo.
+echo [4/4] .NET 8 single-file publish of WsusOfflineUpdater.exe...
+dotnet publish "%~dp0src-modern\updater\host\WsusOfflineUpdater.csproj" -c Release -r win-x64 /p:PublishSingleFile=true /p:SelfContained=false -o "%~dp0src-modern\updater\host\bin"
+if %errorlevel% neq 0 (
+    echo [ERROR] dotnet publish failed for WsusOfflineUpdater.
+    if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
+    exit /b %errorlevel%
+)
+rem Stale-slot hygiene (lane 3 pattern): delete BEFORE writing; a locked exe
+rem must fail named, never silently ship the old updater.
+del /f /q "%~dp0WsusOfflineUpdater.exe" 2>nul
+if exist "%~dp0WsusOfflineUpdater.exe" (
+    echo [ERROR] WsusOfflineUpdater.exe is locked - close every running instance and retry.
+    if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
+    exit /b 1
+)
+copy /y "%~dp0src-modern\updater\host\bin\WsusOfflineUpdater.exe" "%~dp0WsusOfflineUpdater.exe"
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to copy the updater binary to the repo root.
+    if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
+    exit /b %errorlevel%
+)
+
 echo.
 echo =======================================================================
 echo [SUCCESS] The complete WSUS Offline Next ecosystem is built and deployed.
@@ -134,6 +158,7 @@ echo  - %~dp0client\UpdateInstaller.cmd (adaptive launcher entry point, pure .cm
 echo  - %~dp0client\UpdateInstallerModern.exe (.NET 8 modern interface)
 echo  - %~dp0client\UpdateInstallerLegacy.exe (native Win32 classic interface, Lazarus i386)
 echo  - %~dp0client\UpdateInstallerLegacy64.exe (native Win32 classic interface, Lazarus x64)
+echo  - %~dp0WsusOfflineUpdater.exe (self-update updater, .NET 8 console)
 echo =======================================================================
 if /i "%~1"=="--no-pause" goto :eof
 if /i "%~1"=="/nopause" goto :eof

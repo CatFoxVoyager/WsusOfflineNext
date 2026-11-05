@@ -21,6 +21,12 @@ namespace WsusOfflineNext.SelfUpdate
         public string Actor { get; init; } = "generator";
 
         /// <summary>
+        /// Full path of the host's own executable - the updater's
+        /// --relaunch target after the swap.
+        /// </summary>
+        public string HostExePath { get; init; } = "";
+
+        /// <summary>
         /// Strict-newer decision, injected by each host - the ONLY version
         /// comparison in the engine is this delegate, bound to the host's
         /// existing WebView2Compat comparator in both directions:
@@ -99,12 +105,13 @@ namespace WsusOfflineNext.SelfUpdate
                 // The offer must carry real URLs, so the links file is
                 // fetched and validated before any offer decision.
                 string linksText = await Http.GetStringAsync(linksUrl).ConfigureAwait(false);
-                var links = SelfUpdateChannel.ParseLinksFile(linksText);
-                if (links == null)
+                var parsedLinks = SelfUpdateChannel.ParseLinksFile(linksText);
+                if (parsedLinks == null)
                 {
                     SelfUpdateLog.Append(options.Actor, "check-error");
                     return;
                 }
+                (string ZipUrl, string HashesUrl) links = parsedLinks.Value;
 
                 // Cache write happens ONLY on a completed channel read+parse:
                 // a failed or corrupt run must retry the network on the next
@@ -123,7 +130,7 @@ namespace WsusOfflineNext.SelfUpdate
                     return;
                 }
 
-                await ShowOfferWhenUiReadyAsync(options, channelVersion, localVersion)
+                await ShowOfferWhenUiReadyAsync(options, channelVersion, localVersion, links)
                     .ConfigureAwait(false);
             }
             catch
@@ -141,7 +148,8 @@ namespace WsusOfflineNext.SelfUpdate
         /// flush the pending offer on the form's Shown event.
         /// </summary>
         private static async Task ShowOfferWhenUiReadyAsync(
-            SelfUpdateOptions options, string channelVersion, string localVersion)
+            SelfUpdateOptions options, string channelVersion, string localVersion,
+            (string ZipUrl, string HashesUrl) links)
         {
             Form? form = null;
             for (int attempt = 0; attempt < 60; attempt++)
@@ -154,7 +162,7 @@ namespace WsusOfflineNext.SelfUpdate
 
             if (form.IsHandleCreated)
             {
-                BeginInvokeShow(form, options, channelVersion, localVersion);
+                BeginInvokeShow(form, options, channelVersion, localVersion, links);
                 return;
             }
 
@@ -163,7 +171,7 @@ namespace WsusOfflineNext.SelfUpdate
             shown = (sender, e) =>
             {
                 form.Shown -= shown!;
-                ShowOfferDialog(options, channelVersion, localVersion);
+                ShowOfferDialog(options, channelVersion, localVersion, links);
             };
             form.Shown += shown;
             // Race guard: if the form was shown between the handle check and
@@ -171,17 +179,18 @@ namespace WsusOfflineNext.SelfUpdate
             if (form.IsHandleCreated)
             {
                 form.Shown -= shown;
-                BeginInvokeShow(form, options, channelVersion, localVersion);
+                BeginInvokeShow(form, options, channelVersion, localVersion, links);
             }
         }
 
         private static void BeginInvokeShow(
-            Form form, SelfUpdateOptions options, string channelVersion, string localVersion)
+            Form form, SelfUpdateOptions options, string channelVersion, string localVersion,
+            (string ZipUrl, string HashesUrl) links)
         {
             try
             {
                 form.BeginInvoke((Action)(() =>
-                    ShowOfferDialog(options, channelVersion, localVersion)));
+                    ShowOfferDialog(options, channelVersion, localVersion, links)));
             }
             catch (InvalidOperationException)
             {
@@ -191,7 +200,8 @@ namespace WsusOfflineNext.SelfUpdate
         }
 
         private static void ShowOfferDialog(
-            SelfUpdateOptions options, string channelVersion, string localVersion)
+            SelfUpdateOptions options, string channelVersion, string localVersion,
+            (string ZipUrl, string HashesUrl) links)
         {
             if (options.OfferShown) return; // OfferGuard: one offer per process
             options.OfferShown = true;
@@ -206,13 +216,11 @@ namespace WsusOfflineNext.SelfUpdate
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes)
                 {
-                    // The accept path (download + staging + updater) is Plan 02;
-                    // this plan only proves the offer/decline slice.
                     SelfUpdateLog.Append(options.Actor, "update-accepted");
-                    MessageBox.Show(owner,
-                        "Staging and installing the update arrives with the next " +
-                        "milestone build. The application continues normally.",
-                        "WSUS Offline Next", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    // The accept continuation runs on this UI thread and owns
+                    // download, verification, staging and the updater launch.
+                    _ = UpdateInstall.RunAsync(options, new UpdateOffer(
+                        channelVersion, links.ZipUrl, links.HashesUrl));
                 }
                 else
                 {

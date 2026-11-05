@@ -920,6 +920,7 @@ namespace WSUSOffline.Installer
                 InstallRoot = System.IO.Path.GetFullPath(
                     System.IO.Path.Combine(AppContext.BaseDirectory, "..")),
                 Actor = "installer",
+                HostExePath = Environment.ProcessPath ?? Application.ExecutablePath,
                 IsChannelNewer = (channel, local) =>
                     WebView2Compat.IsVersionAtLeast(channel, local)
                     && !WebView2Compat.IsVersionAtLeast(local, channel),

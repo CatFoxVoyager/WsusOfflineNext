@@ -1044,6 +1044,7 @@ namespace WSUSOffline.Generator
                 LocalVersion = GetDisplayVersion(),
                 InstallRoot = AppContext.BaseDirectory,
                 Actor = "generator",
+                HostExePath = Environment.ProcessPath ?? Application.ExecutablePath,
                 IsChannelNewer = (channel, local) =>
                     WebView2Compat.IsVersionAtLeast(channel, local)
                     && !WebView2Compat.IsVersionAtLeast(local, channel),

@@ -9,6 +9,13 @@
     <RootNamespace>WsusOfflineNext.Updater</RootNamespace>
     <Product>WSUS Offline Next</Product>
     <Description>WSUS Offline Next - Self-update updater</Description>
+    <AssemblyTitle>WSUS Offline Next Self-update Updater</AssemblyTitle>
+    <Company>WsusOfflineNext project</Company>
+    <Copyright>Copyright (c) WsusOfflineNext project contributors</Copyright>
+    <!-- Pin ProductVersion to the locked channel form M.m.p+YYYY.MM: the
+         default SourceRevisionId suffix would break the hygiene battery's
+         full-form assertion and drift from the published channel token. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Version>6.0.2+2026.11</Version>
     <FileVersion>6.0.2.0</FileVersion>
     <AssemblyVersion>6.0.2.0</AssemblyVersion>

@@ -10,7 +10,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <!-- Deliberately NO Version/FileVersion/AssemblyVersion properties:
          this probe is a test harness and must NOT join the release bump
-         matrix (14 files / 22 sites, selected by an explicit list). -->
+         matrix (15 files / 25 sites, selected by an explicit list). -->
   </PropertyGroup>
 
   <!-- The shared self-update engine sources under test, linked the same
@@ -18,6 +18,7 @@
   <ItemGroup>
     <Compile Include="..\..\..\src-modern\common\selfupdate\SelfUpdateCore.cs" Link="selfupdate\SelfUpdateCore.cs" />
     <Compile Include="..\..\..\src-modern\common\selfupdate\UpdateCheck.cs" Link="selfupdate\UpdateCheck.cs" />
+    <Compile Include="..\..\..\src-modern\common\selfupdate\UpdateInstall.cs" Link="selfupdate\UpdateInstall.cs" />
   </ItemGroup>
 
 </Project>

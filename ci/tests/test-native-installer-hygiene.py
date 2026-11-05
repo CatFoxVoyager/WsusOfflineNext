@@ -1,28 +1,39 @@
 #!/usr/bin/env python3
-"""Binary-hygiene inspection battery for the native installer GUI (INST-06).
+"""Binary-hygiene inspection battery for the shipped executables (INST-06).
 
-Inspects BOTH shipped client-slot binaries (client/UpdateInstallerLegacy.exe
-i386, client/UpdateInstallerLegacy64.exe x64) with pefile and asserts, per
-binary:
+Inspects the shipped exe surface with pefile - the two native client-slot
+binaries (client/UpdateInstallerLegacy.exe i386,
+client/UpdateInstallerLegacy64.exe x64) and the repo-root self-update
+updater (WsusOfflineUpdater.exe) - and asserts, per binary:
 
 1. VERSIONINFO completeness: every StringFileInfo field below is present and
-   non-empty; the numeric FileVersion and ProductVersion equal 5.2.0.
-2. Manifest (RT_MANIFEST resource) completeness: the comctl v6 dependency
-   literal, all five supportedOS GUIDs (Vista/7/8/8.1/10), a dpiAware
-   True/PM_V2 element with the PerMonitorV2 awareness list, the
-   requireAdministrator requestedExecutionLevel, and longPathAware enabled.
+   non-empty. Family "native" additionally pins the numeric FileVersion and
+   ProductVersion to 5.2.0 (the locked native version). Family "dotnet"
+   asserts the numeric FileVersion equals the StringTable FileVersion
+   components and the StringTable ProductVersion carries the locked full
+   form M.m.p+YYYY.MM (the bump-matrix token, no SourceRevisionId suffix).
+2. Manifest (RT_MANIFEST resource) completeness: the per-exe
+   requestedExecutionLevel (native pair: requireAdministrator; updater:
+   asInvoker - it NEVER requires admin), all five supportedOS GUIDs
+   (Vista/7/8/8.1/10), and longPathAware enabled. Family "native"
+   additionally requires the comctl v6 dependency literal, dpiAware
+   True/PM_V2 and the PerMonitorV2 awareness list (Lazarus specifics).
 3. Never-UPX: no section named UPX0/UPX1/UPX2 and no UPX stub signature
    anywhere in the image (permanent never-UPX rule).
+4. Family "native" only: icon entries DIB-encoded (LCL startup crash guard).
 
-Exit 0 printing HYGIENE-PASS only when every assertion passes on both
-binaries; exit 1 naming the first failing assertion otherwise.
+Exit 0 printing HYGIENE-PASS only when every assertion passes on every
+binary; exit 1 naming the first failing assertion otherwise.
 
 Run: python -I ci/tests/test-native-installer-hygiene.py
 (The -I flag is authoritative: the pefile dependency is located from the
 Phase 23 analysis venv via an explicit sys.path fallback below, never from
-ambient environment paths.)
+ambient environment paths. The updater exe is a publish output - run
+CompileModernApps.cmd lane 4 or dotnet publish the updater to the repo root
+first.)
 """
 import os
+import re
 import struct
 import sys
 
@@ -44,8 +55,16 @@ except ModuleNotFoundError:
     import pefile
 
 BINARIES = [
-    "client/UpdateInstallerLegacy.exe",
-    "client/UpdateInstallerLegacy64.exe",
+    # (path, expected requestedExecutionLevel, family)
+    # family "native": the Lazarus GUI pair - full native assertion set
+    # (comctl v6, dpiAware True/PM_V2 + PerMonitorV2, locked 5.2.0 numeric
+    # pins, DIB-decodable MAINICON).
+    # family "dotnet": the .NET single-file updater - the generic set
+    # (resource directory, StringFileInfo, VS_FIXEDFILEINFO, manifest with
+    # per-exe execution level + longPathAware, never-UPX).
+    ("client/UpdateInstallerLegacy.exe", "requireAdministrator", "native"),
+    ("client/UpdateInstallerLegacy64.exe", "requireAdministrator", "native"),
+    ("WsusOfflineUpdater.exe", "asInvoker", "dotnet"),
 ]
 
 REQUIRED_STRINGFILEINFO_FIELDS = [
@@ -115,8 +134,8 @@ def fixed_version(pe, binary):
     )
 
 
-def check_binary(binary):
-    print(f"== Inspecting {binary}")
+def check_binary(binary, expected_level, family):
+    print(f"== Inspecting {binary} (family {family}, level {expected_level})")
     if not os.path.isfile(binary):
         fail(binary, "binary missing - run the native compile lane first")
     with open(binary, "rb") as f:
@@ -131,35 +150,56 @@ def check_binary(binary):
             fail(binary, f"VERSIONINFO field {field} is empty (fields present: {sorted(table)})")
     print(f"   VERSIONINFO: {len(REQUIRED_STRINGFILEINFO_FIELDS)} StringFileInfo fields non-empty")
     fv, pv = fixed_version(pe, binary)
-    if fv[:3] != (5, 2, 0):
-        fail(binary, f"numeric FileVersion {fv} != (5, 2, 0, build)")
-    # The StringTable ProductVersion carries the LOCKED full form
-    # "5.2.0+YYYY.MM" (the plan-mandated bump-matrix site); the IDE projects
-    # that string into the numeric ProductVersion's build slot, so the build
-    # component there is a function of the mandated string - the MAJOR.MINOR.
-    # REVISION components stay the gate.
-    if pv[:3] != (5, 2, 0):
-        fail(binary, f"numeric ProductVersion {pv} does not start with (5, 2, 0)")
-    print(f"   numeric FileVersion={fv} ProductVersion={pv} (build slot from the full-form string)")
+    if family == "native":
+        if fv[:3] != (5, 2, 0):
+            fail(binary, f"numeric FileVersion {fv} != (5, 2, 0, build)")
+        # The StringTable ProductVersion carries the LOCKED full form
+        # "5.2.0+YYYY.MM" (the plan-mandated bump-matrix site); the IDE projects
+        # that string into the numeric ProductVersion's build slot, so the build
+        # component there is a function of the mandated string - the MAJOR.MINOR.
+        # REVISION components stay the gate.
+        if pv[:3] != (5, 2, 0):
+            fail(binary, f"numeric ProductVersion {pv} does not start with (5, 2, 0)")
+        print(f"   numeric FileVersion={fv} ProductVersion={pv} (build slot from the full-form string)")
+    else:
+        # dotnet: the numeric FileVersion must equal the StringTable
+        # FileVersion components (the bump-matrix <FileVersion> token); the
+        # StringTable ProductVersion must carry the locked full form
+        # M.m.p+YYYY.MM with no SourceRevisionId suffix.
+        string_fv = tuple(int(part) for part in table.get("FileVersion", "x").split("."))
+        if fv != string_fv:
+            fail(binary, f"numeric FileVersion {fv} != StringTable FileVersion {string_fv}")
+        if not re.fullmatch(r"\d+\.\d+\.\d+\+\d{4}\.\d{2}", table.get("ProductVersion", "")):
+            fail(binary, f"StringTable ProductVersion '{table.get('ProductVersion', '')}' "
+                         "does not carry the locked full form M.m.p+YYYY.MM")
+        print(f"   numeric FileVersion={fv} matches StringTable; "
+              f"ProductVersion='{table.get('ProductVersion', '')}' full form")
 
     # --- 2. Manifest completeness ---
     manifest = get_manifest_xml(pe, binary)
-    if 'name="Microsoft.Windows.Common-Controls"' not in manifest \
-            or 'publicKeyToken="6595b64144ccf1df"' not in manifest:
-        fail(binary, "comctl v6 dependency literal missing from the manifest")
+    if family == "native":
+        if 'name="Microsoft.Windows.Common-Controls"' not in manifest \
+                or 'publicKeyToken="6595b64144ccf1df"' not in manifest:
+            fail(binary, "comctl v6 dependency literal missing from the manifest")
     for guid in SUPPORTED_OS_GUIDS:
         if guid not in manifest:
             fail(binary, f"supportedOS GUID missing from the manifest: {guid}")
-    if "<dpiAware>True/PM_V2</dpiAware>" not in manifest:
-        fail(binary, "dpiAware True/PM_V2 element missing from the manifest")
-    if "<dpiAwareness>PerMonitorV2, PerMonitor</dpiAwareness>" not in manifest:
-        fail(binary, "PerMonitorV2 dpiAwareness element missing from the manifest")
-    if 'level="requireAdministrator"' not in manifest:
-        fail(binary, 'requestedExecutionLevel level="requireAdministrator" missing from the manifest')
-    if "<longPathAware>true</longPathAware>" not in manifest:
-        fail(binary, "longPathAware element missing from the manifest")
-    print(f"   manifest: comctl v6 + 5 supportedOS GUIDs + True/PM_V2 + PerMonitorV2 "
-          f"+ requireAdministrator + longPathAware ({len(manifest)} chars)")
+    if family == "native":
+        if "<dpiAware>True/PM_V2</dpiAware>" not in manifest:
+            fail(binary, "dpiAware True/PM_V2 element missing from the manifest")
+        if "<dpiAwareness>PerMonitorV2, PerMonitor</dpiAwareness>" not in manifest:
+            fail(binary, "PerMonitorV2 dpiAwareness element missing from the manifest")
+    if f'level="{expected_level}"' not in manifest:
+        fail(binary, f'requestedExecutionLevel level="{expected_level}" missing from the manifest')
+    # longPathAware: the canonical Microsoft form carries the SMI namespace
+    # on the setting element itself (<longPathAware xmlns="...">true</...>),
+    # so the check tolerates attributes on the opener but still requires
+    # the enabled value.
+    if not re.search(r"<longPathAware[^>]*>\s*true\s*</longPathAware>", manifest):
+        fail(binary, "longPathAware element missing or not enabled in the manifest")
+    print(f"   manifest: 5 supportedOS GUIDs + {expected_level} + longPathAware"
+          + (" + comctl v6 + True/PM_V2 + PerMonitorV2" if family == "native" else "")
+          + f" ({len(manifest)} chars)")
 
     # --- 3. Never-UPX ---
     bad_sections = [s.Name.decode("utf-8", errors="replace").rstrip("\x00")
@@ -172,14 +212,19 @@ def check_binary(binary):
     print(f"   no-UPX: {len(pe.sections)} sections, none packed, no stub signature")
 
     # --- 4. Icon entries DIB-encoded (plan 26-04 launch defect) ---
-    # A PNG-compressed ICO entry passes every byte check above yet KILLS the
+    # Native family only: the LCL startup crash guard. A PNG-compressed ICO
+    # entry passes every byte check above yet KILLS the
     # process at startup: LCL's TApplication.Initialize decodes MAINICON with
     # the pure-Pascal TLazReaderIconDib (intfgraphics.pas), which supports
     # only DIB entries - measured on the 26-04 Win7 validation run as
     # FPImageException "Bitmap with unknown compression" -> unhandled
     # exception -> rc 217 on every OS. Assert every RT_ICON entry in the
     # binary is a DIB whose biCompression the reader accepts, and that a
-    # MAINICON group exists.
+    # MAINICON group exists. The .NET SDK icon embedding is a different
+    # mechanism and is not covered by this assertion.
+    if family != "native":
+        print(f"[PASS] {binary}")
+        return len(REQUIRED_STRINGFILEINFO_FIELDS), len(manifest), len(pe.sections)
     try:
         icon_entries = {}
         group_names = []
@@ -220,8 +265,8 @@ def main():
     print("WSUS Offline Next - Native Installer Binary-Hygiene Battery")
     print("=" * 71)
     total_fields = total_manifest = total_sections = 0
-    for binary in BINARIES:
-        fields, manifest_len, sections = check_binary(binary)
+    for binary, expected_level, family in BINARIES:
+        fields, manifest_len, sections = check_binary(binary, expected_level, family)
         total_fields += fields
         total_manifest += manifest_len
         total_sections += sections

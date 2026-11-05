@@ -70,6 +70,8 @@ client/md/*.txt
 UpdateGenerator.exe
 UpdateGeneratorLegacy.exe
 UpdateGeneratorModern.exe
+WsusOfflineUpdater.exe
+WsusOfflineUpdater.pdb
 client/UpdateInstaller.exe
 client/UpdateInstallerLegacy.exe
 client/UpdateInstallerLegacy64.exe

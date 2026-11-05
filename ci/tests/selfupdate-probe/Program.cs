@@ -1,14 +1,18 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
 using WsusOfflineNext.SelfUpdate;
 
 // Console harness driving the shared self-update engine for
-// ci/tests/test-selfupdate-check.sh. Each subcommand prints exactly one
-// verdict line so the battery can assert on it:
+// ci/tests/test-selfupdate-check.sh and test-selfupdate-updater.sh. Each
+// subcommand prints exactly one verdict line so the battery can assert on
+// it:
 //   decide <channel-file> <links-file> <local-version>  -> OFFER <v> | NO-OFFER
 //   cache <today|yesterday|garbage|empty> <temp-path>   -> CHECK-TODAY | CHECK-NEEDED
 //   ini <ini-file>                                      -> DISABLED | ENABLED
+//   hashes <hashes-file>                                -> SHA256 <hex> SIZE <n> | REJECT
+//   sha256 <file>                                       -> <hex> (the file's digest)
 // Fixture CONTENT reaches the engine through files (never argv) so CRLF
 // bytes arrive intact.
 internal static class Program
@@ -32,14 +36,39 @@ internal static class Program
                 Console.WriteLine(SelfUpdateIni.IsSelfUpdateDisabled(args[1]) ? "DISABLED" : "ENABLED");
                 return 0;
             }
+            if (args.Length >= 1 && args[0] == "hashes" && args.Length == 2)
+            {
+                Console.WriteLine(Hashes(args[1]));
+                return 0;
+            }
+            if (args.Length >= 1 && args[0] == "sha256" && args.Length == 2)
+            {
+                Console.WriteLine(FileDigest(args[1]));
+                return 0;
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine("PROBE-ERROR " + ex.Message);
             return 1;
         }
-        Console.WriteLine("PROBE-ERROR usage: decide <channel> <links> <local> | cache <kind> <path> | ini <path>");
+        Console.WriteLine("PROBE-ERROR usage: decide <channel> <links> <local> | cache <kind> <path> | ini <path> | hashes <path> | sha256 <path>");
         return 1;
+    }
+
+    private static string Hashes(string path)
+    {
+        (long Size, string Sha256)? parsed =
+            UpdateInstall.ParseHashesFile(File.ReadAllText(path));
+        return parsed == null
+            ? "REJECT"
+            : "SHA256 " + parsed.Value.Sha256 + " SIZE " + parsed.Value.Size;
+    }
+
+    private static string FileDigest(string path)
+    {
+        using FileStream stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
     private static string Decide(string channelPath, string linksPath, string localVersion)

@@ -9,9 +9,9 @@
     <RootNamespace>WSUSOffline.Generator</RootNamespace>
     <Product>WSUS Offline Next</Product>
     <Description>WSUS Offline Next - Generator</Description>
-    <Version>6.0.2+2026.11</Version>
-    <FileVersion>6.0.2.0</FileVersion>
-    <AssemblyVersion>6.0.2.0</AssemblyVersion>
+    <Version>6.0.3+2026.11</Version>
+    <FileVersion>6.0.3.0</FileVersion>
+    <AssemblyVersion>6.0.3.0</AssemblyVersion>
     <ApplicationIcon>..\..\..\ico\wson.ico</ApplicationIcon>
     
     <!-- Single File Output Settings -->

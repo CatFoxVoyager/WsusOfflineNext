@@ -94,7 +94,7 @@ jobs:
 
       - name: Upload regeneration report
         if: env.DRY_RUN != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: regen-report
           path: ${{ runner.temp }}/regen-report.md
@@ -625,7 +625,7 @@ jobs:
           echo "FP gate: policy green; wdsi-packet assembled at $GATE_DIR/wdsi-packet"
 
       - name: Upload WDSI packet artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wdsi-packet
           path: ${{ runner.temp }}/fp-gate/wdsi-packet

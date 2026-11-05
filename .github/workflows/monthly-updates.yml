@@ -367,6 +367,25 @@ jobs:
           unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} not embedded"; exit 1; }
           unzip -p "$ZIP" wsusoffline/UpdateGenerator.cmd > /dev/null || { echo "FAIL: UpdateGenerator.cmd entry point missing from the zip"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/UpdateInstaller.cmd > /dev/null || { echo "FAIL: client/UpdateInstaller.cmd entry point missing from the zip"; exit 1; }
+          # CRLF gate (milestone v4.2): every shipped .cmd/.bat/.vbs must be CRLF-terminated.
+          # cmd.exe misparses multi-line parenthesized blocks in LF-only files
+          # ("Option was unexpected" — the 6.0.0 zip shipped DownloadUpdates.cmd LF-only
+          # because the version bump's in-place sed stripped CR). For each shipped
+          # script: every line must end with CR (lines counted == lines ending CR),
+          # fail closed on any bare-LF line.
+          CRLF_FAIL=0
+          for ZENTRY in $(unzip -Z1 "$ZIP" | grep -E "wsusoffline/.*[.](cmd|bat|vbs)$"); do
+            ALL_LINES=$(unzip -p "$ZIP" "$ZENTRY" | grep -c '' || true)
+            CR_LINES=$(unzip -p "$ZIP" "$ZENTRY" | grep -c $'\r$' || true)
+            if [ "${ALL_LINES}" -eq 0 ] || [ "${ALL_LINES}" -ne "${CR_LINES}" ]; then
+              echo "FAIL: $ZENTRY is not fully CRLF-terminated (lines=${ALL_LINES}, CRLF-terminated=${CR_LINES}) — cmd.exe misparses LF-only batch files"
+              CRLF_FAIL=1
+            fi
+          done
+          if [ "${CRLF_FAIL}" -eq 1 ]; then
+            exit 1
+          fi
+          echo "crlf-gate: all shipped .cmd/.bat/.vbs are CRLF-terminated"
           if unzip -l "$ZIP" | grep -qE "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|[.]au3$|Aut2[Ee]xe[.]exe|wsusoffline/CompileAutoItScripts[.]cmd|wsusoffline/Include/|wsusoffline/UpdateGenerator(Legacy)?[.]exe|wsusoffline/client/UpdateInstaller([.]orig)?[.]exe"; then
             echo "FAIL: retired AutoIt artifacts or stale legacy exes in the zip (any .au3 source, launcher sources, generator legacy exe, Aut2Exe pair, compile script, Include/ stdlib; stale root UpdateGenerator.exe / UpdateGeneratorLegacy.exe, stale client/UpdateInstaller.exe / UpdateInstaller.orig.exe)"
             unzip -l "$ZIP" | grep -E "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|[.]au3$|Aut2[Ee]xe[.]exe|wsusoffline/CompileAutoItScripts[.]cmd|wsusoffline/Include/|wsusoffline/UpdateGenerator(Legacy)?[.]exe|wsusoffline/client/UpdateInstaller([.]orig)?[.]exe"

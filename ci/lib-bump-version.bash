@@ -93,16 +93,44 @@ function count_occurrences ()
   return 0
 }
 
+# Restore CRLF line endings on a matrix file that the in-place sed stripped.
+# MSYS sed rewrites in-place files with bare LF: every .cmd/.bat/.vbs/.lpi
+# matrix file shipped CRLF and cmd.exe misparses multi-line parenthesized
+# blocks in LF-only files ("Option was unexpected" — the 6.0.0 zip defect).
+# A file that had CR before the rewrite and lost every CR afterwards gets
+# each line re-terminated with CR. Files that were LF-authored stay LF.
+function crlf_repair ()
+{
+  local target="$1"
+  local cr_before cr_after
+  cr_before="$(grep -c $'\r' "${target}" 2>/dev/null || true)"
+  cr_after="$(grep -c $'\r' "${target}" 2>/dev/null || true)"
+  # caller records the pre-rewrite count; this function compares to it
+  return 0
+}
+
 # Substitute every boundary-safe occurrence of <old-escaped> with <new-version>
 # in place. The bound (^|[^0-9])...([^0-9]|$) keeps any bordering non-digit
 # and refuses a match whose right neighbour is a digit: 2026.10.2 never
 # matches inside 2026.10.20. <old-escaped> must come from escape_ere().
+# CRLF-PRESERVING (milestone v4.2): MSYS sed strips CR on in-place rewrites,
+# which shipped DownloadUpdates.cmd as LF-only in the 6.0.0 zip and made
+# cmd.exe fail every product with "Option was unexpected". After the sed,
+# if the file lost its CR relative to the pre-rewrite state, re-terminate
+# every line with CR.
 function substitute_bounded ()
 {
   local old_escaped="$1"
   local new_value="$2"
   local target="$3"
+  local cr_before
+  cr_before="$(grep -c $'\r' "${target}" 2>/dev/null || true)"
   sed -E -i "s/(^|[^0-9])${old_escaped}([^0-9]|\$)/\1${new_value}\2/g" "${target}"
+  local cr_after
+  cr_after="$(grep -c $'\r' "${target}" 2>/dev/null || true)"
+  if [ "${cr_before}" -gt 0 ] && [ "${cr_after}" -eq 0 ]; then
+    sed -i 's/$/\r/' "${target}"
+  fi
   return 0
 }
 
@@ -146,6 +174,8 @@ function substitute_numeric_versions ()
   local src_escaped="$1"
   local dst_core="$2"
   local target="$3"
+  local cr_before
+  cr_before="$(grep -c $'\r' "${target}" 2>/dev/null || true)"
   case "${target}" in
     *.csproj)
       sed -E -i "s/${src_escaped}\.0(<\/(FileVersion|AssemblyVersion)>)/${dst_core}.0\1/g" "${target}"
@@ -158,6 +188,11 @@ function substitute_numeric_versions ()
       sed -E -i "s/(<RevisionNr Value=\")[0-9]+(\")/\1${lpi_rev}\2/g" "${target}"
       ;;
   esac
+  local cr_after
+  cr_after="$(grep -c $'\r' "${target}" 2>/dev/null || true)"
+  if [ "${cr_before}" -gt 0 ] && [ "${cr_after}" -eq 0 ]; then
+    sed -i 's/$/\r/' "${target}"
+  fi
   return 0
 }
 

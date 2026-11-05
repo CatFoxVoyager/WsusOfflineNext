@@ -51,6 +51,15 @@ jobs:
           bash ci/tests/test-bump-webview2-dep.sh
           bash ci/tests/test-webview2-version-gate.sh
 
+  # Closes deferred item 20-01: the repo bash gate (bash -n + shellcheck over the repo bash surface) runs on every clean checkout.
+  bash-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bash syntax gate (bash -n + shellcheck)
+        run: bash sh/syntax-check.bash
+
   dotnet-build:
     runs-on: ubuntu-latest
     steps:

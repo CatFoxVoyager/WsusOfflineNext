@@ -49,12 +49,12 @@ generate_missing_updates_report() {
     local run_file="${tmp_dir}/run.txt"
     local oth_file="${tmp_dir}/oth.txt"
 
-    > "$lcu_file"
-    > "$ssu_file"
-    > "$def_file"
-    > "$off_file"
-    > "$run_file"
-    > "$oth_file"
+    : > "$lcu_file"
+    : > "$ssu_file"
+    : > "$def_file"
+    : > "$off_file"
+    : > "$run_file"
+    : > "$oth_file"
 
     if [[ -f "$q_file" ]]; then
         while IFS= read -r item || [[ -n "$item" ]]; do

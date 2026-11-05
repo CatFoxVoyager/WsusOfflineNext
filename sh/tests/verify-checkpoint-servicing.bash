@@ -67,8 +67,8 @@ sort_checkpoints_first() {
     local chk_file="$2"
     local out_chk="${tmp_dir}/chkpts.txt"
     local out_nonchk="${tmp_dir}/nonchkpts.txt"
-    > "$out_chk"
-    > "$out_nonchk"
+    : > "$out_chk"
+    : > "$out_nonchk"
 
     local patterns
     patterns="$(awk -F',' '{print $2}' "$chk_file" | tr -d '\r')"

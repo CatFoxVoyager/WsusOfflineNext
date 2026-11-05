@@ -299,7 +299,8 @@ process_site() {
     local sm="$2"
     local em="$3"
     local block="$4"
-    local tmp_out="$tmp_dir/out_$(basename "$rel_path").tmp"
+    local tmp_out
+    tmp_out="${tmp_dir}/out_$(basename "$rel_path").tmp"
 
     if ! replace_between_markers "$full_path" "$sm" "$em" "$block" "$tmp_out"; then
         echo "ERROR: Marker processing failed for $rel_path" >&2

@@ -4,7 +4,7 @@
 # Version: Linux download scripts, version 2.8
 # Release date: 2022-11-27
 # Development branch: master
-# Supported version: WSUS Offline Next 6.0.0+2026.11 (b2026.10)
+# Supported version: WSUS Offline Next 6.0.1+2026.11 (b2026.10)
 #
 # Copyright (C) 2016-2022 Hartmut Buhrmester
 #                         <wsusoffline-scripts-xxyh@hartmut-buhrmester.de>

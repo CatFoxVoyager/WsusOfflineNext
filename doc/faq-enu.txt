@@ -86,7 +86,7 @@ Q: On patch installation I receive warnings about further missing updates. What'
 A: WSUS Offline update by default downloads only patches contained in Microsoft's catalog WSUSSCN2.CAB. This includes at least all critical and security-related patches, but not every important, recommended or optional one. If you feel the need to include them, you are free to do so manually (see above).
 --------------------------------------------------------------------------------
 Q: Can I force installation of patches despite them being installed already on the target system?
-A: Yes, but not with the GUI (UpdateInstaller.exe). Call the batch file "Update.cmd" directly using the "/all" option, e. g. "Update.cmd /autoreboot /showlog /all".
+A: Yes, but not with the GUI (UpdateInstaller.cmd). Call the batch file "Update.cmd" directly using the "/all" option, e. g. "Update.cmd /autoreboot /showlog /all".
 --------------------------------------------------------------------------------
 Q: On my target system, the missing updates can't be determined; on another computer, missing updates will be installed again and again. Why?
 A: In most cases, the Windows Update Agent (WUA) is responsible for this misbehavior. To resolve this problem, please follow the instructions to reset the Windows Update components (http://support.microsoft.com/kb/971058).
@@ -151,7 +151,7 @@ If it still won't work, follow this guide:
 Q: During download, I receive a file integrity verification failure. What can I do to resolve this?
 A: If you're sure that the patch files in your repository weren't manipulated, you may delete the corresponding checksum files under ...\client\md. They'll then be recreated during the next download run.
 --------------------------------------------------------------------------------
-Q: Why are check boxes grayed out when I start UpdateInstaller.exe?
+Q: Why are check boxes grayed out when I start UpdateInstaller.cmd?
 A: The check boxes' availability is dependent on platform, update medium and package installation state.
 --------------------------------------------------------------------------------
 Q: During download or installation, I receive an error indicating an invalid package.xml file. What can I do?

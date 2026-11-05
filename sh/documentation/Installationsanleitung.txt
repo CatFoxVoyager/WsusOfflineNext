@@ -198,7 +198,7 @@ Konfigurationsdateien der wsusoffline-Installation. Außerdem können
 die Linux-Download-Skripte nur die Windows-Download-Skripte ersetzen,
 also zum Beispiel DownloadUpdates.cmd. Um die Downloads zu installieren,
 werden auch die Dateien im Verzeichnis client benötigt, zum Beispiel
-der UpdateInstaller.exe.
+der UpdateInstaller.cmd.
 
 Sie sollten die Linux-Skripte deshalb nicht mehr separat herunterladen,
 wie es für die ersten beta-Versionen noch nötig war. Laden Sie einfach

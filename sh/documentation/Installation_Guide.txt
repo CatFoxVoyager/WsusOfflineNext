@@ -189,7 +189,7 @@ The new Linux scripts don't work alone – they need the
 configuration files from the wsusoffline installation. Also, the
 Linux download scripts can only replace the Windows download scripts,
 e.g. DownloadUpdates.cmd. To install the updates, you surely need the
-files in the client directory, e.g. the application UpdateInstaller.exe.
+files in the client directory, e.g. the application UpdateInstaller.cmd.
 
 Therefore, you should not download the Linux scripts separately, as it
 was necessary for the first beta versions. Just get the latest wsusoffline

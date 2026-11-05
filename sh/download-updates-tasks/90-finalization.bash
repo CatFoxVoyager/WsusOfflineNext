@@ -81,8 +81,8 @@ function remind_build_date ()
     log_info_message "Creating autorun.inf file..."
     {
         printf '%s\r\n' "[autorun]"
-        printf '%s\r\n' "open=UpdateInstaller.exe"
-        printf '%s\r\n' "icon=UpdateInstaller.exe,0"
+        printf '%s\r\n' "shellexecute=UpdateInstaller.cmd"
+        printf '%s\r\n' "icon=UpdateInstallerModern.exe,0"
         printf '%s\r\n' "action=Run WSUS Offline Next - v. ${wsusoffline_version} (${build_date})"
     } > "../client/autorun.inf"
     echo ""

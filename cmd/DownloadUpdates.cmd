@@ -2729,8 +2729,8 @@ for /F "tokens=4*" %%i in ('%SIGCHK_PATH% /accepteula -q -nobanner ..\client\wsu
 rem *** Create autorun.inf file ***
 echo Creating autorun.inf file...
 echo [autorun]>..\client\autorun.inf
-echo open=UpdateInstaller.exe>>..\client\autorun.inf
-echo icon=UpdateInstaller.exe,0 >>..\client\autorun.inf
+echo shellexecute=UpdateInstaller.cmd>>..\client\autorun.inf
+echo icon=UpdateInstallerModern.exe,0 >>..\client\autorun.inf
 echo action=Run WSUS Offline Next - v. %WSUSOFFLINE_VERSION% (%DATE:~-11%)>>..\client\autorun.inf
 goto EoF
 

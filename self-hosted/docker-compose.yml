@@ -8,3 +8,9 @@ services:
     # 40 s (défaut docker : 10 s) : laisse finir la chaîne de cleanup de l'entrypoint (arrêt du listener + 2 appels API + config.sh remove) avant le SIGKILL d'un docker stop — c'est cette valeur qui fait survivre le cleanup vivant (CISH-01).
     stop_grace_period: 40s
     env_file: compose.env
+    # Plafond ressources (2026-11-03) : jobs de catalog légers, 1 CPU / 1 Gio.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g

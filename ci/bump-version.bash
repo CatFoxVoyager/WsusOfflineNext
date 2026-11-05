@@ -95,6 +95,14 @@ new_version="$1"
 
 read_old_version
 if [ "${old_version}" = "${new_version}" ]; then
+  if [ "${DRY_RUN:-}" = "true" ]; then
+    # Dry-run idempotency: a re-dispatched dry-run train against a tree that
+    # already carries the target version (e.g. after deleting a broken
+    # release whose bump commit landed on main) is a successful no-op —
+    # the subsequent gates still run and prove the shipped shape.
+    echo "bump-version: version already ${new_version} (dry run - no-op ok)"
+    exit 0
+  fi
   echo "bump-version: version already ${new_version}" >&2
   exit 1
 fi

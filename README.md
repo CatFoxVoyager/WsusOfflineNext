@@ -26,10 +26,14 @@ Download Windows and Office updates on a connected computer, prepare reusable up
 
 ## What's new
 
+> **[!IMPORTANT]**
+> **6.0.0 is the first AutoIt-free release — AutoIt has been completely removed from the equation.** Every executable in the distribution is now either pure batch (.cmd entry points), a .NET 8 single-file host, or a native Free Pascal/Lazarus Win32 binary — compiled, manifest-embedded, and version-stamped, with no interpreter stubs for antivirus machine-learning to misread. The classic AutoIt GUI, its compile toolchain and its 152-file standard library are gone from both the distribution and the repository. This is why this release is a major version.
+
 The familiar **Generator → client media → Installer** workflow continues, with a modern desktop interface and expanded servicing capabilities.
 
 | Improvement | What it brings |
 | :--- | :--- |
+| **AutoIt-free distribution (6.0.0)** | Zero interpreter-stub binaries: launchers are plain `.cmd` scripts, the generator is a .NET 8 single-file host, and the client installer GUI is a native Free Pascal/Lazarus Win32 application — validated live on Windows 7 SP1 x86 and shipping clean on VirusTotal (0-malicious on the native pair). |
 | **Modern desktop apps** | English interfaces, compact product tables, bulk selection, and integrated timestamped consoles. React and TypeScript run inside .NET 8 / WebView2 hosts. |
 | **Recent Windows servicing** | A shared build registry, enablement-package eligibility checks, and checkpoint-first ordering for cumulative updates on the 26100 servicing branch. |
 | **Office MSI + Click-to-Run** | Office 2016 MSI catalog updates alongside Office 2019, LTSC 2021, and LTSC 2024 staging through the Office Deployment Tool (ODT). |

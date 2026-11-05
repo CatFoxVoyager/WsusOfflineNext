@@ -25,6 +25,14 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
   </ItemGroup>
 
+  <!-- Shared self-update engine sources (Phase 28): compiled into both
+       hosts (and later the updater console app) without a project
+       reference, so the check slice ships as pure source. -->
+  <ItemGroup>
+    <Compile Include="..\..\common\selfupdate\SelfUpdateCore.cs" Link="selfupdate\SelfUpdateCore.cs" />
+    <Compile Include="..\..\common\selfupdate\UpdateCheck.cs" Link="selfupdate\UpdateCheck.cs" />
+  </ItemGroup>
+
   <!-- Embed React assets directly inside the EXE assembly resources -->
   <ItemGroup>
     <EmbeddedResource Include="..\dist\**" LogicalName="wwwroot.%(RecursiveDir)%(Filename)%(Extension)" />

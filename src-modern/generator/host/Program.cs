@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using WsusOfflineNext.SelfUpdate;
 
 namespace WSUSOffline.Generator
 {
@@ -18,6 +19,11 @@ namespace WSUSOffline.Generator
         private WebView2? _webView;
         private Process? _activeProcess;
         private CancellationTokenSource? _cts;
+
+        // Static instance for the self-update check's owner-form provider:
+        // set first in the ctor so the offer dialog can find the window as
+        // soon as it exists (the check starts before Application.Run).
+        public static MainWindow? Instance { get; private set; }
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -40,6 +46,7 @@ namespace WSUSOffline.Generator
 
         public MainWindow()
         {
+            Instance = this;
             this.Text = $"WSUS Offline Next {GetDisplayVersion()} - Generator";
             this.Width = 1180;
             this.Height = 780;
@@ -52,6 +59,15 @@ namespace WSUSOffline.Generator
             {
                 int darkMode = 1;
                 DwmSetWindowAttribute(this.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+            }
+            catch { }
+
+            // wson.ico is embedded in the exe via the ApplicationIcon csproj
+            // setting; mirror the same icon into the window title bar and
+            // the taskbar at runtime (no design-time .Icon assignment exists).
+            try
+            {
+                this.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             }
             catch { }
 
@@ -1019,6 +1035,20 @@ namespace WSUSOffline.Generator
             // before Run so no WebView2 call precedes the runtime check.
             InstallGlobalExceptionNet();
             EnsureWebView2RuntimeOrFallback();
+            // Fire-and-forget self-update check: started before the window
+            // exists, never delays the launch; any offer can only appear
+            // over the already-open main window. Strict-newer decision is
+            // the existing WebView2Compat comparator in both directions.
+            _ = SelfUpdateCheck.RunAsync(new SelfUpdateOptions
+            {
+                LocalVersion = GetDisplayVersion(),
+                InstallRoot = AppContext.BaseDirectory,
+                Actor = "generator",
+                IsChannelNewer = (channel, local) =>
+                    WebView2Compat.IsVersionAtLeast(channel, local)
+                    && !WebView2Compat.IsVersionAtLeast(local, channel),
+                OwnerFormProvider = () => Instance,
+            });
             Application.Run(new MainWindow());
         }
     }

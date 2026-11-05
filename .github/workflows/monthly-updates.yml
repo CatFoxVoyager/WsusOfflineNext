@@ -7,6 +7,11 @@ name: Monthly updates
 # runner. Neither may ever execute for pull_request events, and only for this
 # repository — the guards below are load-bearing, do not relax them.
 # dry_run (workflow_dispatch only) forbids every push, tag and release.
+# Since 27-01 dry_run also drives the RELEASE lane: the job runs through the
+# batteries, the bump, the build, the zip gates and the FP-reputation gate,
+# and the "no push, no tag, no release" guarantee still holds via the
+# per-step DRY_RUN guards on exactly the two pushing steps. Local bump
+# commits in a dry run are ephemeral runner-workspace state, never pushed.
 # Scheduled runs pass no inputs, so dry_run defaults to false there.
 # WR-03: the catalog job checks out main explicitly, so a workflow_dispatch
 # from any ref refreshes and pushes main content only - never a feature branch.
@@ -172,8 +177,10 @@ jobs:
       needs.catalog.result == 'success' &&
       needs.catalog.outputs.fire == 'true' &&
       github.event_name != 'pull_request' &&
-      github.repository == 'CatFoxVoyager/WsusOfflineNext' &&
-      inputs.dry_run != true
+      github.repository == 'CatFoxVoyager/WsusOfflineNext'
+    env:
+      DRY_RUN: ${{ inputs.dry_run == true }}
+      VT_API_KEY: ${{ secrets.VT_API_KEY }}
     defaults:
       run:
         # Explicit Git-bash path: on this self-hosted Windows runner a bare
@@ -203,6 +210,7 @@ jobs:
         run: bash ci/tests/test-bump-webview2-dep.sh
 
       - name: Download regeneration report
+        if: env.DRY_RUN != 'true'
         uses: actions/download-artifact@v4
         with:
           name: regen-report
@@ -278,21 +286,40 @@ jobs:
         run: |
           VER_FULL="${{ steps.version.outputs.version_full }}"
           REPORT="${RUNNER_TEMP}/regen-report.md"
-          [ -s "${REPORT}" ] || { echo "FAIL: rapport regen absent (transfert artifact manquant)"; exit 1; }
-          ADDED="$(grep -oE '[0-9]+ added' "${REPORT}" | head -1 | cut -d' ' -f1)"
-          REMOVED="$(grep -oE '[0-9]+ removed' "${REPORT}" | head -1 | cut -d' ' -f1)"
-          ADDED="${ADDED:-0}"; REMOVED="${REMOVED:-0}"
-          {
-            echo ""
-            echo "## ${VER_FULL}"
-            echo ""
-            echo "**Status:** current release."
-            echo ""
-            echo "### Monthly update refresh"
-            echo ""
-            echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED} links added, ${REMOVED} retired links removed."
-            echo ""
-          } >> RELEASE_NOTES.md
+          if [ "$DRY_RUN" = "true" ]; then
+            # Dry run: the catalog job uploads no report under dry_run (the
+            # regen report dies with its work dir), so the refresh section
+            # carries explicit zeros plus a dry-run marker line.
+            ADDED="0"; REMOVED="0"
+            {
+              echo ""
+              echo "## ${VER_FULL}"
+              echo ""
+              echo "**Status:** current release."
+              echo ""
+              echo "### Monthly update refresh"
+              echo ""
+              echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED} links added, ${REMOVED} retired links removed."
+              echo "- DRY RUN: regeneration report not transferred; counters forced to 0."
+              echo ""
+            } >> RELEASE_NOTES.md
+          else
+            [ -s "${REPORT}" ] || { echo "FAIL: regeneration report absent (artifact transfer missing)"; exit 1; }
+            ADDED="$(grep -oE '[0-9]+ added' "${REPORT}" | head -1 | cut -d' ' -f1)"
+            REMOVED="$(grep -oE '[0-9]+ removed' "${REPORT}" | head -1 | cut -d' ' -f1)"
+            ADDED="${ADDED:-0}"; REMOVED="${REMOVED:-0}"
+            {
+              echo ""
+              echo "## ${VER_FULL}"
+              echo ""
+              echo "**Status:** current release."
+              echo ""
+              echo "### Monthly update refresh"
+              echo ""
+              echo "- Static download links refreshed from the $(date -u +%Y-%m) WSUS catalog: ${ADDED} links added, ${REMOVED} retired links removed."
+              echo ""
+            } >> RELEASE_NOTES.md
+          fi
           # Extract this release's body for the publish step. The pattern runs
           # under -E with '.' and '+' each escaped once: GNU BRE treats a
           # backslashed plus as a quantifier, so the plain form matches nothing.
@@ -313,6 +340,11 @@ jobs:
           cd src-modern/installer && npm ci && cd ../..
 
       - name: Build executables
+        env:
+          # Lane [3/3] override consumed by CompileModernApps.cmd; unset
+          # falls through to the scratch default and fails closed with a
+          # named error on a runner checkout.
+          WO_LAZARUS_ROOT: ${{ vars.WO_LAZARUS_ROOT }}
         run: cmd //c ".\\CompileModernApps.cmd" --no-pause
 
       - name: Create release archive
@@ -325,12 +357,14 @@ jobs:
           ZIP="$TEMP/wsusofflineCE${VER_CORE}.zip"
           [ -f "$ZIP" ] || { echo "FAIL: $ZIP absent"; exit 1; }
           if unzip -l "$ZIP" | grep -qE "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/|UpdateProjectBranding[.](cmd|py)|CompileModernApps[.]cmd|MakeReleaseUnzipped[.]cmd|WINDOWS[.]md|doc/(RELEASING[.]md|coverage[.]txt|branding/|screenshots/))"; then
-            echo "FAIL: entrées dev dans le zip"; unzip -l "$ZIP" | grep -E "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/|UpdateProjectBranding[.](cmd|py)|CompileModernApps[.]cmd|MakeReleaseUnzipped[.]cmd|WINDOWS[.]md|doc/(RELEASING[.]md|coverage[.]txt|branding/|screenshots/))"; exit 1
+            echo "FAIL: dev entries in the zip"
+            unzip -l "$ZIP" | grep -E "wsusoffline/([.]|(pre|dead)[.]md|(ci|self-hosted)/|UpdateProjectBranding[.](cmd|py)|CompileModernApps[.]cmd|MakeReleaseUnzipped[.]cmd|WINDOWS[.]md|doc/(RELEASING[.]md|coverage[.]txt|branding/|screenshots/))"
+            exit 1
           fi
-          unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe manquant"; exit 1; }
-          unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe manquant"; exit 1; }
-          unzip -p "$ZIP" wsusoffline/bin/odt/setup.exe > /dev/null || { echo "FAIL: bin/odt/setup.exe manquant"; exit 1; }
-          unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} non embarquée"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/client/bin/Autologon.exe > /dev/null || { echo "FAIL: client/bin/Autologon.exe missing"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/client/bin/unzip.exe > /dev/null || { echo "FAIL: client/bin/unzip.exe missing"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/bin/odt/setup.exe > /dev/null || { echo "FAIL: bin/odt/setup.exe missing"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} not embedded"; exit 1; }
           unzip -p "$ZIP" wsusoffline/UpdateGenerator.cmd > /dev/null || { echo "FAIL: UpdateGenerator.cmd entry point missing from the zip"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/UpdateInstaller.cmd > /dev/null || { echo "FAIL: client/UpdateInstaller.cmd entry point missing from the zip"; exit 1; }
           if unzip -l "$ZIP" | grep -qE "wsusoffline/(client/)?Update(Generator|Installer)Launcher[.]au3|wsusoffline/UpdateGenerator[.]au3|[.]au3$|Aut2[Ee]xe[.]exe|wsusoffline/CompileAutoItScripts[.]cmd|wsusoffline/Include/|wsusoffline/UpdateGenerator(Legacy)?[.]exe|wsusoffline/client/UpdateInstaller([.]orig)?[.]exe"; then
@@ -339,9 +373,271 @@ jobs:
             exit 1
           fi
           unzip -p "$ZIP" wsusoffline/client/UpdateInstallerLegacy.exe > /dev/null 2>&1 || { echo "FAIL: client/UpdateInstallerLegacy.exe missing from the zip (native installer GUI must ship)"; exit 1; }
-          echo "verify-release-archive: contenu OK"
+          echo "verify-release-archive: content OK"
+
+      - name: FP-reputation gate (VT scan + WDSI packet)
+        run: |
+          # Adjudicated FP policy (owner decision 2026-11-05, 27-01 Task 1
+          # checkpoint): fail closed on ANY malicious verdict EXCEPT the
+          # named allowlist - APEX bare nameless "Malicious" verdicts on
+          # .NET single-file bundles, the documented baseline class (23-01:
+          # Bkav 1/68 on the self-contained prototype; archived sha-named
+          # verdicts 1b8bd158 / e470231e in the 27-01 rehearsal evidence).
+          # Every verdict is archived per train; the WDSI packet is still
+          # generated for every flagged binary (the owner submits it,
+          # pre-creating Microsoft reputation - same channel as the FPC
+          # packets). A red VT call fails closed too: a stalled release is
+          # safer than an unscanned one (T-27-04).
+          GATE_DIR="$RUNNER_TEMP/fp-gate"
+          mkdir -p "$GATE_DIR/wdsi-packet/vt" "$GATE_DIR/wdsi-packet/i386" "$GATE_DIR/wdsi-packet/x64"
+          python - "$GATE_DIR" <<'PY'
+          import hashlib, json, os, sys, time, urllib.request, urllib.error
+          from pathlib import Path
+
+          ALLOWED = {"APEX": "Malicious"}
+          EXES = [
+              "UpdateGeneratorModern.exe",
+              "client/UpdateInstallerModern.exe",
+              "client/UpdateInstallerLegacy.exe",
+              "client/UpdateInstallerLegacy64.exe",
+          ]
+          API = "https://www.virustotal.com/api/v3"
+          BOUNDARY = "----wson-fp-gate"
+          POLL_INTERVAL_S = 20
+          MAX_POLLS = 30
+
+          def api_get(url, key):
+              req = urllib.request.Request(url, headers={"x-apikey": key})
+              with urllib.request.urlopen(req, timeout=120) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          def upload(path, key):
+              data = path.read_bytes()
+              body = (
+                  f"--{BOUNDARY}\r\n"
+                  f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
+                  f"Content-Type: application/octet-stream\r\n\r\n"
+              ).encode("utf-8") + data + f"\r\n--{BOUNDARY}--\r\n".encode("utf-8")
+              req = urllib.request.Request(
+                  f"{API}/files",
+                  data=body,
+                  headers={
+                      "x-apikey": key,
+                      "Content-Type": f"multipart/form-data; boundary={BOUNDARY}",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=900) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          def main():
+              gate_dir = Path(sys.argv[1])
+              vt_dir = gate_dir / "wdsi-packet" / "vt"
+              vt_dir.mkdir(parents=True, exist_ok=True)
+              key = os.environ.get("VT_API_KEY", "")
+              if not key:
+                  print("FAIL: VT_API_KEY absent - the FP gate fails closed (a stalled release is safer than an unscanned one)")
+                  return 1
+              violations = []
+              summary = []
+              for exe in EXES:
+                  path = Path(exe)
+                  raw = path.read_bytes()
+                  sha = hashlib.sha256(raw).hexdigest()
+                  dest = vt_dir / f"{sha}.json"
+                  if not (dest.exists() and dest.stat().st_size > 2):
+                      resp = upload(path, key)
+                      aid = resp["data"]["id"]
+                      final = None
+                      for _ in range(1, MAX_POLLS + 1):
+                          time.sleep(POLL_INTERVAL_S)
+                          try:
+                              an = api_get(f"{API}/analyses/{aid}", key)
+                          except urllib.error.HTTPError as e:
+                              print(f"poll: HTTP {e.code}")
+                              continue
+                          if an["data"]["attributes"]["status"] == "completed":
+                              final = an
+                              break
+                      if final is None:
+                          print(f"FAIL: analysis for {path.name} did not complete within {MAX_POLLS} polls - fail closed")
+                          return 1
+                      final.setdefault("data", {}).setdefault("attributes", {})["permalink"] = f"https://www.virustotal.com/gui/file/{sha}"
+                      dest.write_text(json.dumps(final, indent=2), encoding="utf-8")
+                  verdict = json.loads(dest.read_text(encoding="utf-8"))
+                  attrs = verdict["data"]["attributes"]
+                  stats = attrs["stats"]
+                  entry = {"exe": exe, "sha256": sha, "stats": stats, "flagged": [], "adjudicated": []}
+                  for engine, res in (attrs.get("results") or {}).items():
+                      if res.get("category") != "malicious":
+                          continue
+                      allowed = ALLOWED.get(engine)
+                      result = (res.get("result") or "").strip()
+                      if allowed is not None and result == allowed:
+                          print(f"ADJUDICATED-ALLOWLIST: {path.name} {sha[:16]} engine={engine} bare verdict '{result}' - baseline class (23-01 Bkav 1/68 prototype precedent)")
+                          entry["adjudicated"].append({"engine": engine, "result": result})
+                      else:
+                          violations.append(f"{path.name} ({sha[:16]}): engine={engine} result={result!r} - not on the adjudicated allowlist")
+                          entry["flagged"].append({"engine": engine, "result": result})
+                  summary.append(entry)
+                  print(f"verdict: {path.name} sha={sha[:16]} malicious={stats.get('malicious')} suspicious={stats.get('suspicious')} undetected={stats.get('undetected')}")
+              (gate_dir / "wdsi-packet" / "verdict-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+              if violations:
+                  print("FAIL: FP gate fail-closed on disallowed malicious verdict(s):")
+                  for v in violations:
+                      print(f"  - {v}")
+                  return 1
+              print("FP gate: PASS (all malicious verdicts absent or on the adjudicated allowlist)")
+              return 0
+
+          sys.exit(main())
+          PY
+          POLICY_RC=$?
+          if [ "$POLICY_RC" -ne 0 ]; then
+            echo "FP gate: FAIL (see verdicts above)" >&2
+            exit 1
+          fi
+          python - "$GATE_DIR" <<'PY2'
+          import sys
+          from pathlib import Path
+
+          try:
+              import pefile
+          except ModuleNotFoundError:
+              pefile = None
+
+          gate_dir = Path(sys.argv[1])
+          packet = gate_dir / "wdsi-packet"
+          (packet / "i386").mkdir(parents=True, exist_ok=True)
+          (packet / "x64").mkdir(parents=True, exist_ok=True)
+          ARCH = {
+              "i386": ["client/UpdateInstallerLegacy.exe"],
+              "x64": [
+                  "UpdateGeneratorModern.exe",
+                  "client/UpdateInstallerModern.exe",
+                  "client/UpdateInstallerLegacy64.exe",
+              ],
+          }
+
+          strings_lines = []
+          for exe in ARCH["i386"] + ARCH["x64"]:
+              if pefile is None:
+                  strings_lines.append(exe + "|<pefile unavailable - StringFileInfo not quoted>")
+                  continue
+              pe = pefile.PE(exe)
+              found = False
+              for fileinfo in pe.FileInfo or []:
+                  for entry in fileinfo:
+                      if entry.Key == b"StringFileInfo":
+                          for st in entry.StringTable:
+                              for k, v in st.entries.items():
+                                  strings_lines.append(f"{exe}|{k.decode('utf-8', 'replace')}={v.decode('utf-8', 'replace')}")
+                                  found = True
+              if not found:
+                  strings_lines.append(exe + "|<no StringFileInfo found>")
+
+          (packet / "stringfileinfo.txt").write_text("\n".join(strings_lines) + "\n", encoding="utf-8")
+
+          head = [
+              "# WDSI submission notes - {arch} packet (generated by the FP-reputation gate)",
+              "",
+              "Binaries covered by this packet:",
+              "",
+          ]
+          for arch, exes in ARCH.items():
+              lines = [line.replace("{arch}", arch) for line in head]
+              for exe in exes:
+                  lines.append(f"- `{exe}`")
+              lines += [
+                  "",
+                  "## StringFileInfo strings (quote these in the portal form)",
+                  "",
+                  "The StringFileInfo block is the stable identity of each binary. The",
+                  "fixed-info numeric build slot is deliberately NOT quoted here (26-03",
+                  "watch item: it carries the '+YYYY.MM' tail digits and is not stable",
+                  "across rebuilds).",
+                  "",
+              ]
+              for line in strings_lines:
+                  for exe in exes:
+                      if line.startswith(exe + "|"):
+                          lines.append("```")
+                          lines.append(line)
+                          lines.append("```")
+                          lines.append("")
+              lines += [
+                  "## Submission context",
+                  "",
+                  "- Product: WSUS Offline Next (offline Windows/Office update generator and installer).",
+                  "- Why submitted: pre-train FP-reputation gate (Pitfall 10) - Defender's ML layer",
+                  "  (Wacatac.C!ml lineage) historically false-positived the AutoIt builds; the native",
+                  "  toolchain verdict is kept alive by scanning and pre-clearing every train.",
+                  "- Binaries are unsigned by owner decision (code signature out of scope, v4.2).",
+                  "- NEVER packed: no UPX anywhere in the chain (FP amplifier, standing prohibition).",
+                  "",
+              ]
+              (packet / arch / "submission-notes.txt").write_text("\n".join(lines), encoding="utf-8")
+
+          checklist = """# WDSI submission checklist (per train, manual step)
+
+          The workflow's FP-reputation gate uploads the four primary shipped exes to
+          VirusTotal and fails the train closed on any malicious verdict outside the
+          adjudicated allowlist (APEX bare nameless "Malicious" verdicts - owner
+          decision 2026-11-05). The WDSI submission below is the manual half of the
+          gate: it pre-creates Microsoft reputation for the flagged .NET pair.
+
+          ## Per-train steps
+
+          1. Download the `wdsi-packet` workflow artifact (per-arch submission notes,
+             sha256 manifest, StringFileInfo dump, verdict summary, this checklist).
+          2. Open the Microsoft WDSI file submission portal:
+             https://www.microsoft.com/en-us/wdsi/filesubmission
+          3. Submit each binary named in the per-arch `submission-notes.txt`, quoting
+             its StringFileInfo strings in the notes field (never the fixed-info build
+             slot).
+          4. Record per binary: ticket number + submission date in the table below.
+          5. Expected evidence: a confirmed-malware designation turns into a "release
+             from detection" after Microsoft analysis; expected turnaround 24-72h
+             (community range: 24h to weeks - do not gate the release on WDSI alone;
+             the VT verdict policy is the train gate, WDSI is the FP-hygiene feedback
+             loop).
+          6. If any engine OUTSIDE the adjudicated allowlist flags a shipped exe:
+             rebuilding is a legitimate FP response (per-build ML verdicts are
+             stochastic, `!ml`); re-scan the fresh hash and re-submit to WDSI.
+             NEVER pack with UPX.
+
+          ## Credential handling
+
+          - `VT_API_KEY` lives as a GitHub Actions secret (created in 27-02) and
+            locally in `HKCU\\Environment` since Phase 23 - never printed, never
+            committed. Rotation = update both places.
+          - The WDSI portal needs no credential beyond the operator's Microsoft account.
+
+          ## Ticket log (fill per train)
+
+          | Binary | Arch | WDSI ticket | Date | Outcome |
+          | ------ | ---- | ----------- | ---- | ------- |
+          | (fill per train) | | | | |
+          """
+          (packet / "CHECKLIST.md").write_text(checklist, encoding="utf-8")
+          PY2
+          sha256sum UpdateGeneratorModern.exe client/UpdateInstallerModern.exe client/UpdateInstallerLegacy.exe client/UpdateInstallerLegacy64.exe > "$GATE_DIR/wdsi-packet/sha256-manifest.txt"
+          echo "FP gate: policy green; wdsi-packet assembled at $GATE_DIR/wdsi-packet"
+
+      - name: Upload WDSI packet artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdsi-packet
+          path: ${{ runner.temp }}/fp-gate/wdsi-packet
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Dry-run boundary (release)
+        if: env.DRY_RUN == 'true'
+        run: echo "DRY RUN - no tag, no release, no push."
 
       - name: Tag and publish release
+        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           AUTH_TOKEN: ${{ github.token }}
@@ -363,6 +659,7 @@ jobs:
             "$TEMP/${REL}.zip" "$TEMP/${REL}_hashes.txt"
 
       - name: Publish self-update channel
+        if: env.DRY_RUN != 'true'
         env:
           AUTH_TOKEN: ${{ github.token }}
         run: |

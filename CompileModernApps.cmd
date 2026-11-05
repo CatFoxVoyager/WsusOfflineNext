@@ -82,7 +82,7 @@ if not defined WO_LAZARUS_ROOT set "WO_LAZARUS_ROOT=%~dp0.planning\tmp\23-tools\
 set "LAZBUILD=%WO_LAZARUS_ROOT%\lazbuild.exe"
 if not exist "%LAZBUILD%" (
     echo [ERROR] lazbuild not found: %LAZBUILD%
-    echo Install the Lazarus toolchain or set WO_LAZARUS_ROOT (the CI release job feeds it from the WO_LAZARUS_ROOT repo variable).
+    echo Install the Lazarus toolchain or set WO_LAZARUS_ROOT - the CI release job feeds it from the WO_LAZARUS_ROOT repo variable.
     if /i "%~1" neq "--no-pause" if /i "%~1" neq "/nopause" pause
     exit /b 1
 )

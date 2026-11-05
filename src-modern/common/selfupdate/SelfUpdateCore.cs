@@ -136,8 +136,13 @@ namespace WsusOfflineNext.SelfUpdate
             {
                 string? dir = Path.GetDirectoryName(cachePath);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(cachePath,
+                // Atomic-enough write: a crashed writer can only leave a
+                // complete .tmp behind, never a half line at the real path,
+                // so IsCheckedToday can never parse a torn date as valid.
+                string tmpPath = cachePath + ".tmp";
+                File.WriteAllText(tmpPath,
                     DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                File.Move(tmpPath, cachePath, overwrite: true);
             }
             catch
             {

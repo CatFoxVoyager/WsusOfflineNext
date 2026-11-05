@@ -261,8 +261,16 @@ jobs:
         run: |
           bash ci/bump-version.bash "${{ steps.version.outputs.version_full }}"
           git add $(bash ci/bump-version.bash --print-files)
-          git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
-            commit -m "chore(release): bump version to ${{ steps.version.outputs.version_full }}"
+          # Tolerate "nothing to commit" on re-dispatched dry-runs: a deleted
+          # broken release leaves main already carrying the bump commit, so a
+          # re-bump is an idempotent no-op and the gates still run on the
+          # already-bumped tree. A real train always has changes to commit.
+          if git -c user.name="wsusofflinenext-bot" -c user.email="actions@users.noreply.github.com" \
+            commit -m "chore(release): bump version to ${{ steps.version.outputs.version_full }}"; then
+            echo "bump commit created"
+          else
+            echo "bump commit skipped (nothing to commit — version already at target)"
+          fi
 
       # The SDK pin must never rot between trains (1.0.2792.45 stood for a
       # year). The bumper reads the NuGet flatcontainer index and rewrites

@@ -174,13 +174,19 @@ mkdir -p "$FIX_DIR"
 
 echo "--- section a: pure decisions via the probe project"
 
-dotnet build "$PROBE_DIR/SelfUpdateProbe.csproj" -v q > "$SCRATCH/probe-build.log" 2>&1
+# Single-file publish (the same shape as every shipped wson binary): this
+# machine enforces Smart App Control, which blocks the unsigned dll-shaped
+# Debug build at assembly load (0x800711C7) - the single-file bundle embeds
+# the managed dll so no on-disk dll is left for the policy to block.
+dotnet publish "$PROBE_DIR/SelfUpdateProbe.csproj" -c Release -r win-x64 \
+    -p:PublishSingleFile=true -p:SelfContained=false \
+    -o "$(native_path "$SCRATCH/probe")" > "$SCRATCH/probe-build.log" 2>&1
 if [ $? -ne 0 ]; then
-    echo "FAIL: probe project did not build (see scratch probe-build.log)"
+    echo "FAIL: probe project did not publish (see scratch probe-build.log)"
     cat "$SCRATCH/probe-build.log"
     exit 1
 fi
-PROBE_EXE="$PROBE_DIR/bin/Debug/net8.0-windows/SelfUpdateProbe.exe"
+PROBE_EXE="$SCRATCH/probe/SelfUpdateProbe.exe"
 if [ ! -f "$PROBE_EXE" ]; then
     echo "FAIL: probe exe not found at $PROBE_EXE after build"
     exit 1

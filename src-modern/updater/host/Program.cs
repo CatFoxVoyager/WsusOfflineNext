@@ -10,13 +10,14 @@
 //                            (sibling of the install root, .bak-timestamp)
 //   --relaunch <exe path>    the application binary to relaunch after the
 //                            swap (the host's own exe)
-//   --marker <file>          healthy-launch marker path the relaunched app
-//                            writes after its window opens (the path is
-//                            minted by the host; the watchdog that consumes
-//                            it arrives in Plan 03)
-//   --watchdog-seconds <int> parsed and carried but NOT acted on in v1 -
-//                            part of the frozen contract, consumed by the
-//                            Plan 03 watchdog without architectural change
+//   --marker <file>          healthy-launch marker path: the relaunched app
+//                            writes the file after its main window opens;
+//                            the watchdog below consumes it
+//   --watchdog-seconds <int> bounded healthy-launch watchdog window in
+//                            seconds (default 30). A new version that has
+//                            not written the marker within the window is
+//                            killed, the installation is restored from the
+//                            backup and the previous version is relaunched
 //
 // The install root is the updater's own directory (the updater ships inside
 // the installation it maintains). The swap is ZIP-MANIFEST-DRIVEN: only
@@ -24,10 +25,12 @@
 // installation's user payload (downloaded updates under client\ and
 // siblings) is never touched.
 //
-// Exit codes: 0 updated (swap done, relaunch started); 2 bad or incomplete
-// arguments / incomplete staging tree; 3 swap failure (backup restored, old
-// binary relaunched); 5 restore failure (manual restore path documented in
-// the log - rename the backup folder).
+// Exit codes: 0 updated (swap done, healthy launch confirmed); 2 bad or
+// incomplete arguments / incomplete staging tree; 3 swap failure (backup
+// restored, old binary relaunched); 4 unhealthy first launch of the new
+// version (marker absent within the watchdog window or the relaunch never
+// started: rolled back, previous version relaunched); 5 restore failure
+// (manual restore path documented in the log - rename the backup folder).
 
 using System;
 using System.Collections.Generic;
@@ -44,6 +47,14 @@ namespace WsusOfflineNext.Updater
         private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(1);
         private static readonly TimeSpan PollDelay = TimeSpan.FromMilliseconds(500);
 
+        // Watchdog default (Phase 28 context decision): framework-dependent
+        // single-file exes start in seconds even on slow HDDs under AV
+        // scanning, so 30 seconds bounds the user-visible stall while
+        // comfortably covering cold starts. The window is bounded by design
+        // (T-28-09): a hung new version is killed only inside it, and only
+        // when the updater itself launched it.
+        private const int WatchdogDefaultSeconds = 30;
+
         private sealed class UpdaterArgs
         {
             public int Pid = -1;
@@ -51,7 +62,7 @@ namespace WsusOfflineNext.Updater
             public string Backup = "";
             public string Relaunch = "";
             public string Marker = "";
-            public int WatchdogSeconds = 30;
+            public int WatchdogSeconds = WatchdogDefaultSeconds;
         }
 
         private static int Main(string[] arguments)
@@ -168,12 +179,47 @@ namespace WsusOfflineNext.Updater
 
             // ---- Relaunch phase: the ONLY process the updater ever starts
             // is the verified application binary itself (no helpers, no
-            // scripts, no shells - T-28-06). v1 exits right after the launch;
-            // the healthy-launch watchdog is Plan 03.
-            Relaunch(args.Relaunch, args.Marker);
+            // scripts, no shells - T-28-06).
+            Process? relaunched;
+            try
+            {
+                relaunched = RelaunchNew(args.Relaunch, args.Marker);
+            }
+            catch (Exception ex)
+            {
+                // A new exe that cannot even start never writes the marker:
+                // relaunch failure converges on the same unhealthy path as a
+                // marker timeout (rollback, exit 4).
+                SelfUpdateLog.Append("updater", "relaunch-failed");
+                Console.WriteLine($"updater: relaunch failed ({ex.Message})");
+                return Rollback(args, backupDir, archived, relaunched: null);
+            }
             SelfUpdateLog.Append("updater", "relaunch-start");
             Console.WriteLine($"updater: relaunched {args.Relaunch}");
-            return 0;
+
+            // ---- Watchdog phase: poll for the healthy-launch marker that
+            // the NEW app writes after its main window opens. Bounded window
+            // (WatchdogDefaultSeconds, CLI-tunable), 500ms polling (T-28-09).
+            DateTime deadline = DateTime.UtcNow +
+                TimeSpan.FromSeconds(args.WatchdogSeconds);
+            while (DateTime.UtcNow < deadline && !File.Exists(args.Marker))
+            {
+                Thread.Sleep(PollDelay);
+            }
+            if (File.Exists(args.Marker))
+            {
+                SelfUpdateLog.Append("updater", "marker-received");
+                Console.WriteLine("updater: healthy-launch marker received");
+                TryDeleteStaging(args.Staging);
+                PruneOldBackups(backupDir);
+                return 0;
+            }
+
+            SelfUpdateLog.Append("updater", "marker-timeout");
+            Console.WriteLine(
+                $"updater: marker absent after {args.WatchdogSeconds}s - " +
+                "the new version is unhealthy, rolling back");
+            return Rollback(args, backupDir, archived, relaunched);
         }
 
         /// <summary>
@@ -243,6 +289,57 @@ namespace WsusOfflineNext.Updater
         {
             SelfUpdateLog.Append("updater", "swap-failed");
             Console.WriteLine("updater: swap failed - restoring from backup...");
+            int outcome = RestoreAndRelaunchOld(args, backupDir, archived);
+            return outcome == 0 ? 3 : outcome;
+        }
+
+        /// <summary>
+        /// Unhealthy-first-launch rollback (watchdog timeout or a relaunch
+        /// that never started): kill the relaunched process when it is still
+        /// alive (the updater owns it - a hung new version is exactly this
+        /// case), settle 2s so its file handles close, then restore and
+        /// relaunch the OLD binary. Exit 4 on rollback, 5 when the restore
+        /// itself fails.
+        /// </summary>
+        private static int Rollback(
+            UpdaterArgs args, string backupDir, List<string> archived, Process? relaunched)
+        {
+            if (relaunched != null)
+            {
+                try
+                {
+                    relaunched.Refresh();
+                    if (!relaunched.HasExited)
+                    {
+                        Console.WriteLine(
+                            $"updater: killing the hung relaunched process (pid {relaunched.Id})");
+                        relaunched.Kill(entireProcessTree: true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"updater: kill of the hung process failed ({ex.Message})" +
+                        " - continuing rollback");
+                }
+            }
+            Thread.Sleep(TimeSpan.FromSeconds(2));
+            int outcome = RestoreAndRelaunchOld(args, backupDir, archived);
+            return outcome == 0 ? 4 : outcome;
+        }
+
+        /// <summary>
+        /// Shared restore tail: copy every archived file back from the
+        /// backup, then relaunch the OLD binary at the same path WITHOUT the
+        /// marker argument (a pre-28 version does not know the flag, and the
+        /// restored app is known-good: it is never watchdogged - no second
+        /// failure loop fighting the user). Returns 0 when the restore
+        /// succeeded, 5 when it failed (manual restore path named in the
+        /// log and on the console).
+        /// </summary>
+        private static int RestoreAndRelaunchOld(
+            UpdaterArgs args, string backupDir, List<string> archived)
+        {
             string installRoot = AppContext.BaseDirectory;
             bool restored = true;
             foreach (string relative in archived)
@@ -264,13 +361,16 @@ namespace WsusOfflineNext.Updater
                     $"{backupDir} back over the installation directory.");
                 return 5;
             }
-            Relaunch(args.Relaunch, args.Marker);
+            RelaunchOld(args.Relaunch);
             SelfUpdateLog.Append("updater", "relaunch-start");
-            Console.WriteLine($"updater: restored and relaunched the previous version ({args.Relaunch})");
-            return 3;
+            SelfUpdateLog.Append("updater", "rollback-complete");
+            Console.WriteLine(
+                $"updater: rollback complete - previous version restored and " +
+                $"relaunched ({args.Relaunch})");
+            return 0;
         }
 
-        private static void Relaunch(string exePath, string markerPath)
+        private static Process? RelaunchNew(string exePath, string markerPath)
         {
             var psi = new ProcessStartInfo(exePath)
             {
@@ -279,7 +379,140 @@ namespace WsusOfflineNext.Updater
             };
             psi.ArgumentList.Add("--healthy-marker");
             psi.ArgumentList.Add(markerPath);
-            using Process? process = Process.Start(psi);
+            return Process.Start(psi);
+        }
+
+        /// <summary>
+        /// The restored previous version never receives the marker argument:
+        /// a pre-28 version does not know the flag, and a known-good restore
+        /// is never watchdogged (prohibition: no second failure loop).
+        /// </summary>
+        private static void RelaunchOld(string exePath)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(exePath)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using Process? process = Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                // The restore already succeeded - a relaunch failure of the
+                // old binary must not turn the rollback into exit 5.
+                SelfUpdateLog.Append("updater", "relaunch-failed");
+                Console.WriteLine(
+                    $"updater: relaunch of the restored version failed ({ex.Message})");
+            }
+        }
+
+        /// <summary>
+        /// Best-effort staging cleanup after a healthy update: log on
+        /// failure, never fatal (the update itself is complete).
+        /// </summary>
+        private static void TryDeleteStaging(string stagingDir)
+        {
+            try
+            {
+                Directory.Delete(stagingDir, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                SelfUpdateLog.Append("updater", "staging-cleanup-failed");
+                Console.WriteLine($"updater: staging cleanup failed ({ex.Message})");
+            }
+        }
+
+        /// <summary>
+        /// Backup retention: exactly one backup survives a successful update
+        /// - the newest. Older timestamped siblings sharing the current
+        /// backup's stem (host-minted root-name.bak-timestamp next to the
+        /// install root, or the %TEMP% backup-timestamp fallback) are
+        /// pruned; the newest is NEVER deleted (the manual-restore path
+        /// renames it back over the installation).
+        /// </summary>
+        private static void PruneOldBackups(string backupDir)
+        {
+            try
+            {
+                string trimmed = Path.TrimEndingDirectorySeparator(backupDir);
+                if (TrySplitBackupName(Path.GetFileName(trimmed), out string stem))
+                {
+                    PruneTimestampedSiblings(Path.GetDirectoryName(trimmed), stem);
+                }
+                // Stale %TEMP% fallbacks from runs whose sibling backup could
+                // not be created: keep the newest there too.
+                string tempRoot = Path.Combine(
+                    Path.GetTempPath(), "WsusOfflineNext-Update");
+                if (!string.Equals(Path.GetDirectoryName(trimmed), tempRoot,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    PruneTimestampedSiblings(tempRoot, "backup");
+                }
+            }
+            catch (Exception ex)
+            {
+                SelfUpdateLog.Append("updater", "backup-prune-failed");
+                Console.WriteLine($"updater: backup pruning failed ({ex.Message})");
+            }
+        }
+
+        /// <summary>
+        /// A backup name is "stem + -yyyyMMdd-HHmmss" (16 trailing
+        /// characters). Anything else is not ours to prune.
+        /// </summary>
+        private static bool TrySplitBackupName(string name, out string stem)
+        {
+            const int SuffixLength = 16; // '-' + 8 digits + '-' + 6 digits
+            stem = "";
+            if (name.Length <= SuffixLength) return false;
+            string suffix = name.Substring(name.Length - SuffixLength);
+            if (suffix[0] != '-' || suffix[9] != '-') return false;
+            foreach (char c in suffix)
+            {
+                if (c != '-' && (c < '0' || c > '9')) return false;
+            }
+            stem = name.Substring(0, name.Length - SuffixLength);
+            return stem.Length > 0;
+        }
+
+        /// <summary>
+        /// Delete every stem-timestamped directory older than the newest
+        /// one under parent. The timestamp suffix sorts chronologically, so
+        /// index 0 after the descending sort is the kept newest.
+        /// </summary>
+        private static void PruneTimestampedSiblings(string? parent, string stem)
+        {
+            if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent)) return;
+            List<string> siblings = new List<string>();
+            foreach (string dir in Directory.EnumerateDirectories(parent))
+            {
+                string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(dir));
+                if (name.StartsWith(stem + "-", StringComparison.Ordinal)
+                    && TrySplitBackupName(name, out string found)
+                    && found == stem)
+                {
+                    siblings.Add(name);
+                }
+            }
+            if (siblings.Count < 2) return; // nothing older than the newest
+            siblings.Sort(StringComparer.OrdinalIgnoreCase);
+            siblings.Reverse(); // newest first: index 0 is kept
+            for (int i = 1; i < siblings.Count; i++)
+            {
+                try
+                {
+                    Directory.Delete(Path.Combine(parent, siblings[i]), recursive: true);
+                    Console.WriteLine($"updater: pruned old backup {siblings[i]}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"updater: pruning {siblings[i]} failed ({ex.Message})");
+                }
+            }
         }
 
         private static UpdaterArgs? ParseArgs(string[] arguments)

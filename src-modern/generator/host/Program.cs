@@ -1027,7 +1027,7 @@ namespace WSUSOffline.Generator
         }
 
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -1050,7 +1050,55 @@ namespace WSUSOffline.Generator
                     && !WebView2Compat.IsVersionAtLeast(local, channel),
                 OwnerFormProvider = () => Instance,
             });
-            Application.Run(new MainWindow());
+            // Healthy-first-launch marker (Phase 28): when the updater
+            // relaunched this app with --healthy-marker <path>, the file is
+            // written only after the main window has opened successfully -
+            // never here in Main. A normal launch (no argument, including
+            // every pre-update original) ignores the whole mechanism.
+            string? healthyMarkerPath = ParseHealthyMarkerArg(args);
+            MainWindow mainWindow = new MainWindow();
+            if (healthyMarkerPath != null)
+            {
+                mainWindow.Shown += (sender, e) => WriteHealthyMarker(healthyMarkerPath);
+            }
+            Application.Run(mainWindow);
+        }
+
+        /// <summary>
+        /// Parse the updater's --healthy-marker argument; null on every
+        /// normal launch.
+        /// </summary>
+        private static string? ParseHealthyMarkerArg(string[] args)
+        {
+            for (int i = 0; i + 1 < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--healthy-marker", StringComparison.Ordinal))
+                {
+                    return args[i + 1];
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Write the healthy-launch proof: the display version plus a
+        /// timestamp line. Never crashes the app - the updater's watchdog
+        /// treats an absent marker as an unhealthy launch.
+        /// </summary>
+        private static void WriteHealthyMarker(string path)
+        {
+            try
+            {
+                File.WriteAllText(path,
+                    GetDisplayVersion() + Environment.NewLine
+                    + DateTime.UtcNow.ToString("o") + Environment.NewLine);
+                SelfUpdateLog.Append("generator", "marker-written");
+            }
+            catch
+            {
+                // Marker write failure = unhealthy launch by contract; the
+                // app itself keeps running either way.
+            }
         }
     }
 

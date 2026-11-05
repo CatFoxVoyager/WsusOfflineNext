@@ -895,7 +895,7 @@ namespace WSUSOffline.Installer
                     {
                         UseShellExecute = true,
                         Verb = "runas",
-                        Arguments = string.Join(" ", args)
+                        Arguments = JoinArgumentsQuoted(args)
                     };
                     Process.Start(psi);
                     return;
@@ -926,7 +926,74 @@ namespace WSUSOffline.Installer
                     && !WebView2Compat.IsVersionAtLeast(local, channel),
                 OwnerFormProvider = () => Instance,
             });
-            Application.Run(new MainWindow());
+            // Healthy-first-launch marker (Phase 28), parsed only in the
+            // surviving elevated instance - the argument already rode the
+            // elevation re-pass above. When present, the file is written
+            // only after the main window has opened successfully - never in
+            // Main. A normal launch ignores the whole mechanism.
+            string? healthyMarkerPath = ParseHealthyMarkerArg(args);
+            MainWindow mainWindow = new MainWindow();
+            if (healthyMarkerPath != null)
+            {
+                mainWindow.Shown += (sender, e) => WriteHealthyMarker(healthyMarkerPath);
+            }
+            Application.Run(mainWindow);
+        }
+
+        /// <summary>
+        /// Re-pass the arguments through the elevation relaunch. A single
+        /// argument carrying whitespace is quoted: the healthy-marker path
+        /// lives under %LOCALAPPDATA%, which contains spaces whenever the
+        /// Windows user name does - an unquoted join would split it into two
+        /// arguments and the marker would never be written (a healthy update
+        /// would roll back).
+        /// </summary>
+        private static string JoinArgumentsQuoted(string[] args)
+        {
+            var quoted = new List<string>(args.Length);
+            foreach (string argument in args)
+            {
+                quoted.Add(argument.Contains(' ')
+                    ? "\"" + argument + "\"" : argument);
+            }
+            return string.Join(" ", quoted);
+        }
+
+        /// <summary>
+        /// Parse the updater's --healthy-marker argument; null on every
+        /// normal launch.
+        /// </summary>
+        private static string? ParseHealthyMarkerArg(string[] args)
+        {
+            for (int i = 0; i + 1 < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--healthy-marker", StringComparison.Ordinal))
+                {
+                    return args[i + 1];
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Write the healthy-launch proof: the display version plus a
+        /// timestamp line. Never crashes the app - the updater's watchdog
+        /// treats an absent marker as an unhealthy launch.
+        /// </summary>
+        private static void WriteHealthyMarker(string path)
+        {
+            try
+            {
+                File.WriteAllText(path,
+                    GetDisplayVersion() + Environment.NewLine
+                    + DateTime.UtcNow.ToString("o") + Environment.NewLine);
+                SelfUpdateLog.Append("installer", "marker-written");
+            }
+            catch
+            {
+                // Marker write failure = unhealthy launch by contract; the
+                // app itself keeps running either way.
+            }
         }
     }
 

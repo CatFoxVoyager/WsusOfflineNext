@@ -30,6 +30,17 @@
 #                            and the swap still completes exit 0.
 #                            Environment-gated: SELFUPDATE-UPDATER-SKIP-D-LOCK
 #                            when the lock cannot be proven held.
+#   Fixture E broken launch- the staged app slot is a non-executable renamed
+#                            .exe: the relaunch never starts, the updater
+#                            logs relaunch-failed, rolls the install tree
+#                            back from the backup (app slots restored, the
+#                            updater's own slot included), logs
+#                            rollback-complete and exits 4.
+#   Fixture F hung launch   - the relaunch target is a real process that
+#                            sleeps past --watchdog-seconds 5 without
+#                            writing the marker: the watchdog kills it
+#                            (its pid is reported on the updater console),
+#                            restores, logs rollback-complete, exits 4.
 #
 # Environment gates (named markers, exit 0 on skip, repo convention):
 #   - not Windows, or dotnet absent -> SELFUPDATE-UPDATER-SKIP-ENV (the
@@ -107,6 +118,8 @@ cleanup () {
     if [ -d "$SCRATCH" ]; then
         printf 'x' > "$SCRATCH/holderA.exit" 2>/dev/null
         printf 'x' > "$SCRATCH/holderD.exit" 2>/dev/null
+        printf 'x' > "$SCRATCH/holderE.exit" 2>/dev/null
+        printf 'x' > "$SCRATCH/holderF.exit" 2>/dev/null
     fi
     rm -rf "$SCRATCH" 2>/dev/null
     return 0
@@ -140,17 +153,29 @@ mkdir -p "$BASE_TMP" 2>/dev/null || BASE_TMP="$(pwd)"
 SCRATCH="$(mktemp -d "$BASE_TMP/wson-selfupdate-updater.XXXXXX")" \
     || { echo "FAIL: cannot create scratch"; exit 1; }
 
+# Isolate the updater's %TEMP% surface (backup fallback directory and the
+# post-success backup pruning) inside the scratch: fixtures never touch the
+# real user temp tree.
+UPDATER_TEMP="$SCRATCH/tmpdir"
+mkdir -p "$UPDATER_TEMP"
+
 # ================================================== section (a): hash gates
 
 echo "--- section a: hash parse and fail-closed refusal via the probe"
 
-dotnet build "$PROBE_DIR/SelfUpdateProbe.csproj" -v q > "$SCRATCH/probe-build.log" 2>&1
+# Single-file publish (the same shape as every shipped wson binary): this
+# machine enforces Smart App Control, which blocks the unsigned dll-shaped
+# Debug build at assembly load (0x800711C7) - the single-file bundle embeds
+# the managed dll so no on-disk dll is left for the policy to block.
+dotnet publish "$PROBE_DIR/SelfUpdateProbe.csproj" -c Release -r win-x64 \
+    -p:PublishSingleFile=true -p:SelfContained=false \
+    -o "$(native_path "$SCRATCH/probe")" > "$SCRATCH/probe-build.log" 2>&1
 if [ $? -ne 0 ]; then
-    echo "FAIL: probe project did not build"
+    echo "FAIL: probe project did not publish"
     cat "$SCRATCH/probe-build.log"
     exit 1
 fi
-PROBE_EXE="$PROBE_DIR/bin/Debug/net8.0-windows/SelfUpdateProbe.exe"
+PROBE_EXE="$SCRATCH/probe/SelfUpdateProbe.exe"
 [ -f "$PROBE_EXE" ] || { echo "FAIL: probe exe missing at $PROBE_EXE"; exit 1; }
 
 run_probe () {
@@ -269,7 +294,21 @@ try {
 } finally { $fs.Close() }
 PSEOF
 
-printf '@echo off\r\necho %%* >> "%%~dp0witness.txt"\r\n' > "$SCRATCH/relaunch.cmd"
+# killcheck.ps1: count the cmd.exe processes still running a given batch
+# file (by command line, immune to pid reuse inside a churny battery).
+cat > "$SCRATCH/killcheck.ps1" << 'PSEOF'
+param([string]$BatchPath)
+$left = @(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
+    Where-Object { $_.CommandLine -like "*$BatchPath*" })
+Write-Output $left.Count
+exit [Math]::Min($left.Count, 1)
+PSEOF
+
+# The relaunch witness records its arguments and, when the updater passed
+# --healthy-marker (the healthy relaunch), writes the marker file so the
+# watchdog observes a healthy launch. A rollback relaunch carries no marker
+# argument and writes no marker.
+printf '@echo off\r\necho %%* >> "%%~dp0witness.txt"\r\nif "%%~1"=="--healthy-marker" (echo witness-healthy-launch> "%%~2")\r\n' > "$SCRATCH/relaunch.cmd"
 
 start_holder () {
     # $1 scratch tag (writes $SCRATCH/$1.pid, waits for $SCRATCH/$1.exit)
@@ -317,9 +356,15 @@ else
     build_fixture_tree "$SCRATCH/instA" "$SCRATCH/stageA"
     if start_holder holderA; then
         HOLDER_A=$(tr -d '\r\n ' < "$SCRATCH/holderA.pid")
-        BACKUP_A="$SCRATCH/instA.bak-ts"
+        # Timestamp-shaped backup name so the retention prune recognizes it;
+        # a stale older sibling must be pruned while the newest survives.
+        BACKUP_A="$SCRATCH/instA.bak-20260101-120000"
+        mkdir -p "$SCRATCH/instA.bak-20000101-000000"
+        printf 'stale-backup' > "$SCRATCH/instA.bak-20000101-000000/sentinel.txt"
         MARKER_A="$SCRATCH/markerA/launch-testA.ok"
+        mkdir -p "$SCRATCH/markerA"   # the witness writes the marker file here
         SINCE_A=$(log_lines)
+        TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
         "$SCRATCH/instA/WsusOfflineUpdater.exe" \
             --pid "$HOLDER_A" \
             --staging "$(native_path "$SCRATCH/stageA")" \
@@ -380,8 +425,20 @@ else
         else
             fail_case "fixture A: event order wrong (start=$START_LINE relaunch=$RELAUNCH_LINE)"
         fi
+        segment_has "marker-received" "$SINCE_A" \
+            && pass_a "marker-received logged" \
+            || fail_case "fixture A: marker-received missing from update.log"
+        [ ! -d "$SCRATCH/stageA" ] \
+            && pass_a "staging tree cleaned up after the healthy update" \
+            || fail_case "fixture A: staging tree still present after a healthy update"
+        [ ! -d "$SCRATCH/instA.bak-20000101-000000" ] \
+            && pass_a "older backup sibling pruned" \
+            || fail_case "fixture A: old backup sibling not pruned"
+        [ -d "$BACKUP_A" ] \
+            && pass_a "newest backup retained (manual-restore path)" \
+            || fail_case "fixture A: the newest backup was deleted"
         echo "fixture A asserts: $ASSERT_A"
-        if [ "$ASSERT_A" -lt 10 ]; then
+        if [ "$ASSERT_A" -lt 14 ]; then
             fail_case "fixture A asserted $ASSERT_A checks - a run that replaced nothing must not get here (broken harness guard)"
         fi
     else
@@ -394,6 +451,7 @@ fi
 echo "--- fixture B: missing --staging exits 2 with usage, nothing mutated"
 build_fixture_tree "$SCRATCH/instB" "$SCRATCH/stageB"
 SNAP_B=$(snapshot_tree "$SCRATCH/instB")
+TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
 "$SCRATCH/instB/WsusOfflineUpdater.exe" \
     --pid 999999 \
     --backup "$(native_path "$SCRATCH/instB.bak")" \
@@ -418,6 +476,7 @@ echo "--- fixture C: incomplete staged tree aborts before any mutation"
 build_fixture_tree "$SCRATCH/instC" "$SCRATCH/stageC"
 rm "$SCRATCH/stageC/wsusoffline/client/UpdateInstallerModern.exe"
 SNAP_C=$(snapshot_tree "$SCRATCH/instC")
+TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
 "$SCRATCH/instC/WsusOfflineUpdater.exe" \
     --pid 999999 \
     --staging "$(native_path "$SCRATCH/stageC")" \
@@ -460,6 +519,7 @@ else
     else
         if start_holder holderD; then
             HOLDER_D=$(tr -d '\r\n ' < "$SCRATCH/holderD.pid")
+            TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
             "$SCRATCH/instD/WsusOfflineUpdater.exe" \
                 --pid "$HOLDER_D" \
                 --staging "$(native_path "$SCRATCH/stageD")" \
@@ -482,6 +542,140 @@ else
         else
             fail_case "fixture D: holder pid never appeared"
         fi
+    fi
+fi
+
+# ---------- Fixture E: broken launch (relaunch target not an executable)
+
+if [ "$HAVE_POWERSHELL" -ne 1 ]; then
+    echo "SELFUPDATE-UPDATER-SKIP-E: fixture E needs powershell for the holder"
+else
+    echo "--- fixture E: broken relaunch target rolls the installation back"
+    ASSERT_E=0
+    pass_e () { echo "PASS: E $1"; ASSERT_E=$((ASSERT_E + 1)); return 0; }
+
+    build_fixture_tree "$SCRATCH/instE" "$SCRATCH/stageE"
+    # The staged app slot is a non-executable renamed .exe: the swap lands
+    # it, Process.Start fails, and the updater must roll back.
+    printf 'THIS-IS-NOT-A-WINDOWS-EXECUTABLE' > "$SCRATCH/stageE/wsusoffline/UpdateGeneratorModern.exe"
+    if start_holder holderE; then
+        HOLDER_E=$(tr -d '\r\n ' < "$SCRATCH/holderE.pid")
+        SINCE_E=$(log_lines)
+        TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
+        "$SCRATCH/instE/WsusOfflineUpdater.exe" \
+            --pid "$HOLDER_E" \
+            --staging "$(native_path "$SCRATCH/stageE")" \
+            --backup "$(native_path "$SCRATCH/instE.bak-20260101-120000")" \
+            --relaunch "$(native_path "$SCRATCH/instE/UpdateGeneratorModern.exe")" \
+            --marker "$(native_path "$SCRATCH/markerE/launch-testE.ok")" \
+            --watchdog-seconds 10 \
+            > "$SCRATCH/fixtureE.log" 2>&1 &
+        UPD_E=$!
+        printf 'x' > "$SCRATCH/holderE.exit"
+        wait_updater_exit "$UPD_E" 60
+        RC_E="$UPDATER_RC"
+        if [ "$RC_E" = "4" ]; then
+            pass_e "updater exit code 4 (unhealthy launch)"
+        else
+            fail_case "fixture E: expected exit 4, got '$RC_E' (log: $(tail -3 "$SCRATCH/fixtureE.log" 2>/dev/null | tr '\n' ' '))"
+        fi
+        [ "$(cat "$SCRATCH/instE/UpdateGeneratorModern.exe" 2>/dev/null)" = "OLD-GENERATOR-v1" ] \
+            && pass_e "app slot restored to the OLD content" \
+            || fail_case "fixture E: app slot not restored"
+        [ "$(cat "$SCRATCH/instE/client/UpdateInstallerModern.exe" 2>/dev/null)" = "OLD-INSTALLER-v1" ] \
+            && pass_e "installer slot restored to the OLD content" \
+            || fail_case "fixture E: installer slot not restored"
+        cmp -s "$SCRATCH/instE/WsusOfflineUpdater.exe" "$SCRATCH/pub/WsusOfflineUpdater.exe" \
+            && pass_e "updater's own slot restored too" \
+            || fail_case "fixture E: updater slot not restored"
+        segment_has "relaunch-failed" "$SINCE_E" \
+            && pass_e "relaunch-failed logged" \
+            || fail_case "fixture E: relaunch-failed missing from update.log"
+        segment_has "rollback-complete" "$SINCE_E" \
+            && pass_e "rollback-complete logged" \
+            || fail_case "fixture E: rollback-complete missing from update.log"
+        [ ! -f "$SCRATCH/markerE/launch-testE.ok" ] \
+            && pass_e "no marker written" \
+            || fail_case "fixture E: marker exists despite the broken launch"
+        echo "fixture E asserts: $ASSERT_E"
+        if [ "$ASSERT_E" -lt 7 ]; then
+            fail_case "fixture E asserted $ASSERT_E checks - broken harness guard"
+        fi
+    else
+        fail_case "fixture E: holder pid never appeared"
+    fi
+fi
+
+# ---------- Fixture F: hung launch (no crash, no marker within the window)
+
+if [ "$HAVE_POWERSHELL" -ne 1 ]; then
+    echo "SELFUPDATE-UPDATER-SKIP-F: fixture F needs powershell for the holder"
+else
+    echo "--- fixture F: hung new version killed, restored, old relaunched"
+    ASSERT_F=0
+    pass_f () { echo "PASS: F $1"; ASSERT_F=$((ASSERT_F + 1)); return 0; }
+
+    # The hung relaunch witness sleeps 120s when called WITH the marker
+    # argument (the hung new version) and exits immediately without one
+    # (models the known-good previous version after the rollback).
+    printf '@echo off\r\nif "%%~1"=="" exit 0\r\necho %%* >> "%%~dp0witness.txt"\r\nping -n 120 127.0.0.1 > nul\r\n' > "$SCRATCH/hung.cmd"
+    build_fixture_tree "$SCRATCH/instF" "$SCRATCH/stageF"
+    if start_holder holderF; then
+        HOLDER_F=$(tr -d '\r\n ' < "$SCRATCH/holderF.pid")
+        SINCE_F=$(log_lines)
+        TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
+        "$SCRATCH/instF/WsusOfflineUpdater.exe" \
+            --pid "$HOLDER_F" \
+            --staging "$(native_path "$SCRATCH/stageF")" \
+            --backup "$(native_path "$SCRATCH/instF.bak-20260101-120000")" \
+            --relaunch "$(native_path "$SCRATCH/hung.cmd")" \
+            --marker "$(native_path "$SCRATCH/markerF/launch-testF.ok")" \
+            --watchdog-seconds 5 \
+            > "$SCRATCH/fixtureF.log" 2>&1 &
+        UPD_F=$!
+        printf 'x' > "$SCRATCH/holderF.exit"
+        wait_updater_exit "$UPD_F" 90
+        RC_F="$UPDATER_RC"
+        if [ "$RC_F" = "4" ]; then
+            pass_f "updater exit code 4 (marker timeout)"
+        else
+            fail_case "fixture F: expected exit 4, got '$RC_F' (log: $(tail -3 "$SCRATCH/fixtureF.log" 2>/dev/null | tr '\n' ' '))"
+        fi
+        HUNG_PID=$(grep -oE "hung relaunched process \(pid [0-9]+\)" "$SCRATCH/fixtureF.log" 2>/dev/null \
+            | grep -oE "[0-9]+" | head -1)
+        if [ -n "$HUNG_PID" ]; then
+            pass_f "watchdog reached the kill branch (reported pid $HUNG_PID)"
+        else
+            fail_case "fixture F: the updater never reported killing the hung process"
+        fi
+        # Pid-liveness is reuse-prone inside a churny battery: assert by
+        # COMMAND LINE instead - no cmd.exe running hung.cmd may survive.
+        LEFTOVER_F=$(powershell -NoProfile -ExecutionPolicy Bypass \
+            -File "$(native_path "$SCRATCH/killcheck.ps1")" \
+            -BatchPath "$(native_path "$SCRATCH/hung.cmd")" 2>/dev/null | tr -d '\r\n ')
+        if [ "${LEFTOVER_F:-1}" = "0" ]; then
+            pass_f "no hung.cmd process survived the watchdog kill"
+        else
+            fail_case "fixture F: ${LEFTOVER_F:-?} hung.cmd process(es) still alive after the watchdog kill"
+        fi
+        [ "$(cat "$SCRATCH/instF/UpdateGeneratorModern.exe" 2>/dev/null)" = "OLD-GENERATOR-v1" ] \
+            && pass_f "restore done (app slot back to OLD content)" \
+            || fail_case "fixture F: app slot not restored"
+        segment_has "marker-timeout" "$SINCE_F" \
+            && pass_f "marker-timeout logged" \
+            || fail_case "fixture F: marker-timeout missing from update.log"
+        segment_has "rollback-complete" "$SINCE_F" \
+            && pass_f "rollback-complete logged" \
+            || fail_case "fixture F: rollback-complete missing from update.log"
+        [ ! -f "$SCRATCH/markerF/launch-testF.ok" ] \
+            && pass_f "marker never written" \
+            || fail_case "fixture F: marker exists despite the hung launch"
+        echo "fixture F asserts: $ASSERT_F"
+        if [ "$ASSERT_F" -lt 7 ]; then
+            fail_case "fixture F asserted $ASSERT_F checks - broken harness guard"
+        fi
+    else
+        fail_case "fixture F: holder pid never appeared"
     fi
 fi
 

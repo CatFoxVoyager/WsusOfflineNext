@@ -41,6 +41,24 @@
 #   client/UpdateInstallerLegacy.exe (sha-asserted), relaunches it, and
 #   no marker file remains.
 #
+#   INSTALLER-HEALTHY (30-01): the accepted-and-applied cell for the
+#   MODERN installer - the same full cycle driven by the dotnet-published
+#   installer host (client/UpdateInstallerModern.exe slot) as the
+#   offer/accept host: the OLD installer build accepts the offer, the
+#   accept pipeline verifies the download against the MEASURED hashes
+#   file, stages, hands off to the real updater with the frozen CLI
+#   (--pid --staging --backup --relaunch --marker), exits by itself, the
+#   updater swaps the byte-distinct NEW installer build into
+#   client/UpdateInstallerModern.exe and relaunches it with
+#   --healthy-marker: the marker's first line is 9.0.0, the daily cache
+#   keeps the relaunched app from re-offering (update-accepted exactly
+#   once), and no rollback happens. Like the NATIVE scenarios it runs
+#   from an ELEVATED shell: the shipped installer carries a
+#   requireAdministrator manifest and the asInvoker updater inherits that
+#   elevation with NO new UAC prompt through the whole cycle (SC4). A
+#   non-elevated shell skips ONLY this scenario with the named marker
+#   SELFUPDATE-CYCLE-INSTALLER-SKIP.
+#
 #   Both NATIVE scenarios run from an ELEVATED shell - the shipped
 #   UpdateInstallerLegacy.exe carries a requireAdministrator manifest,
 #   and the asInvoker updater must inherit real elevation from it (no
@@ -63,6 +81,15 @@
 # applied - the fail-closed refusal the updater battery proves at the parse
 # level, here through the real app (the update.log segment would carry
 # hash-mismatch, no staged, no updater-launched, the app still running).
+# The same control applies to INSTALLER-HEALTHY: corrupting its fixture
+# zip after hashing flips that scenario to hash-mismatch with nothing
+# applied, exactly as for HEALTHY.
+#
+# Phase 30 behavior matrix: the accepted-and-applied cell is RECORDED per
+# app as a "MATRIX: app=<app> case=accepted-applied PASS" line (generator
+# = HEALTHY, native = NATIVE-HEALTHY, installer-modern =
+# INSTALLER-HEALTHY) and counted - the verdict block prints
+# "MATRIX SUMMARY: N full-cycle cases recorded".
 #
 # Environment gates (named markers, exit 0 on skip, repo convention):
 #   - not Windows, or dotnet absent -> SELFUPDATE-CYCLE-SKIP-ENV
@@ -76,11 +103,19 @@ APP_SLOT="UpdateGeneratorModern.exe"
 
 FAILED_CASES=0
 SCENARIO_EVENTS=0
+MATRIX_TOTAL=0
 
 fail_case () {
     echo "FAIL: $1"
     FAILED_CASES=$((FAILED_CASES + 1))
     return 0
+}
+
+matrix_record () {
+    # Per-case record line for the Phase 30 full-cycle matrix (the
+    # accepted-and-applied cell per app; counted at the verdict).
+    echo "MATRIX: app=$1 case=$2 PASS"
+    MATRIX_TOTAL=$((MATRIX_TOTAL + 1))
 }
 
 # ---------------------------------------------------------------- helpers
@@ -160,6 +195,7 @@ cleanup () {
         [ -n "${INST_H:-}" ] && kill_by_path "$INST_H/$APP_SLOT"
         [ -n "${INST_B:-}" ] && kill_by_path "$INST_B/$APP_SLOT"
         [ -n "${NINST:-}" ] && kill_by_path "$NINST/client/UpdateInstallerLegacy.exe"
+        [ -n "${INST_I:-}" ] && kill_by_path "$INST_I/client/UpdateInstallerModern.exe"
     fi
     # Any leaked native instance (from a crashed earlier battery) holds
     # the repo-tree build output - kill by NAME (29-01 convention).
@@ -266,14 +302,27 @@ printf 'http://127.0.0.1:%s/release.zip\r\nhttp://127.0.0.1:%s/release_hashes.tx
 
 build_fixture_zip () {
     # $1 = executable (or non-executable) to place in the relaunch slot;
-    # builds $SERVE_DIR/release.zip plus the MEASURED-format hashes file
-    # (%%%% headers, one data line, field 0 = size, field 3 = sha256).
-    local src_exe="$1" zsize zsha
+    # $2 = optional zip-relative slot path (default $APP_SLOT, so every
+    # existing call site keeps byte-identical behavior). The zip stage
+    # ALWAYS carries the three staging-completeness slots - the generator,
+    # the installer and the updater - with placeholders in the two slots
+    # that are not the target. Builds $SERVE_DIR/release.zip plus the
+    # MEASURED-format hashes file (%%%% headers, one data line, field 0 =
+    # size, field 3 = sha256) from the actual zip bytes.
+    local src_exe="$1" slot_rel="${2:-$APP_SLOT}" zsize zsha
     rm -rf "$SCRATCH/zipstage"
     mkdir -p "$SCRATCH/zipstage/wsusoffline/client"
-    cp "$src_exe" "$SCRATCH/zipstage/wsusoffline/$APP_SLOT"
-    printf 'placeholder-installer' > "$SCRATCH/zipstage/wsusoffline/client/UpdateInstallerModern.exe"
-    printf 'placeholder-updater' > "$SCRATCH/zipstage/wsusoffline/WsusOfflineUpdater.exe"
+    mkdir -p "$SCRATCH/zipstage/wsusoffline/$(dirname "$slot_rel")"
+    cp "$src_exe" "$SCRATCH/zipstage/wsusoffline/$slot_rel"
+    if [ "$slot_rel" != "$APP_SLOT" ]; then
+        printf 'placeholder-generator' > "$SCRATCH/zipstage/wsusoffline/$APP_SLOT"
+    fi
+    if [ "$slot_rel" != "client/UpdateInstallerModern.exe" ]; then
+        printf 'placeholder-installer' > "$SCRATCH/zipstage/wsusoffline/client/UpdateInstallerModern.exe"
+    fi
+    if [ "$slot_rel" != "WsusOfflineUpdater.exe" ]; then
+        printf 'placeholder-updater' > "$SCRATCH/zipstage/wsusoffline/WsusOfflineUpdater.exe"
+    fi
     rm -f "$SERVE_DIR/release.zip"
     # Directory argument (NOT explicit files): the zipfile CLI stores
     # basename-only arcnames for file arguments - the wsusoffline/ prefix
@@ -335,6 +384,7 @@ fi
 
 echo "--- scenario HEALTHY: accept -> updater -> swap -> healthy relaunch"
 SCENARIO_EVENTS=0
+H_FAIL_BASE=$FAILED_CASES
 pass_h () { echo "PASS: H $1"; SCENARIO_EVENTS=$((SCENARIO_EVENTS + 1)); return 0; }
 
 INST_H="$SCRATCH/instH"
@@ -430,6 +480,12 @@ fi
 echo "scenario HEALTHY asserted events: $SCENARIO_EVENTS"
 if [ "$SCENARIO_EVENTS" -lt 15 ]; then
     fail_case "HEALTHY asserted only $SCENARIO_EVENTS events - vacuous-pass guard"
+fi
+if [ "$SCENARIO_EVENTS" -ge 15 ] && [ "$FAILED_CASES" -eq "$H_FAIL_BASE" ]; then
+    echo "PASS: HEALTHY full cycle kept"
+    matrix_record generator accepted-applied
+else
+    echo "FAIL: HEALTHY full cycle"
 fi
 
 # --------------------------------------------- scenario: BROKEN cycle
@@ -832,6 +888,7 @@ if [ "$SCENARIO_EVENTS" -lt 15 ]; then
 fi
 if [ "$FAILED_CASES" -eq "$NH_FAIL_BASE" ]; then
     echo "PASS: NATIVE-HEALTHY full cycle kept"
+    matrix_record native accepted-applied
 else
     echo "FAIL: NATIVE-HEALTHY full cycle"
 fi
@@ -920,7 +977,212 @@ else
     echo "SELFUPDATE-CYCLE-NATIVE-SKIP: $NATIVE_SKIP_WHY"
 fi
 
+# --------------------------------------- installer full-cycle scenario
+#
+# Gates (named skip marker, exit stays with the .NET verdict): an
+# ELEVATED shell - the shipped UpdateInstallerModern.exe is
+# requireAdministrator and the asInvoker updater must inherit REAL
+# elevation from it (SC4: no new UAC prompt through the whole cycle).
+# dotnet and python are already gated globally.
+
+INSTALLER_GATES_OK=1
+INSTALLER_SKIP_WHY=""
+if ! net session >/dev/null 2>&1; then
+    INSTALLER_GATES_OK=0
+    INSTALLER_SKIP_WHY="shell not elevated - requireAdministrator UpdateInstallerModern.exe cannot launch (the updater inherits real elevation, SC4)"
+fi
+
+if [ "$INSTALLER_GATES_OK" -eq 1 ]; then
+
+echo "--- installer fixtures: OLD + byte-distinct NEW UpdateInstaller host builds"
+
+INSTALLER_CSproj="src-modern/installer/host/UpdateInstaller.csproj"
+dotnet publish "$INSTALLER_CSproj" -c Release -r win-x64 -p:PublishSingleFile=true \
+    -p:SelfContained=false -o "$(native_path "$SCRATCH/pub-old-installer")" \
+    > "$SCRATCH/pub-old-installer.log" 2>&1
+if [ $? -ne 0 ] || [ ! -f "$SCRATCH/pub-old-installer/UpdateInstaller.exe" ]; then
+    echo "FAIL: OLD installer publish failed"
+    tail -5 "$SCRATCH/pub-old-installer.log"
+    FAILED_CASES=$((FAILED_CASES + 1))
+    INSTALLER_GATES_OK=0
+fi
+
+if [ "$INSTALLER_GATES_OK" -eq 1 ]; then
+dotnet publish "$INSTALLER_CSproj" -c Release -r win-x64 -p:PublishSingleFile=true \
+    -p:SelfContained=false -p:Version=9.0.0+2099.01 \
+    -o "$(native_path "$SCRATCH/pub-new-installer")" > "$SCRATCH/pub-new-installer.log" 2>&1
+if [ $? -ne 0 ] || [ ! -f "$SCRATCH/pub-new-installer/UpdateInstaller.exe" ]; then
+    echo "FAIL: NEW installer publish failed"
+    tail -5 "$SCRATCH/pub-new-installer.log"
+    FAILED_CASES=$((FAILED_CASES + 1))
+    INSTALLER_GATES_OK=0
+fi
+fi
+
+if [ "$INSTALLER_GATES_OK" -eq 1 ]; then
+OLD_I_SHA=$(sha256sum "$SCRATCH/pub-old-installer/UpdateInstaller.exe" | cut -d' ' -f1)
+NEW_I_SHA=$(sha256sum "$SCRATCH/pub-new-installer/UpdateInstaller.exe" | cut -d' ' -f1)
+if [ "$OLD_I_SHA" = "$NEW_I_SHA" ]; then
+    echo "FAIL: OLD and NEW installer builds are byte-identical - the swap asserts would be vacuous"
+    FAILED_CASES=$((FAILED_CASES + 1))
+    INSTALLER_GATES_OK=0
+fi
+fi
+fi
+
+if [ "$INSTALLER_GATES_OK" -eq 1 ]; then
+
+# Scratch install of the modern installer: the host ships inside client\,
+# so the exe sits at client/UpdateInstallerModern.exe (InstallRoot = the
+# parent), the INI beside it, the updater at the root (the accept
+# pipeline fixes the updater path at InstallRoot\WsusOfflineUpdater.exe).
+INST_I="$SCRATCH/instI"
+rm -rf "$INST_I"
+mkdir -p "$INST_I/client/w100"
+cp "$SCRATCH/pub-old-installer/UpdateInstaller.exe" "$INST_I/client/UpdateInstallerModern.exe"
+cp "$SCRATCH/pub-updater/WsusOfflineUpdater.exe" "$INST_I/WsusOfflineUpdater.exe"
+printf '%b' '[Control]\r\nSkipSelfUpdate=Disabled\r\n' > "$INST_I/client/UpdateInstaller.ini"
+printf 'cycle-payload' > "$INST_I/client/w100/payload.dat"
+cp -r "$SCRATCH/pub-old-installer/wwwroot" "$INST_I/client/wwwroot" 2>/dev/null || true
+
+# Fixture zip: the relaunch slot is client/UpdateInstallerModern.exe and
+# the payload is the NEW installer build; the other two staging slots get
+# placeholders; hashes are regenerated from the actual zip bytes.
+build_fixture_zip "$SCRATCH/pub-new-installer/UpdateInstaller.exe" \
+    "client/UpdateInstallerModern.exe"
+
+launch_installer_app () {
+    # $1 = install root. Mirrors launch_app targeting the client\ slot:
+    # all test hooks + TEMP isolation ride the env; the updater and the
+    # relaunched app inherit everything they need.
+    WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:$FAKE_PORT/SelfUpdateVersion-recent.txt" \
+    WSON_UPDATE_LINKS_URL="http://127.0.0.1:$FAKE_PORT/StaticDownloadLink-recent.txt" \
+    WSON_UPDATE_LOCAL_VERSION="1.0.0" \
+    WSON_UPDATE_AUTO_ACCEPT="1" \
+    WSON_UPDATE_ALLOW_HTTP="1" \
+    TEMP="$(native_path "$UPDATER_TEMP")" TMP="$(native_path "$UPDATER_TEMP")" \
+    "$1/client/UpdateInstallerModern.exe" > /dev/null 2>&1 &
+}
+
+echo "--- scenario INSTALLER-HEALTHY: installer accept -> updater -> swap -> healthy relaunch"
+SCENARIO_EVENTS=0
+IH_FAIL_BASE=$FAILED_CASES
+pass_ih () { echo "PASS: IH $1"; SCENARIO_EVENTS=$((SCENARIO_EVENTS + 1)); return 0; }
+
+# Stage-dir snapshot BEFORE the cycle: the BROKEN scenarios (which ran
+# before this one) legitimately leave their stage dirs behind - the
+# cleanup assert must be scoped to NEW stage dirs, not to the unscoped
+# stage-* glob (the 29-02 scoping lesson).
+STAGE_BEFORE_I=$(ls -d "$UPDATER_TEMP/WsusOfflineNext-Update/"stage-* 2>/dev/null | sort)
+
+clear_state
+SINCE_I=$(log_lines)
+launch_installer_app "$INST_I"
+
+if wait_for_segment_marker "marker-received" "$SINCE_I" 150; then
+    pass_ih "updater reached marker-received"
+else
+    fail_case "INSTALLER-HEALTHY: marker-received never appeared (last log: $(tail -5 "$UPDATE_LOG" 2>/dev/null | tr '\n' ' '))"
+fi
+sleep 3   # let the updater finish staging cleanup and backup pruning
+
+for ev in update-offered update-accepted hash-verified staged updater-launched wait-exit relaunch-start marker-written; do
+    if segment_has "$ev" "$SINCE_I"; then
+        pass_ih "$ev logged"
+    else
+        fail_case "INSTALLER-HEALTHY: $ev missing from the log segment"
+    fi
+done
+
+ACCEPTED_I=$(segment_count "update-accepted" "$SINCE_I")
+if [ "$ACCEPTED_I" -eq 1 ]; then
+    pass_ih "update-accepted exactly once (no re-offer loop)"
+else
+    fail_case "INSTALLER-HEALTHY: update-accepted count=$ACCEPTED_I - the relaunched app re-offered"
+fi
+if segment_has "check-skip-cache" "$SINCE_I"; then
+    pass_ih "relaunched app logged check-skip-cache (daily cache loop guard)"
+else
+    fail_case "INSTALLER-HEALTHY: check-skip-cache missing - the relaunched app re-checked the network"
+fi
+if segment_has "marker-timeout" "$SINCE_I" || segment_has "rollback-complete" "$SINCE_I"; then
+    fail_case "INSTALLER-HEALTHY: rollback events present in a healthy cycle"
+else
+    pass_ih "no rollback events (exit-0 branch by construction)"
+fi
+
+SLOT_SHA_I=$(sha256sum "$INST_I/client/UpdateInstallerModern.exe" 2>/dev/null | cut -d' ' -f1)
+if [ "$SLOT_SHA_I" = "$NEW_I_SHA" ]; then
+    pass_ih "relaunch slot now carries the NEW installer exe (sha-distinct from the old)"
+else
+    fail_case "INSTALLER-HEALTHY: relaunch slot does not carry the NEW installer exe"
+fi
+BACKUP_I=$(ls -d "$INST_I".bak-* 2>/dev/null | head -1)
+if [ -n "$BACKUP_I" ] && [ "$(sha256sum "$BACKUP_I/client/UpdateInstallerModern.exe" 2>/dev/null | cut -d' ' -f1)" = "$OLD_I_SHA" ]; then
+    pass_ih "backup folder exists and carries the OLD installer exe (manual-restore path)"
+else
+    fail_case "INSTALLER-HEALTHY: backup missing or not carrying the OLD installer exe (backup=${BACKUP_I:-<none>})"
+fi
+MARKER_FILE_I=$(ls "$STATE_DIR/"launch-*.ok 2>/dev/null | head -1)
+if [ -n "$MARKER_FILE_I" ]; then
+    pass_ih "healthy-launch marker file exists"
+else
+    fail_case "INSTALLER-HEALTHY: marker file missing"
+fi
+MARKER_VER_I=$(head -1 "$MARKER_FILE_I" 2>/dev/null | tr -d '\r\n ')
+if [ "$MARKER_VER_I" = "9.0.0" ]; then
+    pass_ih "marker written by the NEW installer version (first line 9.0.0)"
+else
+    fail_case "INSTALLER-HEALTHY: marker first line is '${MARKER_VER_I:-<empty>}', expected 9.0.0"
+fi
+STAGE_AFTER_I=$(ls -d "$UPDATER_TEMP/WsusOfflineNext-Update/"stage-* 2>/dev/null | sort)
+if [ "$STAGE_AFTER_I" = "$STAGE_BEFORE_I" ]; then
+    pass_ih "staging tree cleaned (exit-0-only effect; no new stage dir survived)"
+else
+    fail_case "INSTALLER-HEALTHY: a NEW stage dir survived the healthy update ($(printf '%s\n' "$STAGE_AFTER_I" | grep -vxF "$STAGE_BEFORE_I" | head -2 | tr '\n' ' '))"
+fi
+if [ "$(cat "$INST_I/client/w100/payload.dat" 2>/dev/null)" = "cycle-payload" ]; then
+    pass_ih "user payload untouched through the whole cycle"
+else
+    fail_case "INSTALLER-HEALTHY: user payload modified by the cycle"
+fi
+sleep 1
+RUNNING_I=$(count_by_path "$INST_I/client/UpdateInstallerModern.exe")
+if [ "${RUNNING_I:-0}" -ge 1 ]; then
+    pass_ih "relaunched NEW installer proven running"
+else
+    fail_case "INSTALLER-HEALTHY: relaunched app is not running (census=0)"
+fi
+kill_by_path "$INST_I/client/UpdateInstallerModern.exe"
+sleep 2
+RUNNING_I2=$(count_by_path "$INST_I/client/UpdateInstallerModern.exe")
+if [ "${RUNNING_I2:-1}" -eq 0 ]; then
+    pass_ih "survivor killed (no leaked GUI instance)"
+else
+    fail_case "INSTALLER-HEALTHY: leaked a running instance (census=$RUNNING_I2)"
+fi
+
+echo "scenario INSTALLER-HEALTHY asserted events: $SCENARIO_EVENTS"
+if [ "$SCENARIO_EVENTS" -lt 15 ]; then
+    fail_case "INSTALLER-HEALTHY asserted only $SCENARIO_EVENTS events - vacuous-pass guard"
+fi
+if [ "$FAILED_CASES" -eq "$IH_FAIL_BASE" ]; then
+    echo "PASS: INSTALLER-HEALTHY full cycle kept"
+    matrix_record installer-modern accepted-applied
+else
+    echo "FAIL: INSTALLER-HEALTHY full cycle"
+fi
+
+else
+    echo "SELFUPDATE-CYCLE-INSTALLER-SKIP: $INSTALLER_SKIP_WHY"
+fi
+
 # ------------------------------------------------------------- verdict
+
+if [ "$MATRIX_TOTAL" -ne 3 ]; then
+    echo "info: full-cycle matrix expects 3 recorded cells, counted $MATRIX_TOTAL"
+fi
+echo "MATRIX SUMMARY: $MATRIX_TOTAL full-cycle cases recorded"
 if [ "$FAILED_CASES" -ne 0 ]; then
     echo "SELFUPDATE-CYCLE: RED ($FAILED_CASES failing case(s))"
     exit 1

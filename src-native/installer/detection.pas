@@ -160,11 +160,14 @@ function DetectIsNetworkPath(const APath: string): Boolean;
 function DetectSplitUncPath(const APath: string;
   out ARoot, ARemainder: string): Boolean;
 { Returns the usable script directory: a UNC path is mapped to a free
-  drive letter (WNetAddConnection2 with the '*' device, incumbent
-  DriveMapAdd parity); an existing mapped-drive spelling is reused;
-  lettered network paths and local paths pass through. AMapped=True marks
-  a NEW mapping the caller must release with DetectReleaseScriptDirectory
-  when the GUI closes. Returns '' on failure (the au3's error shape). }
+  drive letter - delimiter-stripped deep-path attempt first, then a
+  share-root fallback (DetectSplitUncPath) returning device + remainder,
+  the same shape as the reuse branch; '*' is resolved via
+  WNetGetConnectionW (WNetAddConnection2 never writes lpLocalName back).
+  An existing mapped-drive spelling is reused; lettered network paths
+  and local paths pass through. AMapped=True marks a NEW mapping the
+  caller must release with DetectReleaseScriptDirectory when the GUI
+  closes. Returns '' on failure (the au3's error shape). }
 function DetectAssignScriptDirectory(const AExeDir: string;
   out AMapped: Boolean): string;
 procedure DetectReleaseScriptDirectory(const ADrive: string);
@@ -668,14 +671,137 @@ begin
   Result := False;
 end;
 
-{ TDD stub (plan 261106-p8q task 1): the split contract is pinned
-  RED-first in the testrunner battery; task 2 fills the scan. }
+{ Plan 261106-p8q: \\server\share scanner - the share root goes to
+  ARoot, the balance from the next backslash to ARemainder. False for
+  anything without a non-empty server AND share component (server-only,
+  trailing-delimiter-only, non-UNC). }
 function DetectSplitUncPath(const APath: string;
   out ARoot, ARemainder: string): Boolean;
+var
+  ServerStart: Integer;
+  ServerEnd: Integer;
+  ShareEnd: Integer;
 begin
-  Result := False;
   ARoot := '';
   ARemainder := '';
+  Result := False;
+  { (a) anything whose first two chars are not the UNC prefix is out. }
+  if (Length(APath) < 2) or (Copy(APath, 1, 2) <> '\\') then
+    Exit;
+  { (b) first backslash after the prefix ends the server; none means
+    server-only. }
+  ServerStart := 3;
+  ServerEnd := ServerStart;
+  while (ServerEnd <= Length(APath)) and (APath[ServerEnd] <> '\') do
+    Inc(ServerEnd);
+  if ServerEnd > Length(APath) then
+    Exit;
+  { (c) empty server is not a usable UNC. }
+  if ServerEnd = ServerStart then
+    Exit;
+  { (d) the share runs to the next backslash (or to the end). }
+  ShareEnd := ServerEnd + 1;
+  while (ShareEnd <= Length(APath)) and (APath[ShareEnd] <> '\') do
+    Inc(ShareEnd);
+  if ShareEnd = ServerEnd + 1 then
+    Exit; { empty share component }
+  if ShareEnd > Length(APath) then
+  begin
+    { Two-component UNC: the root is the whole input. }
+    ARoot := APath;
+    Result := True;
+    Exit;
+  end;
+  { (e) root = everything before the backslash, remainder = from it
+    (leading backslash and trailing delimiter preserved). }
+  ARoot := Copy(APath, 1, ShareEnd - 1);
+  ARemainder := Copy(APath, ShareEnd, MaxInt);
+  Result := True;
+end;
+
+{ Plan 261106-p8q (Bug B): '*' map helper - WNetAddConnection2W with the
+  '*' auto device, then the assigned device resolved via the two-call
+  WNetGetConnectionW pattern (lpLocalName is an [in] parameter: the API
+  never writes the '*' back - the old map block's comment claimed
+  otherwise and was wrong). The resolved device must be the exact 'X:'
+  shape; on a bad shape or an unresolvable device the new 'X:\' entry
+  absent from the pre-call snapshot is cancelled by force so a failed
+  resolution cannot leak the mapping. }
+function MapWithStar(const ARemote: string; out ADevice: string): Boolean;
+var
+  Before: WideString;
+  DrivesBuf: array[0..511] of WideChar;
+  DLen: Integer;
+  I: Integer;
+  DriveLetter: WideString;
+  LocalStar: WideString;
+  Nr: TDetNetResourceW;
+  RemoteWide: WideString;
+  Resolved: WideString;
+  ResolvedLen: DWord;
+  Res: DWord;
+begin
+  ADevice := '';
+  Result := False;
+
+  { Fresh drive snapshot: the entry the call adds is identifiable by
+    diffing against it. }
+  FillChar(DrivesBuf, SizeOf(DrivesBuf), 0);
+  DLen := GetLogicalDriveStringsW(Length(DrivesBuf) - 1, @DrivesBuf[0]);
+  Before := '';
+  I := 0;
+  while (DLen > 0) and (I + 3 < DLen) do
+  begin
+    DriveLetter := PWideChar(@DrivesBuf[I]); { 'X:\' }
+    Before := Before + DriveLetter;
+    Inc(I, 4);
+  end;
+
+  { The remote name is the UNC path itself - no user-derived content. }
+  FillChar(Nr, SizeOf(Nr), 0);
+  Nr.dwType := DET_RESOURCETYPE_DISK;
+  RemoteWide := ARemote;
+  Nr.lpRemoteName := PWideChar(RemoteWide);
+  LocalStar := '*';
+  Nr.lpLocalName := PWideChar(LocalStar);
+  Res := WNetAddConnection2W(@Nr, nil, nil, 0);
+  if Res <> NO_ERROR then
+    Exit;
+
+  { Resolve the assigned device with the same sizing-call pattern the
+    reuse loop uses, then validate the shape: exactly 'X:'. }
+  ResolvedLen := 0;
+  Res := WNetGetConnectionW(PWideChar(LocalStar), nil, ResolvedLen);
+  if (Res = ERROR_MORE_DATA) and (ResolvedLen > 0) then
+  begin
+    SetLength(Resolved, ResolvedLen);
+    if WNetGetConnectionW(PWideChar(LocalStar), PWideChar(Resolved),
+        ResolvedLen) = NO_ERROR then
+    begin
+      SetLength(Resolved, StrLen(PWideChar(Resolved)));
+      if (Length(Resolved) = 2) and (Resolved[2] = ':') then
+      begin
+        ADevice := string(Resolved);
+        Result := True;
+        Exit;
+      end;
+    end;
+  end;
+
+  { Release-then-fail: cancel the drive this call created (the new
+    'X:\' entry absent from the snapshot) so the mapping cannot leak
+    when the device cannot be resolved (Bug-B discipline). }
+  FillChar(DrivesBuf, SizeOf(DrivesBuf), 0);
+  DLen := GetLogicalDriveStringsW(Length(DrivesBuf) - 1, @DrivesBuf[0]);
+  I := 0;
+  while (DLen > 0) and (I + 3 < DLen) do
+  begin
+    DriveLetter := PWideChar(@DrivesBuf[I]); { 'X:\' }
+    if (Length(DriveLetter) = 3)
+       and (Pos(DriveLetter, Before) = 0) then
+      WNetCancelConnection2W(PWideChar(Copy(DriveLetter, 1, 2)), 0, True);
+    Inc(I, 4);
+  end;
 end;
 
 function DetectAssignScriptDirectory(const AExeDir: string;
@@ -687,10 +813,10 @@ var
   DriveLetter: WideString;
   Remote: WideString;
   RemoteLen: DWord;
-  Nr: TDetNetResourceW;
-  LocalBuf: WideString;
-  RemoteWide: WideString;
   Res: DWord;
+  Dev: string;
+  Root: string;
+  Rest: string;
 begin
   AMapped := False;
   Result := AExeDir;
@@ -731,22 +857,34 @@ begin
     Inc(I, 4);
   end;
 
-  { No reuse: map a fresh drive with the '*' auto device (au3:190-196).
-    The command line is the UNC path itself - no user-derived content. }
-  FillChar(Nr, SizeOf(Nr), 0);
-  Nr.dwType := DET_RESOURCETYPE_DISK;
-  RemoteWide := AExeDir;
-  Nr.lpRemoteName := PWideChar(RemoteWide);
-  LocalBuf := '*';
-  Nr.lpLocalName := PWideChar(LocalBuf);
-  Res := WNetAddConnection2W(@Nr, nil, nil, 0);
-  if Res = NO_ERROR then
+  { No reuse: map a fresh drive with the '*' auto device. DELIBERATE
+    deviation from au3:190-196 (incumbent commit 0a4358b,
+    DriveMapAdd("*", @ScriptDir)), documented per plan 261106-p8q: the
+    incumbent mapped the full UNC spelling and shared its deep-path
+    limitation (providers like VMware HGFS only map the share root), so
+    this port first maps the delimiter-stripped deep path (the au3
+    @ScriptDir carried no trailing backslash) and falls back to the
+    share root, returning device + remainder in the reuse branch's
+    shape; '*' is resolved via WNetGetConnectionW (WNetAddConnection2
+    never writes lpLocalName back - the old in-code comment claimed
+    otherwise and was wrong). The remote name is the UNC path itself -
+    no user-derived content. }
+  if MapWithStar(ExcludeTrailingPathDelimiter(AExeDir), Dev) then
   begin
     AMapped := True;
-    Result := LocalBuf; { the '*': replaced by the assigned 'X:' }
-  end
-  else
-    Result := '';
+    Exit(Dev);
+  end;
+
+  { Deep spelling unmappable: the share-root fallback. Not a splittable
+    UNC (or the root is unmappable too) -> the au3 error shape: ''. }
+  if not DetectSplitUncPath(AExeDir, Root, Rest) then
+    Exit('');
+  if MapWithStar(Root, Dev) then
+  begin
+    AMapped := True;
+    Exit(Dev + Rest);
+  end;
+  Result := '';
 end;
 
 procedure DetectReleaseScriptDirectory(const ADrive: string);

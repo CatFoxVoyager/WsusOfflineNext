@@ -285,9 +285,12 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
-  { DriveMapDel parity (au3:1102-1110): release the mapping we created. }
+  { DriveMapDel parity (au3:1102-1110): release the mapping we created -
+    the DEVICE string (first two chars of FScriptDir, '<letter>:'), the
+    string the au3 DriveMapDel received; the assign returns
+    '<letter>:' or '<letter>:\...' (plan 261106-p8q). }
   if FMapped then
-    DetectReleaseScriptDirectory(FScriptDir);
+    DetectReleaseScriptDirectory(Copy(FScriptDir, 1, 2));
   FreeAndNil(FSpine);
   FreeAndNil(FMsiNames);
 end;

@@ -95,6 +95,8 @@ Coverage depends on the catalog, available packages, and the destination system.
 
 Runtime downloads: [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) · [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 
+| **Windows 7 self-update** | The release channel is HTTPS-only. Stock Windows 7 negotiates only SSL 3.0/TLS 1.0 in its system HTTP stacks, so the launch-time update check stays silent (`check-error` is logged locally, nothing is downloaded) until TLS 1.2 is enabled system-wide: apply Microsoft's [KB3140245](https://support.microsoft.com/help/3140245) Easy Fix — or set the `DefaultSecureProtocols` registry value it documents — and reboot. This is a machine prerequisite, not an application setting; Windows 8.1 and later need nothing. |
+
 Offline updating does not provide Windows ESU entitlement or Office activation. Package availability and eligibility still depend on the relevant product and license.
 
 ## Antivirus false positives

@@ -701,6 +701,12 @@ NINST="$SCRATCH/native-install"
 assemble_native_install "$NINST"
 build_native_fixture_zip "$SCRATCH/native-src/bin/installer-i386.exe"
 
+# Stage-dir snapshot BEFORE the cycle: the .NET BROKEN scenario (which ran
+# before this one) legitimately leaves its stage dir behind - the rollback
+# path cleans nothing - so the cleanup assert below must be scoped to NEW
+# stage dirs, not to the unscoped stage-* glob.
+STAGE_BEFORE_NH=$(ls -d "$UPDATER_TEMP/WsusOfflineNext-Update/"stage-* 2>/dev/null | sort)
+
 clear_state
 SINCE_NH=$(log_lines)
 launch_native_app "$NINST"
@@ -783,10 +789,11 @@ if [ "$MARKER_VER_NH" = "9.0.0" ]; then
 else
     fail_case "NATIVE-HEALTHY: marker first line is '${MARKER_VER_NH:-<empty>}', expected 9.0.0"
 fi
-if ls -d "$UPDATER_TEMP/WsusOfflineNext-Update/"stage-* >/dev/null 2>&1; then
-    fail_case "NATIVE-HEALTHY: staging tree not cleaned after the healthy update"
+STAGE_AFTER_NH=$(ls -d "$UPDATER_TEMP/WsusOfflineNext-Update/"stage-* 2>/dev/null | sort)
+if [ "$STAGE_AFTER_NH" = "$STAGE_BEFORE_NH" ]; then
+    pass_nh "staging tree cleaned (exit-0-only effect; no new stage dir survived)"
 else
-    pass_nh "staging tree cleaned (exit-0-only effect)"
+    fail_case "NATIVE-HEALTHY: a NEW stage dir survived the healthy update ($(printf '%s\n' "$STAGE_AFTER_NH" | grep -vxF "$STAGE_BEFORE_NH" | head -2 | tr '\n' ' '))"
 fi
 sleep 1
 RUNNING_NH=$(count_by_path "$NINST/client/UpdateInstallerLegacy.exe")

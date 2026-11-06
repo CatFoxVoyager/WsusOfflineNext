@@ -159,7 +159,12 @@ wait_for_segment_marker () {
 }
 
 app_alive () {
-    tasklist 2>/dev/null | grep -qi "$APP_NAME"
+    # $1 = process image name; default = the section-b generator name.
+    # Section c MUST pass NATIVE_APP_NAME - the generator is not running
+    # there, and the default name silently matched an UNRELATED live
+    # generator process in the 29-01 elevated run (false pass) and
+    # nothing at all in the 29-02 runs (false app-died failures).
+    tasklist 2>/dev/null | grep -qi "${1:-$APP_NAME}"
 }
 
 kill_app_and_assert_death () {
@@ -568,7 +573,7 @@ else
             else
                 fail_case "N1: offered/declined order wrong (offer=$OFFER_LINE decline=$DECLINE_LINE)"
             fi
-            if app_alive; then
+            if app_alive "$NATIVE_APP_NAME"; then
                 native_pass "N1 app still alive after decline"
             else
                 fail_case "N1: app died after decline"
@@ -623,7 +628,7 @@ else
             else
                 fail_case "N4: check-error never appeared (offline must be logged, silently)"
             fi
-            if app_alive; then
+            if app_alive "$NATIVE_APP_NAME"; then
                 native_pass "N4 app still alive after channel failure"
             else
                 fail_case "N4: app died on the unreachable channel"

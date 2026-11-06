@@ -201,8 +201,11 @@ function EngWindowCaption: string;
 
 function EngPathValid(const APath: string): Boolean;
 
-{ Startup OS gate port (au3:998-1005): False for the incumbent blocked set
-  XP/2003/Vista/2008/7/2008R2/8.0, i.e. every version below 6.3. }
+{ Startup OS gate port (au3:998-1005), amended per milestone decision
+  D-05 (owner veto: XP SP3 is an essential product target — airgapped
+  machines are the core value): False only for versions below 5.1,
+  i.e. XP pre-SP1/2000 and older. XP SP3 (5.1) and every later Windows
+  are accepted. }
 function EngOsVersionSupported: Boolean;
 
 { Human-readable OS version for the gate error box. }
@@ -463,8 +466,8 @@ begin
       unknown @OSVersion. }
     Exit(False);
   end;
-  Result := (Info.dwMajorVersion > 6)
-    or ((Info.dwMajorVersion = 6) and (Info.dwMinorVersion >= 3));
+  Result := (Info.dwMajorVersion > 5)
+    or ((Info.dwMajorVersion = 5) and (Info.dwMinorVersion >= 1));
 end;
 
 function EngOsVersionDisplay: string;

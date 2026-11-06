@@ -1389,9 +1389,15 @@ var
 begin
   try
     { Staging root + stamp (UpdateInstall.cs 124-128; the stamp is a
-      local timestamp here - the value is only a unique temp name). }
-    StagingRoot := IncludeTrailingPathDelimiter(EngCallerTempDir)
-      + 'WsusOfflineNext-Update';
+      local timestamp here - the value is only a unique temp name).
+      Path separators normalized to backslashes: %TEMP% arrives in the
+      env with forward slashes on some shells, and .NET's
+      Path.GetTempPath always hands the updater backslash forms - the
+      updater's post-swap staging cleanup pattern-matches against that
+      shape (found live by the cycle battery's NATIVE-HEALTHY staging
+      assert). }
+    StagingRoot := StringReplace(IncludeTrailingPathDelimiter(EngCallerTempDir)
+      + 'WsusOfflineNext-Update', '/', '\', [rfReplaceAll]);
     ForceDirectories(StagingRoot);
     Stamp := FormatDateTime('yymmddhhnnsszzz', Now);
     ZipPath := StagingRoot + '\update-' + Stamp + '.zip';

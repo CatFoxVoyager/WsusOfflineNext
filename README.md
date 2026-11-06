@@ -109,7 +109,7 @@ If your antivirus flags one of these files:
 
 ## Self-update
 
-The modern .NET applications check the release channel for a newer version once a day when they start. The check runs in the background, never delays the launch, and works silently offline — an available update is offered in a small native dialog over the open window.
+All three Windows applications - UpdateGeneratorModern.exe, client\UpdateInstallerModern.exe, and the classic native installer client\UpdateInstallerLegacy.exe - run the same launch-time check against the release channel. The check runs in the background, never delays the launch, and works silently offline — an available update is offered in a small native dialog over the open window.
 
 When you accept the offer:
 
@@ -125,6 +125,8 @@ To disable the update check entirely, set the following in `client\UpdateInstall
 [Control]
 SkipSelfUpdate=Enabled
 ```
+
+SkipSelfUpdate is a frozen, permanent contract: it is honored by every application in this distribution and will not be removed or renamed.
 
 ## Quick start
 

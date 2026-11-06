@@ -400,6 +400,7 @@ jobs:
           unzip -p "$ZIP" wsusoffline/bin/odt/setup.exe > /dev/null || { echo "FAIL: bin/odt/setup.exe missing"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/cmd/DoUpdate.cmd | grep -qF "WSUSOFFLINE_VERSION=${VER_FULL}" || { echo "FAIL: version ${VER_FULL} not embedded"; exit 1; }
           unzip -p "$ZIP" wsusoffline/UpdateGenerator.cmd > /dev/null || { echo "FAIL: UpdateGenerator.cmd entry point missing from the zip"; exit 1; }
+          unzip -p "$ZIP" wsusoffline/WsusOfflineUpdater.exe > /dev/null || { echo "FAIL: WsusOfflineUpdater.exe missing from the zip (self-update updater must ship)"; exit 1; }
           unzip -p "$ZIP" wsusoffline/client/UpdateInstaller.cmd > /dev/null || { echo "FAIL: client/UpdateInstaller.cmd entry point missing from the zip"; exit 1; }
           # CRLF gate (milestone v4.2): every shipped .cmd/.bat/.vbs must be CRLF-terminated.
           # cmd.exe misparses multi-line parenthesized blocks in LF-only files
@@ -453,6 +454,7 @@ jobs:
               "client/UpdateInstallerModern.exe",
               "client/UpdateInstallerLegacy.exe",
               "client/UpdateInstallerLegacy64.exe",
+              "WsusOfflineUpdater.exe",
           ]
           API = "https://www.virustotal.com/api/v3"
           BOUNDARY = "----wson-fp-gate"
@@ -569,6 +571,7 @@ jobs:
                   "UpdateGeneratorModern.exe",
                   "client/UpdateInstallerModern.exe",
                   "client/UpdateInstallerLegacy64.exe",
+                  "WsusOfflineUpdater.exe",
               ],
           }
 

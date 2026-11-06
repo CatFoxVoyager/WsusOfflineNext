@@ -107,6 +107,25 @@ If your antivirus flags one of these files:
 - The modern .NET 8 interfaces are not affected. Run `UpdateGeneratorModern.exe` or `client\UpdateInstallerModern.exe` directly; the launcher also selects the modern interface automatically when the WebView2 Runtime is available.
 - The permanent fix shipped in v4.2: the last AutoIt component (the installer GUI) was rewritten as a native Win32 application — AutoIt has left the distribution.
 
+## Self-update
+
+The modern .NET applications check the release channel for a newer version once a day when they start. The check runs in the background, never delays the launch, and works silently offline — an available update is offered in a small native dialog over the open window.
+
+When you accept the offer:
+
+1. The update package is downloaded and its published SHA256 hash is verified; a failed verification changes nothing and the application keeps running.
+2. After you close the application (or accept the "Restart now?" prompt), the dedicated `WsusOfflineUpdater.exe` swaps the application files and starts the new version. Only files carried by the release package are touched — your downloaded updates and other data are never modified.
+3. The new version must prove its first launch is healthy. If it fails to start or its window never opens within a bounded watchdog window, the updater automatically restores the previous version from the backup folder next to the installation and relaunches it.
+
+A backup of the replaced files is kept as a `.bak-` folder beside the installation directory (for example `wsusoffline.bak-YYYYMMDD-HHMMSS`). To restore a previous installation by hand at any time, close the applications and rename that folder back over the installation directory.
+
+To disable the update check entirely, set the following in `client\UpdateInstaller.ini`:
+
+```ini
+[Control]
+SkipSelfUpdate=Enabled
+```
+
 ## Quick start
 
 ### 1. Prepare updates on the connected computer

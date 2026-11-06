@@ -34,6 +34,44 @@
 #     (the shipped manifest is requireAdministrator; a non-elevated shell
 #     would need a UAC click a headless battery cannot make)
 #
+# Section (d) is the MODERN INSTALLER PROBE (Phase 30): the real
+# dotnet-published installer host (requireAdministrator manifest) runs
+# the same check matrix as section (b) - offer + auto-decline with the
+# app left alive and the cache written (D1), same-day cache skip (D2),
+# kill-switch skip before any network event (D3), offline check-error
+# with NO cache write (D4) and corrupt-channel check-error with NO cache
+# write (D5). Self-sufficient: own app copy (published single-file into
+# a scratch install with the exe at client\UpdateInstallerModern.exe and
+# the INI beside it, wwwroot copied best-effort), own fake server
+# (port 52000+), own corrupt server (54000+). Named skip markers (each
+# skips ONLY section (d), exit 0 on skip):
+#   - WebView2 runtime absent -> SELFUPDATE-CHECK-INSTALLER-SKIP-WEBVIEW2
+#   - python absent           -> SELFUPDATE-CHECK-INSTALLER-SKIP-PYTHON
+#   - 'net session' nonzero  -> SELFUPDATE-CHECK-INSTALLER-SKIP-NOT-ELEVATED
+#
+# Phase 30 behavior matrix (ROADMAP criterion 1): every check-slice cell
+# is RECORDED per case and per app as a "MATRIX: app=<app> case=<case>
+# PASS" line and counted - 15 check cells across the generator
+# (section b), the native installer (section c) and the modern installer
+# (section d): offered, declined, kill-switch, offline-silent,
+# corrupt-channel. A section that ran but recorded zero MATRIX cells
+# fails the vacuous-pass guard, and the verdict block prints
+# "MATRIX SUMMARY: N check cases recorded".
+#
+# Corrupt-channel cells (run 5 / N5 / D5): a channel file carrying a
+# non-parseable line must log check-error, leave the app alive and write
+# NO daily cache (the engine writes the cache only after a completed
+# channel read+parse). Can-fail contract (CORRUPT-CELL-CAN-FAIL):
+# rewriting either corrupt-channel fixture with a valid newer channel
+# flips run 5 / N5 / D5 from check-error to an offered offer - the
+# check-error wait times out and the battery goes red.
+#
+# Teardown: every fake-channel server the battery started (section b
+# main + corrupt, native main + corrupt, installer main + corrupt) is
+# tracked in BATTERY_PORTS and stopped by netstat LISTENING pid lookup
+# on exit; every probe app is killed with a death assertion; the scratch
+# tree is removed. No loopback-external listener survives the run.
+#
 # Environment gates (named markers, exit 0 on skip, following the repo
 # skip-guard convention):
 #   - not Windows, or dotnet absent -> SELFUPDATE-CHECK-SKIP-ENV, the
@@ -58,11 +96,31 @@ APP_NAME="UpdateGenerator"
 
 FAILED_CASES=0
 FIXTURE_COUNT=0
+MATRIX_TOTAL=0
+MATRIX_B=0
+MATRIX_C=0
+MATRIX_D=0
+B_RAN=0
+C_RAN=0
+D_RAN=0
 
 fail_case () {
     echo "FAIL: $1"
     FAILED_CASES=$((FAILED_CASES + 1))
     return 0
+}
+
+matrix_record () {
+    # Per-case record line for the Phase 30 behavior matrix (15 check
+    # cells + per-section counters; a section that ran but recorded zero
+    # cells fails its vacuous-pass guard).
+    echo "MATRIX: app=$1 case=$2 PASS"
+    MATRIX_TOTAL=$((MATRIX_TOTAL + 1))
+    case "$1" in
+        generator)        MATRIX_B=$((MATRIX_B + 1)) ;;
+        native)           MATRIX_C=$((MATRIX_C + 1)) ;;
+        installer-modern) MATRIX_D=$((MATRIX_D + 1)) ;;
+    esac
 }
 
 # ---------------------------------------------------------------- helpers
@@ -89,13 +147,30 @@ SCRATCH="$(pwd)/.selfupdate-battery-scratch.$$"
 UPDATE_LOG="$(localappdata_posix)/WsusOfflineNext/selfupdate/update.log"
 CACHE_FILE="$(localappdata_posix)/WsusOfflineNext/selfupdate/last-check.txt"
 SERVER_PID=""
+# Every fake-channel port the battery starts is tracked here; the EXIT
+# trap stops each by netstat LISTENING pid lookup (T-30-01: no
+# loopback-external listener survives the run).
+BATTERY_PORTS=""
+
+stop_server_on_port () {
+    # $1 = port; netstat LISTENING pid lookup + Stop-Process (the cycle
+    # battery's teardown pattern).
+    local port="$1" listener
+    [ -n "$port" ] || return 0
+    listener=$(netstat -ano 2>/dev/null | grep ":${port}" | grep -i LISTENING \
+        | awk '{print $NF}' | head -1)
+    if [ -n "$listener" ]; then
+        powershell -NoProfile -Command "Stop-Process -Id $listener -Force" \
+            >/dev/null 2>&1
+    fi
+}
 
 cleanup () {
-    # Guarded cleanup: kill the app with an explicit death assertion
-    # (a leaked GUI instance locks the next build), then the fake
-    # channel server by its listening port, then remove the scratch.
-    # Both probe targets die here: the section (b) generator and the
-    # section (c) native installer.
+    # Guarded cleanup: kill every probe app with an explicit death
+    # assertion (a leaked GUI instance locks the next build), then the
+    # fake channel servers by their listening ports, then remove the
+    # scratch. Probe targets: the section (b) generator, the section (c)
+    # native installer and the section (d) modern installer.
     if command -v powershell >/dev/null 2>&1; then
         powershell -NoProfile -Command \
             "Get-Process -Name '$APP_NAME' -ErrorAction SilentlyContinue | Stop-Process -Force" \
@@ -103,25 +178,14 @@ cleanup () {
         powershell -NoProfile -Command \
             "Get-Process -Name 'UpdateInstallerLegacy' -ErrorAction SilentlyContinue | Stop-Process -Force" \
             >/dev/null 2>&1
+        powershell -NoProfile -Command \
+            "Get-Process -Name 'UpdateInstallerModern' -ErrorAction SilentlyContinue | Stop-Process -Force" \
+            >/dev/null 2>&1
     fi
-    if [ -n "${FAKE_PORT:-}" ]; then
-        local listener
-        listener=$(netstat -ano 2>/dev/null | grep ":${FAKE_PORT}" | grep -i LISTENING \
-            | awk '{print $NF}' | head -1)
-        if [ -n "$listener" ]; then
-            powershell -NoProfile -Command "Stop-Process -Id $listener -Force" \
-                >/dev/null 2>&1
-        fi
-    fi
-    if [ -n "${NATIVE_FAKE_PORT:-}" ]; then
-        local nat_listener
-        nat_listener=$(netstat -ano 2>/dev/null | grep ":${NATIVE_FAKE_PORT}" | grep -i LISTENING \
-            | awk '{print $NF}' | head -1)
-        if [ -n "$nat_listener" ]; then
-            powershell -NoProfile -Command "Stop-Process -Id $nat_listener -Force" \
-                >/dev/null 2>&1
-        fi
-    fi
+    local p
+    for p in $BATTERY_PORTS; do
+        stop_server_on_port "$p"
+    done
     rm -rf "$SCRATCH"
 }
 trap cleanup EXIT
@@ -335,6 +399,7 @@ if [ "$WEBVIEW2_PRESENT" != "yes" ]; then
 elif ! command -v python >/dev/null 2>&1; then
     echo "SELFUPDATE-CHECK-PROBE-SKIP-PYTHON: python is needed to serve the fake channel"
 else
+    B_RAN=1
     APP_DIR="$SCRATCH/app"
     SERVE_DIR="$SCRATCH/channel"
     mkdir -p "$SERVE_DIR"
@@ -357,6 +422,7 @@ else
         printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$INI_PATH"
 
         FAKE_PORT=$(( (RANDOM % 2000) + 48000 ))
+        BATTERY_PORTS="$BATTERY_PORTS $FAKE_PORT"
         ( cd "$SERVE_DIR" && python -m http.server "$FAKE_PORT" --bind 127.0.0.1 \
             > "$SCRATCH/httpd.log" 2>&1 & )
 
@@ -377,6 +443,7 @@ else
             export WSON_UPDATE_LOCAL_VERSION="1.0.0"
 
             # ---- run 1: offer + auto-decline, app left alive ----
+            RUN1_FAIL_BASE=$FAILED_CASES
             clear_probe_state
             SINCE=$(log_lines)
             WSON_UPDATE_AUTO_DECLINE=1 "$APP_EXE" &
@@ -407,6 +474,10 @@ else
             else
                 fail_case "run 1: cache file missing after a successful check"
             fi
+            if [ "$FAILED_CASES" -eq "$RUN1_FAIL_BASE" ]; then
+                matrix_record generator offered
+                matrix_record generator declined
+            fi
             kill_app_and_assert_death || fail_case "run 1: app could not be stopped"
 
             # ---- run 2 (same day): cache skip, no new offer ----
@@ -425,6 +496,7 @@ else
             kill_app_and_assert_death || fail_case "run 2: app could not be stopped"
 
             # ---- run 3: kill-switch outranks everything ----
+            RUN3_FAIL_BASE=$FAILED_CASES
             clear_probe_state
             printf '[Misc]\r\nw96=Enabled\r\n[Control]\r\n; comment\r\nSkipSelfUpdate=Enabled\r\nverify=Enabled\r\n' > "$INI_PATH"
             SINCE=$(log_lines)
@@ -439,10 +511,14 @@ else
             else
                 echo "PASS: run 3 no network event"
             fi
+            if [ "$FAILED_CASES" -eq "$RUN3_FAIL_BASE" ]; then
+                matrix_record generator kill-switch
+            fi
             kill_app_and_assert_death || fail_case "run 3: app could not be stopped"
             printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$INI_PATH"
 
             # ---- run 4: offline silent failure, NO cache write ----
+            RUN4_FAIL_BASE=$FAILED_CASES
             clear_probe_state
             SINCE=$(log_lines)
             WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:9/SelfUpdateVersion-recent.txt" \
@@ -462,9 +538,73 @@ else
             else
                 echo "PASS: run 4 cache not written on failure"
             fi
+            if [ "$FAILED_CASES" -eq "$RUN4_FAIL_BASE" ]; then
+                matrix_record generator offline-silent
+            fi
             kill_app_and_assert_death || fail_case "run 4: app could not be stopped"
+
+            # ---- run 5: corrupt-channel silent failure, NO cache write ----
+            # A non-parseable channel line must log check-error, leave the
+            # app alive and write NO daily cache (the cache is written only
+            # after a completed channel read+parse). Own serve dir + own
+            # server: port band 50000-50099, disjoint from the section b
+            # 48000-49999 main server and section c's 51000+ range.
+            RUN5_FAIL_BASE=$FAILED_CASES
+            B_CORRUPT_PORT=$(( (RANDOM % 100) + 50000 ))
+            BATTERY_PORTS="$BATTERY_PORTS $B_CORRUPT_PORT"
+            B_CORRUPT_DIR="$SCRATCH/channel-corrupt"
+            mkdir -p "$B_CORRUPT_DIR"
+            printf 'not-a-channel-file\r\n' > "$B_CORRUPT_DIR/SelfUpdateVersion-recent.txt"
+            printf 'https://example.com/WsusOfflineNext-9.0.0.zip\r\nhttps://example.com/WsusOfflineNext-9.0.0_hashes.txt\r\n' \
+                > "$B_CORRUPT_DIR/StaticDownloadLink-recent.txt"
+            ( cd "$B_CORRUPT_DIR" && python -m http.server "$B_CORRUPT_PORT" --bind 127.0.0.1 \
+                > "$SCRATCH/httpd-corrupt.log" 2>&1 & )
+            SERVER_READY=1
+            for (( i = 0; i < 20; i++ )); do
+                if python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:$B_CORRUPT_PORT/SelfUpdateVersion-recent.txt', timeout=2).status == 200 else 1)" 2>/dev/null; then
+                    SERVER_READY=0
+                    break
+                fi
+                sleep 0.5
+            done
+            if [ "$SERVER_READY" -ne 0 ]; then
+                fail_case "run 5 corrupt-channel server never became ready on port $B_CORRUPT_PORT"
+            else
+                clear_probe_state
+                SINCE=$(log_lines)
+                WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:$B_CORRUPT_PORT/SelfUpdateVersion-recent.txt" \
+                    WSON_UPDATE_LINKS_URL="http://127.0.0.1:$B_CORRUPT_PORT/StaticDownloadLink-recent.txt" \
+                    WSON_UPDATE_AUTO_DECLINE=1 "$APP_EXE" &
+                if wait_for_segment_marker "check-error" "$SINCE" 60; then
+                    echo "PASS: run 5 log has check-error (corrupt channel)"
+                else
+                    fail_case "run 5: check-error never appeared (a corrupt channel must fail silently)"
+                fi
+                if app_alive; then
+                    echo "PASS: run 5 app still alive after corrupt channel"
+                else
+                    fail_case "run 5: app died on the corrupt channel"
+                fi
+                if [ -f "$CACHE_FILE" ]; then
+                    fail_case "run 5: cache written despite an unparseable channel"
+                else
+                    echo "PASS: run 5 cache not written on parse failure"
+                fi
+                if [ "$FAILED_CASES" -eq "$RUN5_FAIL_BASE" ]; then
+                    matrix_record generator corrupt-channel
+                fi
+                kill_app_and_assert_death || fail_case "run 5: app could not be stopped"
+                # Corrupt server dies here (main b server dies at the EXIT
+                # teardown, per the port list).
+                stop_server_on_port "$B_CORRUPT_PORT"
+            fi
         fi
     fi
+fi
+
+echo "section b matrix cases: $MATRIX_B"
+if [ "$B_RAN" -eq 1 ] && [ "$MATRIX_B" -eq 0 ]; then
+    fail_case "section b recorded zero matrix cases (vacuous pass guard)"
 fi
 
 # ============================================ section (c): native app probe
@@ -506,6 +646,7 @@ elif ! command -v python >/dev/null 2>&1; then
 elif ! net session >/dev/null 2>&1; then
     echo "SELFUPDATE-CHECK-NATIVE-SKIP-NOT-ELEVATED: the shipped manifest is requireAdministrator; a non-elevated shell would need a UAC click a headless battery cannot make"
 else
+    C_RAN=1
     NATIVE_SRC_EXE="src-native/installer/bin/installer-i386.exe"
     # Pre-build hygiene: a leaked instance from an earlier crashed battery
     # must never hold the build output as a confusing linker error.
@@ -536,6 +677,7 @@ else
         # proves the hook-unset shipped default stays enforced). The port
         # range 51000+ stays clear of section b's 48000+ server.
         NATIVE_FAKE_PORT=$(( (RANDOM % 2000) + 51000 ))
+        BATTERY_PORTS="$BATTERY_PORTS $NATIVE_FAKE_PORT"
         ( cd "$NATIVE_SERVE_DIR" && python -m http.server "$NATIVE_FAKE_PORT" --bind 127.0.0.1 \
             > "$SCRATCH/native-httpd.log" 2>&1 & )
 
@@ -558,6 +700,7 @@ else
             NATIVE_EXE="$NATIVE_APP_DIR/client/UpdateInstallerLegacy.exe"
 
             # ---- N1: offer + auto-decline, app alive, cache written ----
+            N1_FAIL_BASE=$FAILED_CASES
             clear_probe_state
             SINCE=$(log_lines)
             WSON_UPDATE_AUTO_DECLINE=1 "$NATIVE_EXE" &
@@ -583,6 +726,10 @@ else
             else
                 fail_case "N1: cache file missing after a successful check"
             fi
+            if [ "$FAILED_CASES" -eq "$N1_FAIL_BASE" ]; then
+                matrix_record native offered
+                matrix_record native declined
+            fi
             kill_native_app_and_assert_death || fail_case "N1: app could not be stopped"
 
             # ---- N2 (same day, no clear): cache skip, no second offer ----
@@ -601,6 +748,7 @@ else
             kill_native_app_and_assert_death || fail_case "N2: app could not be stopped"
 
             # ---- N3: kill-switch outranks everything ----
+            N3_FAIL_BASE=$FAILED_CASES
             clear_probe_state
             printf '[Misc]\r\nw96=Enabled\r\n[Control]\r\n; comment\r\nSkipSelfUpdate=Enabled\r\nverify=Enabled\r\n' > "$NATIVE_INI_PATH"
             SINCE=$(log_lines)
@@ -615,10 +763,14 @@ else
             else
                 native_pass "N3 no network event (kill-switch outranks everything)"
             fi
+            if [ "$FAILED_CASES" -eq "$N3_FAIL_BASE" ]; then
+                matrix_record native kill-switch
+            fi
             kill_native_app_and_assert_death || fail_case "N3: app could not be stopped"
             printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$NATIVE_INI_PATH"
 
             # ---- N4: offline silent failure, NO cache write ----
+            N4_FAIL_BASE=$FAILED_CASES
             clear_probe_state
             SINCE=$(log_lines)
             WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:9/SelfUpdateVersion-recent.txt" \
@@ -638,17 +790,344 @@ else
             else
                 native_pass "N4 cache not written on failure"
             fi
+            if [ "$FAILED_CASES" -eq "$N4_FAIL_BASE" ]; then
+                matrix_record native offline-silent
+            fi
             kill_native_app_and_assert_death || fail_case "N4: app could not be stopped"
+
+            # ---- N5: corrupt-channel silent failure, NO cache write ----
+            # Same mechanics as run 5 against a corrupt variant of the
+            # native serve tree: port band 53000-53099 (disjoint from the
+            # native main server's 51000+ range).
+            N5_FAIL_BASE=$FAILED_CASES
+            NATIVE_CORRUPT_PORT=$(( (RANDOM % 100) + 53000 ))
+            BATTERY_PORTS="$BATTERY_PORTS $NATIVE_CORRUPT_PORT"
+            NATIVE_CORRUPT_DIR="$SCRATCH/native-channel-corrupt"
+            mkdir -p "$NATIVE_CORRUPT_DIR"
+            printf 'not-a-channel-file\r\n' > "$NATIVE_CORRUPT_DIR/SelfUpdateVersion-recent.txt"
+            printf 'https://example.com/WsusOfflineNext-9.0.0.zip\r\nhttps://example.com/WsusOfflineNext-9.0.0_hashes.txt\r\n' \
+                > "$NATIVE_CORRUPT_DIR/StaticDownloadLink-recent.txt"
+            ( cd "$NATIVE_CORRUPT_DIR" && python -m http.server "$NATIVE_CORRUPT_PORT" --bind 127.0.0.1 \
+                > "$SCRATCH/native-httpd-corrupt.log" 2>&1 & )
+            SERVER_READY=1
+            for (( i = 0; i < 20; i++ )); do
+                if python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:$NATIVE_CORRUPT_PORT/SelfUpdateVersion-recent.txt', timeout=2).status == 200 else 1)" 2>/dev/null; then
+                    SERVER_READY=0
+                    break
+                fi
+                sleep 0.5
+            done
+            if [ "$SERVER_READY" -ne 0 ]; then
+                fail_case "N5 corrupt-channel server never became ready on port $NATIVE_CORRUPT_PORT"
+            else
+                clear_probe_state
+                SINCE=$(log_lines)
+                WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:$NATIVE_CORRUPT_PORT/SelfUpdateVersion-recent.txt" \
+                    WSON_UPDATE_LINKS_URL="http://127.0.0.1:$NATIVE_CORRUPT_PORT/StaticDownloadLink-recent.txt" \
+                    WSON_UPDATE_AUTO_DECLINE=1 "$NATIVE_EXE" &
+                if wait_for_segment_marker "check-error" "$SINCE" 60; then
+                    native_pass "N5 native log has check-error (corrupt channel)"
+                else
+                    fail_case "N5: check-error never appeared (a corrupt channel must fail silently)"
+                fi
+                if app_alive "$NATIVE_APP_NAME"; then
+                    native_pass "N5 app still alive after corrupt channel"
+                else
+                    fail_case "N5: app died on the corrupt channel"
+                fi
+                if [ -f "$CACHE_FILE" ]; then
+                    fail_case "N5: cache written despite an unparseable channel"
+                else
+                    native_pass "N5 cache not written on parse failure"
+                fi
+                if [ "$FAILED_CASES" -eq "$N5_FAIL_BASE" ]; then
+                    matrix_record native corrupt-channel
+                fi
+                kill_native_app_and_assert_death || fail_case "N5: app could not be stopped"
+                stop_server_on_port "$NATIVE_CORRUPT_PORT"
+            fi
         fi
     fi
 fi
+
+# Section d reuses the 52000+ band: free section c's servers now so the
+# bands stay disjoint in TIME as well (the EXIT port list is the backstop).
+stop_server_on_port "${NATIVE_FAKE_PORT:-}"
+stop_server_on_port "${NATIVE_CORRUPT_PORT:-}"
 
 echo "section c native cases: $NATIVE_CASES"
 if [ "$NATIVE_CASES" -eq 0 ]; then
     fail_case "section c enumerated zero native cases (vacuous pass guard)"
 fi
+echo "section c matrix cases: $MATRIX_C"
+if [ "$C_RAN" -eq 1 ] && [ "$MATRIX_C" -eq 0 ]; then
+    fail_case "section c recorded zero matrix cases (vacuous pass guard)"
+fi
+
+# ============================================ section (d): installer probe
+
+echo "--- section d: modern installer live probe"
+
+INSTALLER_APP_NAME="UpdateInstallerModern"
+INSTALLER_CSproj="src-modern/installer/host/UpdateInstaller.csproj"
+INSTALLER_CASES=0
+INSTALLER_FAKE_PORT=""
+INSTALLER_CORRUPT_PORT=""
+
+installer_pass () {
+    INSTALLER_CASES=$((INSTALLER_CASES + 1))
+    echo "PASS: $1"
+}
+
+kill_installer_app_and_assert_death () {
+    powershell -NoProfile -Command \
+        "Get-Process -Name '$INSTALLER_APP_NAME' -ErrorAction SilentlyContinue | Stop-Process -Force" \
+        >/dev/null 2>&1
+    local i
+    for (( i = 0; i < 10; i++ )); do
+        if powershell -NoProfile -Command \
+            "if (Get-Process -Name '$INSTALLER_APP_NAME' -ErrorAction SilentlyContinue) { exit 1 }" \
+            >/dev/null 2>&1
+        then
+            echo "info: $INSTALLER_APP_NAME stopped"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "info: $INSTALLER_APP_NAME STILL ALIVE after kill attempt"
+    return 1
+}
+
+if [ "$WEBVIEW2_PRESENT" != "yes" ]; then
+    echo "SELFUPDATE-CHECK-INSTALLER-SKIP-WEBVIEW2: no WebView2 runtime, the installer host would take the fallback shell"
+elif ! command -v python >/dev/null 2>&1; then
+    echo "SELFUPDATE-CHECK-INSTALLER-SKIP-PYTHON: python is needed to serve the fake channel"
+elif ! net session >/dev/null 2>&1; then
+    echo "SELFUPDATE-CHECK-INSTALLER-SKIP-NOT-ELEVATED: the shipped manifest is requireAdministrator; a non-elevated shell would need a UAC click a headless battery cannot make"
+else
+    D_RAN=1
+    dotnet publish "$INSTALLER_CSproj" -c Release -r win-x64 \
+        -p:PublishSingleFile=true -p:SelfContained=false \
+        -o "$(native_path "$SCRATCH/installer-app")" > "$SCRATCH/installer-publish.log" 2>&1
+    if [ $? -ne 0 ] || [ ! -f "$SCRATCH/installer-app/UpdateInstaller.exe" ]; then
+        fail_case "installer host publish failed (see scratch installer-publish.log)"
+        tail -n 20 "$SCRATCH/installer-publish.log" 2>/dev/null
+    else
+        # Scratch install: the host ships inside client\, so the exe is
+        # renamed into the distribution slot under client\, the INI sits
+        # beside it (InstallRoot = parent of the exe directory) and the
+        # published wwwroot tree is copied next to the exe (best-effort -
+        # the exe carries the embedded-resource fallback).
+        INST_D="$SCRATCH/installer-app/install"
+        mkdir -p "$INST_D/client"
+        cp "$SCRATCH/installer-app/UpdateInstaller.exe" "$INST_D/client/UpdateInstallerModern.exe"
+        INSTALLER_INI_PATH="$INST_D/client/UpdateInstaller.ini"
+        printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$INSTALLER_INI_PATH"
+        cp -r "$SCRATCH/installer-app/wwwroot" "$INST_D/client/wwwroot" 2>/dev/null || true
+
+        INSTALLER_SERVE_DIR="$SCRATCH/installer-channel"
+        mkdir -p "$INSTALLER_SERVE_DIR"
+        printf '9.0.0+2099.01,release\r\n' > "$INSTALLER_SERVE_DIR/SelfUpdateVersion-recent.txt"
+        printf 'https://example.com/WsusOfflineNext-9.0.0.zip\r\nhttps://example.com/WsusOfflineNext-9.0.0_hashes.txt\r\n' \
+            > "$INSTALLER_SERVE_DIR/StaticDownloadLink-recent.txt"
+
+        # Port band 52000-52099: section c's servers are stopped before
+        # this section starts, so the bands stay disjoint in time.
+        INSTALLER_FAKE_PORT=$(( (RANDOM % 100) + 52000 ))
+        BATTERY_PORTS="$BATTERY_PORTS $INSTALLER_FAKE_PORT"
+        ( cd "$INSTALLER_SERVE_DIR" && python -m http.server "$INSTALLER_FAKE_PORT" --bind 127.0.0.1 \
+            > "$SCRATCH/installer-httpd.log" 2>&1 & )
+
+        # Server readiness probe (instrument, not hope).
+        SERVER_READY=1
+        for (( i = 0; i < 20; i++ )); do
+            if python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:$INSTALLER_FAKE_PORT/SelfUpdateVersion-recent.txt', timeout=2).status == 200 else 1)" 2>/dev/null; then
+                SERVER_READY=0
+                break
+            fi
+            sleep 0.5
+        done
+        if [ "$SERVER_READY" -ne 0 ]; then
+            fail_case "installer fake channel server never became ready on port $INSTALLER_FAKE_PORT"
+        else
+            export WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:$INSTALLER_FAKE_PORT/SelfUpdateVersion-recent.txt"
+            export WSON_UPDATE_LINKS_URL="http://127.0.0.1:$INSTALLER_FAKE_PORT/StaticDownloadLink-recent.txt"
+            export WSON_UPDATE_LOCAL_VERSION="1.0.0"
+            export WSON_UPDATE_ALLOW_HTTP=1
+            INSTALLER_EXE="$INST_D/client/UpdateInstallerModern.exe"
+
+            # Pre-run hygiene: a leaked instance from an earlier crashed
+            # battery must never survive into the runs (6020 convention).
+            kill_installer_app_and_assert_death || true
+
+            # ---- D1: offer + auto-decline, app alive, cache written ----
+            D1_FAIL_BASE=$FAILED_CASES
+            clear_probe_state
+            SINCE=$(log_lines)
+            WSON_UPDATE_AUTO_DECLINE=1 "$INSTALLER_EXE" &
+            if wait_for_segment_marker "update-declined" "$SINCE" 60; then
+                installer_pass "D1 installer log has update-declined"
+            else
+                fail_case "D1: update-declined never appeared in the log"
+            fi
+            OFFER_LINE=$(tail -n +"$(( SINCE + 1 ))" "$UPDATE_LOG" | grep -n "update-offered" | head -1 | cut -d: -f1)
+            DECLINE_LINE=$(tail -n +"$(( SINCE + 1 ))" "$UPDATE_LOG" | grep -n "update-declined" | head -1 | cut -d: -f1)
+            if [ -n "$OFFER_LINE" ] && [ -n "$DECLINE_LINE" ] && [ "$OFFER_LINE" -lt "$DECLINE_LINE" ]; then
+                installer_pass "D1 order update-offered before update-declined"
+            else
+                fail_case "D1: offered/declined order wrong (offer=$OFFER_LINE decline=$DECLINE_LINE)"
+            fi
+            if app_alive "$INSTALLER_APP_NAME"; then
+                installer_pass "D1 app still alive after decline"
+            else
+                fail_case "D1: app died after decline"
+            fi
+            if [ -f "$CACHE_FILE" ]; then
+                installer_pass "D1 wrote the daily cache (write-on-success)"
+            else
+                fail_case "D1: cache file missing after a successful check"
+            fi
+            if [ "$FAILED_CASES" -eq "$D1_FAIL_BASE" ]; then
+                matrix_record installer-modern offered
+                matrix_record installer-modern declined
+            fi
+            kill_installer_app_and_assert_death || fail_case "D1: app could not be stopped"
+
+            # ---- D2 (same day, no clear): cache skip, no second offer ----
+            SINCE=$(log_lines)
+            WSON_UPDATE_AUTO_DECLINE=1 "$INSTALLER_EXE" &
+            if wait_for_segment_marker "check-skip-cache" "$SINCE" 60; then
+                installer_pass "D2 installer log has check-skip-cache"
+            else
+                fail_case "D2: check-skip-cache never appeared"
+            fi
+            if segment_has "update-offered" "$SINCE"; then
+                fail_case "D2: update-offered reappeared despite same-day cache"
+            else
+                installer_pass "D2 no second offer"
+            fi
+            kill_installer_app_and_assert_death || fail_case "D2: app could not be stopped"
+
+            # ---- D3: kill-switch outranks everything ----
+            D3_FAIL_BASE=$FAILED_CASES
+            clear_probe_state
+            printf '[Misc]\r\nw96=Enabled\r\n[Control]\r\n; comment\r\nSkipSelfUpdate=Enabled\r\nverify=Enabled\r\n' > "$INSTALLER_INI_PATH"
+            SINCE=$(log_lines)
+            WSON_UPDATE_AUTO_DECLINE=1 "$INSTALLER_EXE" &
+            if wait_for_segment_marker "check-skip-disabled" "$SINCE" 60; then
+                installer_pass "D3 installer log has check-skip-disabled"
+            else
+                fail_case "D3: check-skip-disabled never appeared"
+            fi
+            if segment_has "check-start" "$SINCE"; then
+                fail_case "D3: check-start fired despite the kill-switch"
+            else
+                installer_pass "D3 no network event (kill-switch outranks everything)"
+            fi
+            if [ "$FAILED_CASES" -eq "$D3_FAIL_BASE" ]; then
+                matrix_record installer-modern kill-switch
+            fi
+            kill_installer_app_and_assert_death || fail_case "D3: app could not be stopped"
+            printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$INSTALLER_INI_PATH"
+
+            # ---- D4: offline silent failure, NO cache write ----
+            D4_FAIL_BASE=$FAILED_CASES
+            clear_probe_state
+            SINCE=$(log_lines)
+            WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:9/SelfUpdateVersion-recent.txt" \
+                WSON_UPDATE_AUTO_DECLINE=1 "$INSTALLER_EXE" &
+            if wait_for_segment_marker "check-error" "$SINCE" 60; then
+                installer_pass "D4 installer log has check-error"
+            else
+                fail_case "D4: check-error never appeared (offline must be logged, silently)"
+            fi
+            if app_alive "$INSTALLER_APP_NAME"; then
+                installer_pass "D4 app still alive after channel failure"
+            else
+                fail_case "D4: app died on the unreachable channel"
+            fi
+            if [ -f "$CACHE_FILE" ]; then
+                fail_case "D4: cache written despite a failed channel read"
+            else
+                installer_pass "D4 cache not written on failure"
+            fi
+            if [ "$FAILED_CASES" -eq "$D4_FAIL_BASE" ]; then
+                matrix_record installer-modern offline-silent
+            fi
+            kill_installer_app_and_assert_death || fail_case "D4: app could not be stopped"
+
+            # ---- D5: corrupt-channel silent failure, NO cache write ----
+            # Own corrupt serve dir, port band 54000-54099.
+            D5_FAIL_BASE=$FAILED_CASES
+            INSTALLER_CORRUPT_PORT=$(( (RANDOM % 100) + 54000 ))
+            BATTERY_PORTS="$BATTERY_PORTS $INSTALLER_CORRUPT_PORT"
+            INSTALLER_CORRUPT_DIR="$SCRATCH/installer-channel-corrupt"
+            mkdir -p "$INSTALLER_CORRUPT_DIR"
+            printf 'not-a-channel-file\r\n' > "$INSTALLER_CORRUPT_DIR/SelfUpdateVersion-recent.txt"
+            printf 'https://example.com/WsusOfflineNext-9.0.0.zip\r\nhttps://example.com/WsusOfflineNext-9.0.0_hashes.txt\r\n' \
+                > "$INSTALLER_CORRUPT_DIR/StaticDownloadLink-recent.txt"
+            ( cd "$INSTALLER_CORRUPT_DIR" && python -m http.server "$INSTALLER_CORRUPT_PORT" --bind 127.0.0.1 \
+                > "$SCRATCH/installer-httpd-corrupt.log" 2>&1 & )
+            SERVER_READY=1
+            for (( i = 0; i < 20; i++ )); do
+                if python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:$INSTALLER_CORRUPT_PORT/SelfUpdateVersion-recent.txt', timeout=2).status == 200 else 1)" 2>/dev/null; then
+                    SERVER_READY=0
+                    break
+                fi
+                sleep 0.5
+            done
+            if [ "$SERVER_READY" -ne 0 ]; then
+                fail_case "D5 corrupt-channel server never became ready on port $INSTALLER_CORRUPT_PORT"
+            else
+                clear_probe_state
+                SINCE=$(log_lines)
+                WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:$INSTALLER_CORRUPT_PORT/SelfUpdateVersion-recent.txt" \
+                    WSON_UPDATE_LINKS_URL="http://127.0.0.1:$INSTALLER_CORRUPT_PORT/StaticDownloadLink-recent.txt" \
+                    WSON_UPDATE_AUTO_DECLINE=1 "$INSTALLER_EXE" &
+                if wait_for_segment_marker "check-error" "$SINCE" 60; then
+                    installer_pass "D5 installer log has check-error (corrupt channel)"
+                else
+                    fail_case "D5: check-error never appeared (a corrupt channel must fail silently)"
+                fi
+                if app_alive "$INSTALLER_APP_NAME"; then
+                    installer_pass "D5 app still alive after corrupt channel"
+                else
+                    fail_case "D5: app died on the corrupt channel"
+                fi
+                if [ -f "$CACHE_FILE" ]; then
+                    fail_case "D5: cache written despite an unparseable channel"
+                else
+                    installer_pass "D5 cache not written on parse failure"
+                fi
+                if [ "$FAILED_CASES" -eq "$D5_FAIL_BASE" ]; then
+                    matrix_record installer-modern corrupt-channel
+                fi
+                kill_installer_app_and_assert_death || fail_case "D5: app could not be stopped"
+            fi
+
+            # Both installer servers die here; the EXIT port list is the
+            # backstop.
+            stop_server_on_port "$INSTALLER_FAKE_PORT"
+            stop_server_on_port "$INSTALLER_CORRUPT_PORT"
+        fi
+    fi
+fi
+
+echo "section d installer cases: $INSTALLER_CASES"
+if [ "$D_RAN" -eq 1 ] && [ "$INSTALLER_CASES" -eq 0 ]; then
+    fail_case "section d enumerated zero installer cases (vacuous pass guard)"
+fi
+echo "section d matrix cases: $MATRIX_D"
+if [ "$D_RAN" -eq 1 ] && [ "$MATRIX_D" -eq 0 ]; then
+    fail_case "section d recorded zero matrix cases (vacuous pass guard)"
+fi
 
 # ------------------------------------------------------------- verdict
+
+if [ "$MATRIX_TOTAL" -eq 0 ]; then
+    fail_case "battery recorded zero MATRIX cases (vacuous pass guard)"
+fi
+echo "MATRIX SUMMARY: $MATRIX_TOTAL check cases recorded"
 
 if [ "$FAILED_CASES" -ne 0 ]; then
     echo "SELFUPDATE-CHECK: RED ($FAILED_CASES failing case(s))"

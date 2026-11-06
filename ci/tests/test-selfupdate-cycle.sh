@@ -608,6 +608,21 @@ if [ "$OLD_NATIVE_SHA" = "$NEW_NATIVE_SHA" ]; then
     FAILED_CASES=$((FAILED_CASES + 1))
     NATIVE_GATES_OK=0
 fi
+# Defender warm-up (fixture hygiene, documented): the fresh build's hash
+# has no real-time-scan verdict yet, and the updater's relaunch is a
+# SINGLE CreateProcess attempt (no retry - the swap copies retry, the
+# launch does not). Two elevated runs lost exactly that race on
+# brand-new hashes (relaunch-failed -> rollback cascade) while a direct
+# elevated launch of the same file started fine. In production the
+# published hash is days old before the updater must execute it; give
+# the fresh hash its first scan explicitly so the scenario tests the
+# swap/relaunch contract, not the scanner.
+if [ "$NATIVE_GATES_OK" -eq 1 ]; then
+    powershell -NoProfile -Command \
+        "try { \$p = Start-Process -FilePath '$(ps_path "$SCRATCH/native-src/bin/installer-i386.exe")' -PassThru -ErrorAction Stop; Start-Sleep -Seconds 2; if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force } } catch { }" \
+        >/dev/null 2>&1
+    sleep 1
+fi
 fi
 
 if [ "$NATIVE_GATES_OK" -eq 1 ]; then

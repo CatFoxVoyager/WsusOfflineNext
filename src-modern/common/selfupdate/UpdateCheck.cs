@@ -60,7 +60,11 @@ namespace WsusOfflineNext.SelfUpdate
         // WSON_UPDATE_LINKS_URL redirect the two fetches;
         // WSON_UPDATE_LOCAL_VERSION overrides the local version;
         // WSON_UPDATE_AUTO_DECLINE=1 records update-declined in the log
-        // without showing any dialog.
+        // without showing any dialog; WSON_UPDATE_AUTO_ACCEPT=1 accepts the
+        // offer and runs the install pipeline without any dialog (the
+        // closing restart-now dialog auto-answers Yes so the app closes
+        // itself and the waiting updater proceeds - a headless harness
+        // cannot click MessageBox buttons).
         private static string? Env(string name) => Environment.GetEnvironmentVariable(name);
 
         private static readonly HttpClient Http = new HttpClient
@@ -208,6 +212,17 @@ namespace WsusOfflineNext.SelfUpdate
             try
             {
                 Form? owner = options.OwnerFormProvider?.Invoke();
+                // Test / Phase 30 harness hook, symmetric to
+                // WSON_UPDATE_AUTO_DECLINE: accept without showing the
+                // offer dialog.
+                if (string.Equals(Env("WSON_UPDATE_AUTO_ACCEPT"),
+                        "1", StringComparison.Ordinal))
+                {
+                    SelfUpdateLog.Append(options.Actor, "update-accepted");
+                    _ = UpdateInstall.RunAsync(options, new UpdateOffer(
+                        channelVersion, links.ZipUrl, links.HashesUrl));
+                    return;
+                }
                 string text =
                     $"Version {channelVersion} is available on the update channel.\n" +
                     $"Installed version: {localVersion}\n\n" +

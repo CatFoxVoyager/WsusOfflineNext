@@ -82,6 +82,9 @@ namespace WsusOfflineNext.SelfUpdate
         /// trimming CR/LF/whitespace, line 1 an "https://" URL ending in
         /// ".zip", line 2 an "https://" URL ending in "_hashes.txt"
         /// (Ordinal comparisons). Returns both URLs, or null.
+        /// Test / Phase 30 harness hook: WSON_UPDATE_ALLOW_HTTP=1 also
+        /// accepts "http://" URLs so a local fake channel can serve the
+        /// package from 127.0.0.1 - the suffix pins stay enforced.
         /// </summary>
         public static (string ZipUrl, string HashesUrl)? ParseLinksFile(string? text)
         {
@@ -98,8 +101,15 @@ namespace WsusOfflineNext.SelfUpdate
                 return null; // a third non-empty line is malformed
             }
             if (zip == null || hashes == null) return null;
-            if (!zip.StartsWith("https://", StringComparison.Ordinal)) return null;
-            if (!hashes.StartsWith("https://", StringComparison.Ordinal)) return null;
+            bool allowHttp = string.Equals(
+                Environment.GetEnvironmentVariable("WSON_UPDATE_ALLOW_HTTP"),
+                "1", StringComparison.Ordinal);
+            bool zipSchemeOk = zip.StartsWith("https://", StringComparison.Ordinal)
+                || (allowHttp && zip.StartsWith("http://", StringComparison.Ordinal));
+            bool hashesSchemeOk = hashes.StartsWith("https://", StringComparison.Ordinal)
+                || (allowHttp && hashes.StartsWith("http://", StringComparison.Ordinal));
+            if (!zipSchemeOk) return null;
+            if (!hashesSchemeOk) return null;
             if (!zip.EndsWith(".zip", StringComparison.Ordinal)) return null;
             if (!hashes.EndsWith("_hashes.txt", StringComparison.Ordinal)) return null;
             return (zip, hashes);

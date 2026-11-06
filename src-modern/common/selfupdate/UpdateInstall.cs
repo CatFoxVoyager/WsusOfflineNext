@@ -241,6 +241,17 @@ namespace WsusOfflineNext.SelfUpdate
                 }
                 SelfUpdateLog.Append(actor, "updater-launched");
 
+                // Same test / Phase 30 harness hook as the offer dialog:
+                // auto-answer Yes so the application closes itself and the
+                // waiting updater proceeds (no dialog a headless harness
+                // would have to click).
+                if (string.Equals(
+                        Environment.GetEnvironmentVariable("WSON_UPDATE_AUTO_ACCEPT"),
+                        "1", StringComparison.Ordinal))
+                {
+                    owner?.Close();
+                    return;
+                }
                 DialogResult restart = MessageBox.Show(owner,
                     "Update downloaded and verified.\n" +
                     "It will be applied when this application closes.\n\nRestart now?",

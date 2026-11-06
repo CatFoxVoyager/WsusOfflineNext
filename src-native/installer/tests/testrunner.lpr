@@ -24,7 +24,10 @@ program testrunner;
     Plan 29-01 task 2 adds the selfupdate core matrix: channel/links
     parsers, the strict-newer comparator, the daily cache and the
     kill-switch INI reader, fixture-for-fixture against the battery's
-    section (a) matrix. }
+    section (a) matrix. Plan 261106-p8q adds the UNC share-root split
+    matrix: the pure DetectSplitUncPath scanner pin (share root +
+    remainder, malformed and root-only shapes) behind the network
+    script-dir fallback. }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry, zipper,
@@ -363,6 +366,60 @@ begin
       'pathvalid: reject char ''' + Chars[I] + '''');
   Check(EngPathValid('C:\wsusoffline\client'),
     'pathvalid: clean path accepted');
+end;
+
+procedure TestUncSplit;
+var
+  LRoot, LRest: string;
+begin
+  { Plan 261106-p8q: pin the pure UNC split contract the share-root
+    fallback consumes - 7 cases x 3 checks (Boolean + ARoot +
+    ARemainder). Pascal backslashes are literal characters. }
+  Check(DetectSplitUncPath('\\vmware-host\Shared Folders\E\wsusoffline\client\',
+      LRoot, LRest),
+    'uncsplit: deep HGFS path splits to the share root + remainder');
+  CheckEq(LRoot, '\\vmware-host\Shared Folders',
+    'uncsplit: deep HGFS path ARoot is the share root');
+  CheckEq(LRest, '\E\wsusoffline\client\',
+    'uncsplit: deep HGFS path ARemainder starts at the next backslash');
+
+  Check(DetectSplitUncPath('\\srv\share', LRoot, LRest),
+    'uncsplit: two-component UNC splits with empty remainder');
+  CheckEq(LRoot, '\\srv\share',
+    'uncsplit: two-component UNC ARoot is the whole path');
+  CheckEq(LRest, '',
+    'uncsplit: two-component UNC ARemainder is empty');
+
+  Check(DetectSplitUncPath('\\srv\share\', LRoot, LRest),
+    'uncsplit: share-root path with trailing delimiter splits with backslash remainder');
+  CheckEq(LRoot, '\\srv\share',
+    'uncsplit: trailing-delimiter ARoot stops before the delimiter');
+  CheckEq(LRest, '\',
+    'uncsplit: trailing-delimiter ARemainder is the backslash');
+
+  Check(DetectSplitUncPath('\\srv\share\E\wsusoffline', LRoot, LRest),
+    'uncsplit: mid-depth path splits to the share root + remainder');
+  CheckEq(LRoot, '\\srv\share',
+    'uncsplit: mid-depth ARoot is the share root');
+  CheckEq(LRest, '\E\wsusoffline',
+    'uncsplit: mid-depth ARemainder carries the balance');
+
+  Check(not DetectSplitUncPath('\\srv', LRoot, LRest),
+    'uncsplit: server-only UNC rejected');
+  CheckEq(LRoot, '', 'uncsplit: server-only ARoot stays empty');
+  CheckEq(LRest, '', 'uncsplit: server-only ARemainder stays empty');
+
+  Check(not DetectSplitUncPath('\\srv\', LRoot, LRest),
+    'uncsplit: server-only UNC with trailing delimiter rejected');
+  CheckEq(LRoot, '',
+    'uncsplit: server-only trailing-delimiter ARoot stays empty');
+  CheckEq(LRest, '',
+    'uncsplit: server-only trailing-delimiter ARemainder stays empty');
+
+  Check(not DetectSplitUncPath('C:\tree', LRoot, LRest),
+    'uncsplit: non-UNC path rejected');
+  CheckEq(LRoot, '', 'uncsplit: non-UNC ARoot stays empty');
+  CheckEq(LRest, '', 'uncsplit: non-UNC ARemainder stays empty');
 end;
 
 procedure TestLanguageSelect;
@@ -1085,6 +1142,7 @@ begin
     TestEnablementPredicates;
     TestToggleGates;
     TestPathValid;
+    TestUncSplit;
     TestLanguageSelect;
     TestIniMergeOrder;
     TestSysNativeMatrix;

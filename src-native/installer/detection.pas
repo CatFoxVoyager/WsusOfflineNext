@@ -153,6 +153,12 @@ function DetectOffice16Description: string;
 { The au3 DriveGetType(... ) = "Network" probe: UNC spelling or a drive
   backed by DRIVE_REMOTE. }
 function DetectIsNetworkPath(const APath: string): Boolean;
+{ Pure UNC scanner used by the share-root fallback (plan 261106-p8q):
+  returns the \\server\share prefix in ARoot and the balance starting at
+  the next backslash in ARemainder; False for anything without a
+  non-empty server and share component. }
+function DetectSplitUncPath(const APath: string;
+  out ARoot, ARemainder: string): Boolean;
 { Returns the usable script directory: a UNC path is mapped to a free
   drive letter (WNetAddConnection2 with the '*' device, incumbent
   DriveMapAdd parity); an existing mapped-drive spelling is reused;
@@ -660,6 +666,16 @@ begin
     Exit;
   end;
   Result := False;
+end;
+
+{ TDD stub (plan 261106-p8q task 1): the split contract is pinned
+  RED-first in the testrunner battery; task 2 fills the scan. }
+function DetectSplitUncPath(const APath: string;
+  out ARoot, ARemainder: string): Boolean;
+begin
+  Result := False;
+  ARoot := '';
+  ARemainder := '';
 end;
 
 function DetectAssignScriptDirectory(const AExeDir: string;

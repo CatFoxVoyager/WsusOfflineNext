@@ -20,12 +20,16 @@ program testrunner;
     INI merge order, SysNative resolution matrix, argv emission order,
     the enablement predicates over a golden builds-table fixture (19041
     branch range boundaries, enforcement skip, ineligible short-circuit,
-    malformed-line tolerance), and the mode-aware completion matrix. }
+    malformed-line tolerance), and the mode-aware completion matrix.
+    Plan 29-01 task 2 adds the selfupdate core matrix: channel/links
+    parsers, the strict-newer comparator, the daily cache and the
+    kill-switch INI reader, fixture-for-fixture against the battery's
+    section (a) matrix. }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry,
   enginecontracts, enginespine, detection, buildsupgrade, strings_de_en,
-  resume;
+  resume, selfupdate;
 
 var
   GCaseCount: Integer = 0;
@@ -685,6 +689,120 @@ begin
     'completion: finish-mode detector /shutdown only');
 end;
 
+procedure TestSelfUpdateCore;
+var
+  ZipUrl, HashesUrl: string;
+  Scheme, Host, ObjPath: string;
+  Port: DWORD;
+  Today, Yesterday: string;
+  Ok: Boolean;
+begin
+  { ---- channel version parsing (battery section a channel matrix) ---- }
+  CheckEq(SUParseChannelVersion('9.0.0+2099.01,release' + #13#10),
+    '9.0.0+2099.01', 'selfupdate: channel 9.0.0+2099.01,release parses');
+  CheckEq(SUParseChannelVersion('6.0.2+2026.11,release' + #13#10),
+    '6.0.2+2026.11', 'selfupdate: channel 6.0.2+2026.11,release parses');
+  CheckEq(SUParseChannelVersion('  9.0.1+2099.01,release  ' + #13#10),
+    '9.0.1+2099.01', 'selfupdate: channel CRLF + surrounding spaces parses');
+  CheckEq(SUParseChannelVersion('not-a-channel-file' + #13#10), '',
+    'selfupdate: channel garbage rejects');
+  CheckEq(SUParseChannelVersion('1.0.0,a,b' + #13#10), '',
+    'selfupdate: channel multi-comma rejects');
+  CheckEq(SUParseChannelVersion(''), '',
+    'selfupdate: channel empty rejects');
+
+  { ---- links parsing (battery section a links matrix) ---- }
+  Check(SUParseLinksFile(
+      'https://example.com/WsusOfflineNext-9.0.0.zip' + #13#10 +
+      'https://example.com/WsusOfflineNext-9.0.0_hashes.txt' + #13#10,
+      ZipUrl, HashesUrl)
+    and (ZipUrl = 'https://example.com/WsusOfflineNext-9.0.0.zip')
+    and (HashesUrl = 'https://example.com/WsusOfflineNext-9.0.0_hashes.txt'),
+    'selfupdate: links https zip + hashes pair parses');
+  Check(not SUParseLinksFile(
+      'https://example.com/WsusOfflineNext-9.0.0.zip' + #13#10,
+      ZipUrl, HashesUrl),
+    'selfupdate: links missing second line rejects');
+  { The http:// pair must reject with the hook unset - the shipped
+    default (the env is cleared defensively so a stale process env can
+    never flip this case). }
+  Windows.SetEnvironmentVariable('WSON_UPDATE_ALLOW_HTTP', nil);
+  Check(not SUParseLinksFile(
+      'http://example.com/WsusOfflineNext-9.0.0.zip' + #13#10 +
+      'https://example.com/WsusOfflineNext-9.0.0_hashes.txt' + #13#10,
+      ZipUrl, HashesUrl),
+    'selfupdate: links http pair rejects while WSON_UPDATE_ALLOW_HTTP unset');
+  Check(not SUParseLinksFile(
+      'https://example.com/WsusOfflineNext-9.0.0.rar' + #13#10 +
+      'https://example.com/WsusOfflineNext-9.0.0_files.txt' + #13#10,
+      ZipUrl, HashesUrl),
+    'selfupdate: links wrong suffixes reject');
+  Check(not SUParseLinksFile(
+      'https://example.com/WsusOfflineNext-9.0.0.zip' + #13#10 +
+      'https://example.com/WsusOfflineNext-9.0.0_hashes.txt' + #13#10 +
+      'https://example.com/third-line.txt' + #13#10,
+      ZipUrl, HashesUrl),
+    'selfupdate: links third non-empty line rejects');
+
+  { ---- strict-newer comparator (WebView2Compat parity) ---- }
+  Check(SUChannelNewer('9.0.0+2099.01', '6.0.2'),
+    'selfupdate: comparator newer core offers');
+  Check(not SUChannelNewer('6.0.2+2026.11', '6.0.2'),
+    'selfupdate: comparator metadata-equal is not newer (strictness pin)');
+  Check(not SUChannelNewer('5.9.9', '6.0.2'),
+    'selfupdate: comparator older channel no offer');
+  Check(SUChannelNewer('6.0.10', '6.0.9'),
+    'selfupdate: comparator numeric not lexicographic');
+  Check(SUChannelNewer('6.0.2.1', '6.0.2'),
+    'selfupdate: comparator extra 4th part is newer');
+  Check((not SUChannelNewer('', '6.0.2')) and (not SUChannelNewer('6.0.2', '')),
+    'selfupdate: comparator empty input is False both directions');
+  CheckEq(SUCoreVersion('6.0.2+2026.11'), '6.0.2',
+    'selfupdate: core version strips the +metadata suffix');
+
+  { ---- daily cache (battery section a cache matrix) ---- }
+  Today := FormatDateTime('yyyy-mm-dd', Now);
+  Yesterday := FormatDateTime('yyyy-mm-dd', Now - 1);
+  Check(SUisCheckedToday(WriteFixture('su-cache-today.txt', Today)),
+    'selfupdate: cache today-string reads checked-today');
+  Check(not SUisCheckedToday(WriteFixture('su-cache-yesterday.txt', Yesterday)),
+    'selfupdate: cache yesterday-string re-checks');
+  Check(not SUisCheckedToday(WriteFixture('su-cache-garbage.txt', 'not-a-date')),
+    'selfupdate: cache garbage re-checks');
+  Check(not SUisCheckedToday(WriteFixture('su-cache-empty.txt', '')),
+    'selfupdate: cache empty re-checks');
+
+  { ---- kill-switch INI reader (battery section a ini matrix) ---- }
+  Check(SUIniSelfUpdateDisabled(WriteFixture('su-ini-disabled.ini',
+      '[Misc]' + LineEnding + 'w96=Enabled' + LineEnding +
+      '[Control]' + LineEnding + '; comment' + LineEnding +
+      '# comment' + LineEnding + 'SkipSelfUpdate=eNaBlEd' + LineEnding +
+      'verify=Enabled' + LineEnding)),
+    'selfupdate: ini kill-switch mixed case with comments disables');
+  Check(not SUIniSelfUpdateDisabled(WriteFixture('su-ini-absent-key.ini',
+      '[Control]' + LineEnding + 'verify=Enabled' + LineEnding +
+      'autoreboot=Disabled' + LineEnding)),
+    'selfupdate: ini key absent stays enabled');
+  Check(not SUIniSelfUpdateDisabled(WriteFixture('su-ini-other-section.ini',
+      '[Other]' + LineEnding + 'SkipSelfUpdate=Enabled' + LineEnding)),
+    'selfupdate: ini other section stays enabled');
+  Check(not SUIniSelfUpdateDisabled(
+      GTempDir + '\su-ini-missing-file.ini'),
+    'selfupdate: ini missing file stays enabled');
+
+  { ---- SUSplitUrl (the fetch layer's URL split) ---- }
+  Ok := SUSplitUrl('https://host/p?a=b', Scheme, Host, Port, ObjPath);
+  Check(Ok and (Scheme = 'https') and (Host = 'host') and (Port = 0)
+        and (ObjPath = '/p?a=b'),
+    'selfupdate: spliturl https form defaults the port');
+  Ok := SUSplitUrl('http://h:8080/x', Scheme, Host, Port, ObjPath);
+  Check(Ok and (Scheme = 'http') and (Host = 'h') and (Port = 8080)
+        and (ObjPath = '/x'),
+    'selfupdate: spliturl explicit port parses');
+  Check(not SUSplitUrl('not-a-url', Scheme, Host, Port, ObjPath),
+    'selfupdate: spliturl garbage rejects');
+end;
+
 procedure TestRegistryValueToString;
 const
   CKEY = 'Software\WOUTest26Val';
@@ -787,6 +905,7 @@ begin
     TestAuditReportParsing;
     TestRunOnceResume;
     TestCompletionMatrix;
+    TestSelfUpdateCore;
     TestRegistryValueToString;
   finally
     { Best-effort fixture cleanup - the gate is output-based. }

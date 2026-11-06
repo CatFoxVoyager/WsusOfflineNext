@@ -18,6 +18,22 @@
 # the app left alive, same-day cache skip, kill-switch skip before any
 # network event, and offline silent failure with NO cache write.
 #
+# Section (c) is the NATIVE APP PROBE: the real lazbuild-built
+# UpdateInstallerLegacy.exe (i386, the shipped lane) runs the same fake
+# channel matrix as section (b) - offer + auto-decline with the app left
+# alive and the cache written (N1), same-day cache skip (N2), kill-switch
+# skip before any network event (N3), and offline check-error with NO
+# cache write (N4). Self-sufficient: it builds its own app copy and
+# serves its own fake channel on its own port, never depending on
+# section (b)'s server or WebView2 gate. Named skip markers (each skips
+# ONLY section (c), exit 0 on skip, following the repo skip-guard
+# convention):
+#   - WO_LAZARUS_ROOT unset -> SELFUPDATE-CHECK-NATIVE-SKIP-NO-LAZARUS
+#   - python absent         -> SELFUPDATE-CHECK-NATIVE-SKIP-PYTHON
+#   - 'net session' nonzero -> SELFUPDATE-CHECK-NATIVE-SKIP-NOT-ELEVATED
+#     (the shipped manifest is requireAdministrator; a non-elevated shell
+#     would need a UAC click a headless battery cannot make)
+#
 # Environment gates (named markers, exit 0 on skip, following the repo
 # skip-guard convention):
 #   - not Windows, or dotnet absent -> SELFUPDATE-CHECK-SKIP-ENV, the
@@ -78,9 +94,14 @@ cleanup () {
     # Guarded cleanup: kill the app with an explicit death assertion
     # (a leaked GUI instance locks the next build), then the fake
     # channel server by its listening port, then remove the scratch.
+    # Both probe targets die here: the section (b) generator and the
+    # section (c) native installer.
     if command -v powershell >/dev/null 2>&1; then
         powershell -NoProfile -Command \
             "Get-Process -Name '$APP_NAME' -ErrorAction SilentlyContinue | Stop-Process -Force" \
+            >/dev/null 2>&1
+        powershell -NoProfile -Command \
+            "Get-Process -Name 'UpdateInstallerLegacy' -ErrorAction SilentlyContinue | Stop-Process -Force" \
             >/dev/null 2>&1
     fi
     if [ -n "${FAKE_PORT:-}" ]; then
@@ -89,6 +110,15 @@ cleanup () {
             | awk '{print $NF}' | head -1)
         if [ -n "$listener" ]; then
             powershell -NoProfile -Command "Stop-Process -Id $listener -Force" \
+                >/dev/null 2>&1
+        fi
+    fi
+    if [ -n "${NATIVE_FAKE_PORT:-}" ]; then
+        local nat_listener
+        nat_listener=$(netstat -ano 2>/dev/null | grep ":${NATIVE_FAKE_PORT}" | grep -i LISTENING \
+            | awk '{print $NF}' | head -1)
+        if [ -n "$nat_listener" ]; then
+            powershell -NoProfile -Command "Stop-Process -Id $nat_listener -Force" \
                 >/dev/null 2>&1
         fi
     fi
@@ -430,6 +460,187 @@ else
             kill_app_and_assert_death || fail_case "run 4: app could not be stopped"
         fi
     fi
+fi
+
+# ============================================ section (c): native app probe
+
+echo "--- section c: native app probe"
+
+NATIVE_APP_NAME="UpdateInstallerLegacy"
+NATIVE_CASES=0
+NATIVE_FAKE_PORT=""
+
+native_pass () {
+    NATIVE_CASES=$((NATIVE_CASES + 1))
+    echo "PASS: $1"
+}
+
+kill_native_app_and_assert_death () {
+    powershell -NoProfile -Command \
+        "Get-Process -Name '$NATIVE_APP_NAME' -ErrorAction SilentlyContinue | Stop-Process -Force" \
+        >/dev/null 2>&1
+    local i
+    for (( i = 0; i < 10; i++ )); do
+        if powershell -NoProfile -Command \
+            "if (Get-Process -Name '$NATIVE_APP_NAME' -ErrorAction SilentlyContinue) { exit 1 }" \
+            >/dev/null 2>&1
+        then
+            echo "info: $NATIVE_APP_NAME stopped"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "info: $NATIVE_APP_NAME STILL ALIVE after kill attempt"
+    return 1
+}
+
+if [ -z "${WO_LAZARUS_ROOT:-}" ]; then
+    echo "SELFUPDATE-CHECK-NATIVE-SKIP-NO-LAZARUS: WO_LAZARUS_ROOT unset, the native probe cannot build"
+elif ! command -v python >/dev/null 2>&1; then
+    echo "SELFUPDATE-CHECK-NATIVE-SKIP-PYTHON: python is needed to serve the fake channel"
+elif ! net session >/dev/null 2>&1; then
+    echo "SELFUPDATE-CHECK-NATIVE-SKIP-NOT-ELEVATED: the shipped manifest is requireAdministrator; a non-elevated shell would need a UAC click a headless battery cannot make"
+else
+    NATIVE_SRC_EXE="src-native/installer/bin/installer-i386.exe"
+    # Pre-build hygiene: a leaked instance from an earlier crashed battery
+    # must never hold the build output as a confusing linker error.
+    kill_native_app_and_assert_death || true
+    rm -f "$NATIVE_SRC_EXE"
+    "$WO_LAZARUS_ROOT/lazbuild.exe" --build-mode=Release-i386 \
+        "$(cygpath -w src-native/installer/installer.lpi)" \
+        > "$SCRATCH/native-build.log" 2>&1
+    if [ $? -ne 0 ] || [ ! -f "$NATIVE_SRC_EXE" ]; then
+        fail_case "native installer build failed (see scratch native-build.log)"
+        tail -n 20 "$SCRATCH/native-build.log" 2>/dev/null
+    else
+        NATIVE_APP_DIR="$SCRATCH/native-app"
+        mkdir -p "$NATIVE_APP_DIR/client"
+        cp "$NATIVE_SRC_EXE" "$NATIVE_APP_DIR/client/UpdateInstallerLegacy.exe"
+        NATIVE_INI_PATH="$NATIVE_APP_DIR/client/UpdateInstaller.ini"
+        printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$NATIVE_INI_PATH"
+
+        NATIVE_SERVE_DIR="$SCRATCH/native-channel"
+        mkdir -p "$NATIVE_SERVE_DIR"
+        printf '9.0.0+2099.01,release\r\n' > "$NATIVE_SERVE_DIR/SelfUpdateVersion-recent.txt"
+        printf 'https://example.com/WsusOfflineNext-9.0.0.zip\r\nhttps://example.com/WsusOfflineNext-9.0.0_hashes.txt\r\n' \
+            > "$NATIVE_SERVE_DIR/StaticDownloadLink-recent.txt"
+
+        # The fake server is plain HTTP: WSON_UPDATE_ALLOW_HTTP=1 lets the
+        # links parser accept the http:// URLs (without the hook every case
+        # would log check-error; section a's links-http reject fixture
+        # proves the hook-unset shipped default stays enforced). The port
+        # range 51000+ stays clear of section b's 48000+ server.
+        NATIVE_FAKE_PORT=$(( (RANDOM % 2000) + 51000 ))
+        ( cd "$NATIVE_SERVE_DIR" && python -m http.server "$NATIVE_FAKE_PORT" --bind 127.0.0.1 \
+            > "$SCRATCH/native-httpd.log" 2>&1 & )
+
+        # Server readiness probe (instrument, not hope).
+        SERVER_READY=1
+        for (( i = 0; i < 20; i++ )); do
+            if python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:$NATIVE_FAKE_PORT/SelfUpdateVersion-recent.txt', timeout=2).status == 200 else 1)" 2>/dev/null; then
+                SERVER_READY=0
+                break
+            fi
+            sleep 0.5
+        done
+        if [ "$SERVER_READY" -ne 0 ]; then
+            fail_case "native fake channel server never became ready on port $NATIVE_FAKE_PORT"
+        else
+            export WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:$NATIVE_FAKE_PORT/SelfUpdateVersion-recent.txt"
+            export WSON_UPDATE_LINKS_URL="http://127.0.0.1:$NATIVE_FAKE_PORT/StaticDownloadLink-recent.txt"
+            export WSON_UPDATE_LOCAL_VERSION="1.0.0"
+            export WSON_UPDATE_ALLOW_HTTP=1
+            NATIVE_EXE="$NATIVE_APP_DIR/client/UpdateInstallerLegacy.exe"
+
+            # ---- N1: offer + auto-decline, app alive, cache written ----
+            clear_probe_state
+            SINCE=$(log_lines)
+            WSON_UPDATE_AUTO_DECLINE=1 "$NATIVE_EXE" &
+            if wait_for_segment_marker "update-declined" "$SINCE" 60; then
+                native_pass "N1 native log has update-declined"
+            else
+                fail_case "N1: update-declined never appeared in the log"
+            fi
+            OFFER_LINE=$(tail -n +"$(( SINCE + 1 ))" "$UPDATE_LOG" | grep -n "update-offered" | head -1 | cut -d: -f1)
+            DECLINE_LINE=$(tail -n +"$(( SINCE + 1 ))" "$UPDATE_LOG" | grep -n "update-declined" | head -1 | cut -d: -f1)
+            if [ -n "$OFFER_LINE" ] && [ -n "$DECLINE_LINE" ] && [ "$OFFER_LINE" -lt "$DECLINE_LINE" ]; then
+                native_pass "N1 order update-offered before update-declined"
+            else
+                fail_case "N1: offered/declined order wrong (offer=$OFFER_LINE decline=$DECLINE_LINE)"
+            fi
+            if app_alive; then
+                native_pass "N1 app still alive after decline"
+            else
+                fail_case "N1: app died after decline"
+            fi
+            if [ -f "$CACHE_FILE" ]; then
+                native_pass "N1 wrote the daily cache (write-on-success)"
+            else
+                fail_case "N1: cache file missing after a successful check"
+            fi
+            kill_native_app_and_assert_death || fail_case "N1: app could not be stopped"
+
+            # ---- N2 (same day, no clear): cache skip, no second offer ----
+            SINCE=$(log_lines)
+            WSON_UPDATE_AUTO_DECLINE=1 "$NATIVE_EXE" &
+            if wait_for_segment_marker "check-skip-cache" "$SINCE" 60; then
+                native_pass "N2 native log has check-skip-cache"
+            else
+                fail_case "N2: check-skip-cache never appeared"
+            fi
+            if segment_has "update-offered" "$SINCE"; then
+                fail_case "N2: update-offered reappeared despite same-day cache"
+            else
+                native_pass "N2 no second offer"
+            fi
+            kill_native_app_and_assert_death || fail_case "N2: app could not be stopped"
+
+            # ---- N3: kill-switch outranks everything ----
+            clear_probe_state
+            printf '[Misc]\r\nw96=Enabled\r\n[Control]\r\n; comment\r\nSkipSelfUpdate=Enabled\r\nverify=Enabled\r\n' > "$NATIVE_INI_PATH"
+            SINCE=$(log_lines)
+            WSON_UPDATE_AUTO_DECLINE=1 "$NATIVE_EXE" &
+            if wait_for_segment_marker "check-skip-disabled" "$SINCE" 60; then
+                native_pass "N3 native log has check-skip-disabled"
+            else
+                fail_case "N3: check-skip-disabled never appeared"
+            fi
+            if segment_has "check-start" "$SINCE"; then
+                fail_case "N3: check-start fired despite the kill-switch"
+            else
+                native_pass "N3 no network event (kill-switch outranks everything)"
+            fi
+            kill_native_app_and_assert_death || fail_case "N3: app could not be stopped"
+            printf '[Control]\r\nverify=Enabled\r\nautoreboot=Disabled\r\n' > "$NATIVE_INI_PATH"
+
+            # ---- N4: offline silent failure, NO cache write ----
+            clear_probe_state
+            SINCE=$(log_lines)
+            WSON_UPDATE_CHANNEL_URL="http://127.0.0.1:9/SelfUpdateVersion-recent.txt" \
+                WSON_UPDATE_AUTO_DECLINE=1 "$NATIVE_EXE" &
+            if wait_for_segment_marker "check-error" "$SINCE" 60; then
+                native_pass "N4 native log has check-error"
+            else
+                fail_case "N4: check-error never appeared (offline must be logged, silently)"
+            fi
+            if app_alive; then
+                native_pass "N4 app still alive after channel failure"
+            else
+                fail_case "N4: app died on the unreachable channel"
+            fi
+            if [ -f "$CACHE_FILE" ]; then
+                fail_case "N4: cache written despite a failed channel read"
+            else
+                native_pass "N4 cache not written on failure"
+            fi
+            kill_native_app_and_assert_death || fail_case "N4: app could not be stopped"
+        fi
+    fi
+fi
+
+echo "section c native cases: $NATIVE_CASES"
+if [ "$NATIVE_CASES" -eq 0 ]; then
+    fail_case "section c enumerated zero native cases (vacuous pass guard)"
 fi
 
 # ------------------------------------------------------------- verdict

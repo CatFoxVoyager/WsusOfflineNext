@@ -153,7 +153,7 @@
         <PackageName Value="LCL"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="8">
+    <Units Count="9">
       <Unit0>
         <Filename Value="installer.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -196,6 +196,11 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="resume"/>
       </Unit7>
+      <Unit8>
+        <Filename Value="selfupdate.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="selfupdate"/>
+      </Unit8>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

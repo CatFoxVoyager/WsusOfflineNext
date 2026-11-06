@@ -33,7 +33,7 @@ uses
   Classes, SysUtils, Windows, Messages, IniFiles,
   Forms, Controls, Graphics, Dialogs, StdCtrls, ComCtrls, Process, ShellApi,
   enginecontracts, strings_de_en, enginespine, detection, buildsupgrade,
-  resume;
+  resume, selfupdate;
 
 type
 
@@ -168,6 +168,12 @@ begin
   FCallerTempIni := IncludeTrailingPathDelimiter(EngCallerTempDir)
     + ENG_TEMP_INI_NAME;
   FClientIni := FExeDir + ENG_TEMP_INI_NAME;
+  { Self-update check thread (Phase 29, Phase 28 parity port): started
+    right after the client INI path is known and BEFORE the startup
+    gates, fire-and-forget - the frozen check order (kill-switch INI,
+    daily cache, network) runs on its own thread and a gate failure on
+    an odd machine cannot silently kill the check. }
+  TSelfUpdateCheckThread.Create(FClientIni, 'installer-legacy');
   FSpine := TEngineSpine.Create;
   FRunning := False;
 

@@ -13,7 +13,16 @@ program installer;
     (FormCreate carries the scriptdir/path gates, the full toggle
     gating, and the informational dialogs). The OS gate is compiled out
     ONLY under -dWOU_VALIDATE_OLDOS (the Win7 validation build of plan
-    04 - never built by any shipped lane). }
+    04 - never built by any shipped lane).
+
+    Healthy-first-launch marker (Phase 28 contract, plan 29-02
+    plumbing): the updater relaunches the app with
+    --healthy-marker <path> after the swap. The argument is parsed
+    here - AFTER the OS and WSH gates, mirroring the .NET installer
+    host which parses it after its elevation gate - and handed to the
+    main form, whose FIRST SHOW writes the marker file (never the
+    startup code: a healthy launch is proven by a visible window). A
+    normal launch ignores the whole mechanism. }
 
 uses
   Interfaces, { LCL widgetset }
@@ -32,6 +41,9 @@ uses
   directive links it. The form streams from the unit-level {$R *.lfm}. }
 {$R *.res}
 
+var
+  HealthyMarkerPath: string;
+  I: Integer;
 begin
   RequireDerivedFormResource := True;
   Application.Scaled := True;
@@ -63,6 +75,20 @@ begin
     Halt(1);
   end;
 
+  { Parse the updater's --healthy-marker argument (Ordinal match, next
+    argument is the path). Null-shaped on every normal launch. }
+  HealthyMarkerPath := '';
+  I := 1;
+  while I < ParamCount do
+  begin
+    if ParamStr(I) = '--healthy-marker' then
+    begin
+      HealthyMarkerPath := ParamStr(I + 1);
+      Break;
+    end;
+    Inc(I);
+  end;
+
   { INST-05 /resume startup path: the RunOnce relaunch lands here after
     a reboot. The GUI deletes its OWN value defensively on BOTH paths
     (successful resume AND nothing-to-resume - threat T-26-06); the
@@ -90,5 +116,8 @@ begin
   end
   else
     Application.CreateForm(TMainForm, InstallerForm);
+  { Hand the parsed marker path to the form BEFORE the run loop: the
+    write happens on the form's FIRST SHOW, never during startup. }
+  InstallerForm.SetHealthyMarkerPath(HealthyMarkerPath);
   Application.Run;
 end.

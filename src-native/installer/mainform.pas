@@ -83,6 +83,10 @@ type
     { Headless resume entry (INST-05): the /resume startup path calls
       this after the form has restored the toggle set from the INI. }
     procedure StartRun;
+    { Healthy-first-launch plumbing (plan 29-02): the entry point hands
+      the parsed --healthy-marker path here before Application.Run; the
+      write happens on the FIRST show only (28-03 frozen contract). }
+    procedure SetHealthyMarkerPath(const APath: string);
   private
   private
     FExeDir: string;
@@ -97,6 +101,8 @@ type
     FLastCountsRaw: string; { change-guard for the live status label }
     FAuditReportPath: string;
     FSwitches: string;      { the argv of the current/last run }
+    FHealthyMarkerPath: string; { updater-provided; written on first show }
+    FMarkerWritten: Boolean;    { once-guard for the form-show hook }
     { Detection snapshot for the cross-gating click handlers. }
     FOs: TOsInfo;
     FOsModern: Boolean;
@@ -138,6 +144,8 @@ type
     procedure RenderOutcomeState(Res: TSpineResult);
     procedure RenderAuditView;
     procedure HandleRebootOutcome(Res: TSpineResult);
+    procedure FormShowSelfUpdate(Sender: TObject);
+    procedure WriteHealthyMarker;
   end;
 
 var
@@ -190,6 +198,12 @@ begin
     soon as the form exists, so "restart now" (or the harness
     auto-accept) can end the process for the waiting updater. }
   SURegisterHostClose(@SelfUpdateHostClose);
+  { The healthy-first-launch hook (plan 29-02): the .lfm defines no
+    OnShow, so it is assigned here; the FIRST show writes the marker
+    (never FormCreate - 28-03 frozen contract). }
+  OnShow := @FormShowSelfUpdate;
+  FHealthyMarkerPath := '';
+  FMarkerWritten := False;
   FSpine := TEngineSpine.Create;
   FRunning := False;
 
@@ -1081,6 +1095,64 @@ end;
 procedure TMainForm.SpineIdle;
 begin
   Application.ProcessMessages;
+end;
+
+{ ----- healthy-first-launch marker (plan 29-02) ----- }
+
+procedure TMainForm.SetHealthyMarkerPath(const APath: string);
+begin
+  FHealthyMarkerPath := APath;
+end;
+
+procedure TMainForm.FormShowSelfUpdate(Sender: TObject);
+begin
+  { Once-guard: the FIRST show only. The write happens ONLY after the
+    window shows - never in FormCreate (28-03 frozen contract: a
+    healthy launch is proven by a visible window). }
+  if FMarkerWritten then
+    Exit;
+  FMarkerWritten := True;
+  if FHealthyMarkerPath = '' then
+    Exit;
+  WriteHealthyMarker;
+end;
+
+procedure TMainForm.WriteHealthyMarker;
+{ Verbatim twin of the .NET WriteHealthyMarker (installer host
+  Program.cs:983-997): two fields - the DISPLAY version (the
+  informational version stripped at '+', 'unknown' fallback) and the
+  UTC timestamp - separated by CRLF, trailing CRLF, UTF-8 no BOM.
+  Never crashes the app: a failed write = unhealthy launch by
+  contract, the updater rolls back. }
+var
+  V, Content, TimestampLine: string;
+  ST: TSystemTime;
+  Fs: TFileStream;
+  Plus: Integer;
+begin
+  try
+    V := EngOwnProductVersion;
+    if V = '' then
+      V := 'unknown';
+    Plus := Pos('+', V);
+    if Plus > 0 then
+      V := Copy(V, 1, Plus - 1);
+    GetSystemTime(ST);
+    TimestampLine := FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz',
+      SystemTimeToDateTime(ST)) + 'Z';
+    Content := V + #13#10 + TimestampLine + #13#10;
+    Fs := TFileStream.Create(FHealthyMarkerPath, fmCreate or fmShareDenyWrite);
+    try
+      if Length(Content) > 0 then
+        Fs.WriteBuffer(Content[1], Length(Content));
+    finally
+      Fs.Free;
+    end;
+    SULogAppend('installer-legacy', 'marker-written');
+  except
+    { Marker write failure = unhealthy launch by contract; the app
+      itself keeps running either way. }
+  end;
 end;
 
 end.

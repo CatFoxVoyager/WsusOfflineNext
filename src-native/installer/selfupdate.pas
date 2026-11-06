@@ -269,6 +269,7 @@ type
     FZipUrl: string;
     FHashesUrl: string;
     procedure DoOfferDialog; { runs on the main thread via Synchronize }
+    procedure DoAcceptContinuation; { shared accept path, main thread }
   protected
     procedure Execute; override;
   public
@@ -1566,12 +1567,21 @@ procedure TSelfUpdateCheckThread.DoOfferDialog;
 var
   WText, WTitle: WideString;
   Choice: Integer;
-  Offer: TSUUpdateOffer;
 begin
   if SUOfferLatch then
     Exit;
   SUOfferLatch := True;
   try
+    { Harness hook INSIDE the dialog call, after the latch
+      (UpdateCheck.cs ShowOfferDialog parity): WSON_UPDATE_AUTO_ACCEPT=1
+      accepts without showing the offer dialog - the restart-now dialog
+      inside the accept continuation auto-answers Yes the same way. }
+    if SUEnv('WSON_UPDATE_AUTO_ACCEPT') = '1' then
+    begin
+      SULogAppend(FActor, 'update-accepted');
+      DoAcceptContinuation;
+      Exit;
+    end;
     WTitle := 'WSUS Offline Next';
     WText := 'Version ' + FChannelVersion + ' is available on the update channel.'
       + #13#10
@@ -1585,17 +1595,25 @@ begin
       { The accept continuation (plan 29-02): verified download,
         fail-closed SHA256, guarded extraction, staging, updater
         handoff - UpdateInstall.RunAsync parity. Every failure path
-        inside logs a named event and leaves the app running. }
-      Offer.ChannelVersion := FChannelVersion;
-      Offer.ZipUrl := FZipUrl;
-      Offer.HashesUrl := FHashesUrl;
-      SUInstallAccepted(FActor, Offer);
+        inside logs a named event and leaves the app running; it owns
+        this UI thread, same as the .NET host. }
+      DoAcceptContinuation;
     end
     else
       SULogAppend(FActor, 'update-declined');
   except
     { the offer must never crash the app }
   end;
+end;
+
+procedure TSelfUpdateCheckThread.DoAcceptContinuation;
+var
+  Offer: TSUUpdateOffer;
+begin
+  Offer.ChannelVersion := FChannelVersion;
+  Offer.ZipUrl := FZipUrl;
+  Offer.HashesUrl := FHashesUrl;
+  SUInstallAccepted(FActor, Offer);
 end;
 
 procedure TSelfUpdateCheckThread.Execute;
@@ -1666,7 +1684,8 @@ begin
       SULogAppend(FActor, 'update-declined');
       Exit;
     end;
-    { 12. The offer on the main thread (OfferGuard latch inside); the
+    { 12. The offer on the main thread (OfferGuard latch and the
+       AUTO_ACCEPT harness hook live inside, UpdateCheck.cs parity); the
        offer carries the real URLs (the accept continuation needs them). }
     FLocalVersion := LocalVersion;
     FZipUrl := ZipUrl;

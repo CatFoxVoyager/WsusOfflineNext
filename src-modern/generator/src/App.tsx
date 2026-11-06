@@ -294,7 +294,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-semibold text-zinc-100 tracking-tight">WSUS Offline Next</h1>
               <span className="text-[11px] px-2 py-0.5 rounded bg-dark-800 text-zinc-300 border border-dark-700 font-mono font-medium">
-                v6.0.3+2026.11 • Local repository
+                v6.0.4+2026.11 • Local repository
               </span>
             </div>
             <p className="text-[11px] text-zinc-400">Offline update repository for Windows and Office</p>

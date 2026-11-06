@@ -27,7 +27,7 @@ program testrunner;
     section (a) matrix. }
 
 uses
-  Classes, SysUtils, Windows, IniFiles, Registry,
+  Classes, SysUtils, Windows, IniFiles, Registry, zipper,
   enginecontracts, enginespine, detection, buildsupgrade, strings_de_en,
   resume, selfupdate;
 
@@ -803,6 +803,196 @@ begin
     'selfupdate: spliturl garbage rejects');
 end;
 
+procedure TestSelfUpdateAccept;
+{ Plan 29-02 accept-pipeline matrix: hashes-file parser fixtures (with a
+  REAL digest through SUSha256File - the frame-free CNG path's
+  ground-truth exercise, run after hundreds of console writes exactly
+  like the shipped testrunner workload), the fail-closed verify gate,
+  and the whole-archive zip-slip guard over real zips built with the
+  zipper writer side. }
+const
+  FIX_BYTES = 'wson-selfupdate-accept-fixture-bytes';
+  { sha256 of 76800 bytes of (i mod 256), i = 0.. ; pinned - the digest
+    of a deterministic multi-chunk (>64KB) fixture. }
+  BIG_DIGEST = 'f8b0585eb91f58c007a5634362c9f90d8543822c113f702523bc7b73408a9392';
+var
+  I: Integer;
+  FixturePath, BigPath, ZipPath, HashesText, Hex: string;
+  Big: AnsiString;
+  Fs: TFileStream;
+  HSize: Int64;
+  HDigest: string;
+  StageDir, EvilTarget, AbsDrive: string;
+  Z: TZipper;
+  Ok: Boolean;
+begin
+  { Deterministic fixtures in the runner temp dir (byte-exact - no
+    trailing line ending, so the pinned digest is over exactly these
+    bytes). }
+  FixturePath := GTempDir + '\su-accept-fixture.dat';
+  Fs := TFileStream.Create(FixturePath, fmCreate or fmShareDenyWrite);
+  try
+    Fs.WriteBuffer(FIX_BYTES[1], Length(FIX_BYTES));
+  finally
+    Fs.Free;
+  end;
+  GFixtures.Add(FixturePath);
+  BigPath := GTempDir + '\su-accept-big.bin';
+  SetLength(Big, 76800);
+  for I := 1 to Length(Big) do
+    Big[I] := AnsiChar((I - 1) mod 256);
+  Fs := TFileStream.Create(BigPath, fmCreate or fmShareDenyWrite);
+  try
+    Fs.WriteBuffer(Big[1], Length(Big));
+  finally
+    Fs.Free;
+  end;
+
+  { ---- SUSha256File (the frame-free CNG path) ---- }
+  Check(SUSha256File(FixturePath, Hex)
+        and (Hex = 'a55e9f61523e1875c44892269b2e2f3548df333301ca79a24de1c2e7e7327808'),
+    'selfupdate: sha256 small fixture matches the pinned digest');
+  Check(SUSha256File(BigPath, Hex) and (Hex = BIG_DIGEST),
+    'selfupdate: sha256 multi-chunk >64KB digest matches the pinned value');
+  Check((not SUSha256File(GTempDir + '\su-accept-missing.bin', Hex))
+        and (Hex = ''),
+    'selfupdate: sha256 missing file fails closed');
+  { empty-file digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 }
+  Fs := TFileStream.Create(GTempDir + '\su-accept-empty.bin',
+    fmCreate or fmShareDenyWrite);
+  try
+    { leave empty }
+  finally
+    Fs.Free;
+  end;
+  Check(SUSha256File(GTempDir + '\su-accept-empty.bin', Hex)
+        and (Hex = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+    'selfupdate: sha256 empty file matches the published digest');
+
+  { ---- hashes-file parser (hashdeep shape) ---- }
+  Check(SUSha256File(FixturePath, Hex), 'selfupdate: fixture digest for parser cases');
+  HashesText := '%%%% v1.0' + #13#10 + '%%%%' + #13#10
+    + IntToStr(Length(FIX_BYTES)) + ',md5x,sha1x,' + Hex
+    + ',wson-fix.dat' + #13#10;
+  Check(SUParseHashesFile(HashesText, HSize, HDigest)
+        and (HSize = Length(FIX_BYTES)) and (HDigest = Hex),
+    'selfupdate: hashes parser accepts the well-formed hashdeep line');
+  Check(not SUParseHashesFile(
+      '%%%% v1.0' + #13#10 + '%%%%' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects header-only input');
+  Check(not SUParseHashesFile(
+      '%%%% v1.0' + #13#10 + IntToStr(Length(FIX_BYTES)) + ',md5x,sha1x,'
+      + Uppercase(Hex) + ',wson-fix.dat' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects an uppercase hex digest');
+  Check(not SUParseHashesFile(
+      IntToStr(Length(FIX_BYTES)) + ',md5x,sha1x,' + Hex + ',a.dat' + #13#10
+      + IntToStr(Length(FIX_BYTES)) + ',md5x,sha1x,' + Hex + ',b.dat' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects two data lines');
+  Check(not SUParseHashesFile(
+      IntToStr(Length(FIX_BYTES)) + ',md5x,sha1x' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects a 3-field line');
+  Check(not SUParseHashesFile(
+      IntToStr(Length(FIX_BYTES)) + ',,sha1x,' + Hex + ',a.dat' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects an empty field');
+  Check(not SUParseHashesFile(
+      '0,md5x,sha1x,' + Hex + ',a.dat' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects a zero size');
+  Check(not SUParseHashesFile(
+      IntToStr(Length(FIX_BYTES)) + ',md5x,sha1x,zz' + Hex + ',a.dat' + #13#10,
+      HSize, HDigest),
+    'selfupdate: hashes parser rejects a non-hex digest');
+
+  { ---- SUVerifyZipAgainstHashes (fail-closed gate, end to end) ---- }
+  ZipPath := GTempDir + '\su-accept-good.zip';
+  Z := TZipper.Create;
+  try
+    Z.FileName := ZipPath;
+    Z.Entries.AddFileEntry(FixturePath, 'wsusoffline/dir/fixture.dat');
+    Z.ZipAllFiles;
+  finally
+    Z.Free;
+  end;
+  SUSha256File(ZipPath, Hex);
+  SUFileSizeOf(ZipPath, HSize);
+  HashesText := '%%%%' + #13#10 + IntToStr(HSize) + ',md5x,sha1x,' + Hex
+    + ',release.zip' + #13#10;
+  Check(SUVerifyZipAgainstHashes(ZipPath, HashesText),
+    'selfupdate: verify gate accepts the matching zip (size + digest)');
+  Check(not SUVerifyZipAgainstHashes(ZipPath,
+      '%%%%' + #13#10 + IntToStr(HSize + 1) + ',md5x,sha1x,' + Hex
+      + ',release.zip' + #13#10),
+    'selfupdate: verify gate rejects a wrong published size');
+  Check(not SUVerifyZipAgainstHashes(ZipPath,
+      '%%%%' + #13#10 + IntToStr(HSize) + ',md5x,sha1x,'
+      + StringReplace(Hex, 'a', 'b', [rfReplaceAll]) + ',release.zip'
+      + #13#10),
+    'selfupdate: verify gate rejects a wrong digest');
+  Check(not SUVerifyZipAgainstHashes(GTempDir + '\su-accept-missing.zip',
+      HashesText),
+    'selfupdate: verify gate fails closed on a missing zip (never raises)');
+  Check(not SUVerifyZipAgainstHashes(ZipPath, 'not-a-hashes-file'),
+    'selfupdate: verify gate fails closed on unparsable hashes');
+
+  { ---- SUExtractGuarded (whole-archive zip-slip refusal) ---- }
+  StageDir := GTempDir + '\su-accept-stage';
+  SysUtils.DeleteFile(StageDir + '\wsusoffline\dir\fixture.dat');
+  RemoveDir(StageDir + '\wsusoffline\dir');
+  RemoveDir(StageDir + '\wsusoffline');
+  Check(SUExtractGuarded(ZipPath, StageDir)
+        and FileExists(StageDir + '\wsusoffline\dir\fixture.dat'),
+    'selfupdate: guard extracts a safe nested archive');
+  EvilTarget := GTempDir + '\evil.txt';
+  SysUtils.DeleteFile(EvilTarget);
+  ZipPath := GTempDir + '\su-accept-evil.zip';
+  Fs := TFileStream.Create(GTempDir + '\su-accept-seed.dat',
+    fmCreate or fmShareDenyWrite);
+  try
+    Fs.WriteBuffer(FIX_BYTES[1], Length(FIX_BYTES));
+  finally
+    Fs.Free;
+  end;
+  Z := TZipper.Create;
+  try
+    Z.FileName := ZipPath;
+    Z.Entries.AddFileEntry(GTempDir + '\su-accept-seed.dat',
+      'wsusoffline/safe/seed.dat');
+    Z.Entries.AddFileEntry(GTempDir + '\su-accept-seed.dat', '../evil.txt');
+    Z.ZipAllFiles;
+  finally
+    Z.Free;
+  end;
+  StageDir := GTempDir + '\su-accept-stage-evil';
+  Ok := not SUExtractGuarded(ZipPath, StageDir);
+  Check(Ok and (not FileExists(EvilTarget))
+        and (not FileExists(StageDir + '\wsusoffline\safe\seed.dat')),
+    'selfupdate: guard refuses a ../evil.txt archive whole (nothing extracted)');
+  { Absolute-path entry name - drive of the temp dir. }
+  AbsDrive := Copy(ExcludeTrailingPathDelimiter(GTempDir), 1, 2) + '\wson-abs-evil.txt';
+  SysUtils.DeleteFile(AbsDrive);
+  ZipPath := GTempDir + '\su-accept-abs.zip';
+  Z := TZipper.Create;
+  try
+    Z.FileName := ZipPath;
+    { NOTE: FPC 3.2.2 TZipper crashes on MIXED file+stream entries in
+      one ZipAllFiles (EFOpenError on the file entry) - file entries
+      with explicit archive names only. }
+    Z.Entries.AddFileEntry(GTempDir + '\su-accept-seed.dat', AbsDrive);
+    Z.ZipAllFiles;
+  finally
+    Z.Free;
+  end;
+  StageDir := GTempDir + '\su-accept-stage-abs';
+  Ok := not SUExtractGuarded(ZipPath, StageDir);
+  Check(Ok and (not FileExists(AbsDrive)),
+    'selfupdate: guard refuses an absolute-path entry');
+end;
+
 procedure TestRegistryValueToString;
 const
   CKEY = 'Software\WOUTest26Val';
@@ -906,6 +1096,7 @@ begin
     TestRunOnceResume;
     TestCompletionMatrix;
     TestSelfUpdateCore;
+    TestSelfUpdateAccept;
     TestRegistryValueToString;
   finally
     { Best-effort fixture cleanup - the gate is output-based. }

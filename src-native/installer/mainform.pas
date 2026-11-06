@@ -148,6 +148,18 @@ implementation
 
 {$R *.lfm}
 
+{ The selfupdate host-close hook (plan 29-02): the accept continuation
+  calls this when the update is staged and the user chose (or the
+  WSON_UPDATE_AUTO_ACCEPT harness auto-answered) "restart now" -
+  closing the main form ends the process, which is the waiting
+  updater's cue to swap. A plain procedure pointer, because
+  selfupdate.pas stays LCL-free. }
+procedure SelfUpdateHostClose;
+begin
+  if InstallerForm <> nil then
+    InstallerForm.Close;
+end;
+
 { Incumbent CheckBoxStateToString: the INI state vocabulary is the frozen
   Enabled/Disabled pair. }
 function CheckedState(AChecked: Boolean): string;
@@ -174,6 +186,10 @@ begin
     daily cache, network) runs on its own thread and a gate failure on
     an odd machine cannot silently kill the check. }
   TSelfUpdateCheckThread.Create(FClientIni, 'installer-legacy');
+  { The accept path's close-the-host hook (plan 29-02): registered as
+    soon as the form exists, so "restart now" (or the harness
+    auto-accept) can end the process for the waiting updater. }
+  SURegisterHostClose(@SelfUpdateHostClose);
   FSpine := TEngineSpine.Create;
   FRunning := False;
 

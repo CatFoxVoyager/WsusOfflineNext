@@ -1,13 +1,15 @@
-{*** Self-update CHECK slice for the native installer - Phase 28 parity port.
+{*** Self-update CHECK + ACCEPT slice for the native installer.
 
-    Phase 29 plan 01 (tracer). Port of src-modern/common/selfupdate
-    (UpdateCheck.cs + SelfUpdateCore.cs) to Win32-native Pascal, one path
-    end-to-end: frozen INI kill-switch -> shared daily cache -> WinHTTP
-    channel fetch -> strict-newer decision -> native offer dialog and its
-    decline outcome. Behaviorally identical to the two .NET hosts; the
-    same WSON_UPDATE_* environment hooks and the same %LOCALAPPDATA%
-    update.log / last-check.txt state files are used so the unified
-    fake-channel battery drives all three apps case for case.
+    Phase 29 plan 01 (tracer) ported the CHECK slice; plan 02 added the
+    ACCEPT pipeline (UpdateInstall.cs parity): hashes-file parser,
+    streaming zip download, fail-closed SHA256 verification, guarded
+    extraction, staging completeness, and the updater handoff with the
+    frozen CLI contract, plus the offer continuation that closes the
+    host so the waiting updater can swap. Behaviorally identical to the
+    two .NET hosts; the same WSON_UPDATE_* environment hooks and the
+    same %LOCALAPPDATA% update.log / last-check.txt state files are
+    used so the unified fake-channel battery drives all three apps
+    case for case.
 
     Plumbing contract (29-CONTEXT, locked):
     - Win32 NATIVE APIs only. WinHTTP for the fetches (static import is
@@ -16,7 +18,10 @@
       there is deliberately NO compile-time import declaration for
       bcrypt.dll anywhere in this unit, so the exe still loads on
       XP-class machines.
-    - NO fphttpclient, NO openssl, no external DLLs.
+    - NO fphttpclient, NO openssl, no external DLLs. The guarded
+      extraction uses the FCL zipper unit (TFPZipper family - in FPC
+      3.2.2 the classes are TZipper/TUnZipper), a pure-Pascal in-process
+      extractor: no dependency on bin\unzip.exe.
 
     XP TRADEOFF (D-05 essential-XP floor, stated honestly): bcrypt.dll
     exists since Vista. On an XP-class machine the CNG provider cannot
@@ -27,13 +32,36 @@
     with the real channel, so the feature is effectively Vista+ while
     the binary itself still loads on XP.
 
-    Layering (plan 29-02 consumes the pure/interface layer):
+    FAIL-CLOSED RULE (T-29-04/T-29-07): the hash gate runs BEFORE
+    extraction; the extraction guard refuses WHOLE archives (never
+    per-entry); and a machine whose CNG provider is unavailable can
+    never reach this code at all - the check slice already degraded
+    with check-skip-no-crypto before any download starts, so there is
+    no code path that downloads or extracts without verification (the
+    degrade skips the update entirely, never the hash gate).
+
+    CNG/exception-frame discipline (29-02 root cause, ledger 23): on
+    this FPC 3.2.2 i386 lane, running the CNG hash sequence with FPC
+    try/finally exception frames ACTIVE ACROSS the bcrypt calls
+    corrupts the exception-dispatch state - the NEXT exception raised
+    after the hash dies inside dispatch at a fixed stack-top address
+    (a garbage handler call, exit 217). The digest itself was always
+    correct; the corruption is dispatch-side. SUSha256File therefore
+    runs the CNG section with ZERO FPC exception frames spanning it
+    (sequential status checks, single staged teardown, raw Win32 file
+    I/O - nothing in the section can raise). Caller-level frames
+    spanning SUSha256File are proven safe by the same probe matrix
+    (planning tmp 29-02-rootcause).
+
+    Layering:
     - PURE layer: total parsers and decisions, no I/O beyond the named
       state files, every malformed input rejected, never raises.
-    - Win32 layer: URL split, text fetch, SHA256 - every failure returns
-      False (silent-failure discipline; the caller logs check-error).
+    - Win32 layer: URL split, text fetch, zip download, SHA256 - every
+      failure returns False (silent-failure discipline).
     - TSelfUpdateCheckThread: the frozen Phase 28 check order, started
       fire-and-forget from the host's form construction.
+    - SUInstallAccepted: the accept continuation, always entered from
+      the main thread (the offer dialog marshals there).
 
     Text/BOM discipline: the .NET engine trims U+FEFF (UTF-8 BOM decoded
     by StreamReader). This port reads payloads at the byte level into
@@ -147,8 +175,82 @@ function SUFetchText(const AUrl: string; ATimeoutMs: Integer; out AText: string)
 function SUSha256Supported: Boolean;
 
 { SHA256 of the file bytes as lowercase hex through CNG; 64KB chunks.
-  Any nonzero NTSTATUS or I/O failure returns False (fail-closed). }
+  Any nonzero NTSTATUS or I/O failure returns False (fail-closed).
+  Implementation note: the CNG section of this function carries NO FPC
+  exception frames (see the unit header - frames spanning the bcrypt
+  calls corrupt exception dispatch on this lane); callers may keep
+  their own frames, that is proven safe. }
 function SUSha256File(const APath: string; out AHexLower: string): Boolean;
+
+{ ----- accept pipeline (plan 29-02, UpdateInstall.cs parity) }
+
+{ One accepted update offer: the channel version plus the two real
+  download URLs already validated by SUParseLinksFile (https pin +
+  suffix pins) during the check slice. }
+type
+  TSUUpdateOffer = record
+    ChannelVersion: string;
+    ZipUrl: string;
+    HashesUrl: string;
+  end;
+
+{ Host hook: close the main form so the process exits and the waiting
+  updater proceeds. Assigned by the host form via SURegisterHostClose -
+  a plain procedure pointer, so this unit stays LCL-free. }
+  TSUHostCloseProc = procedure;
+
+var
+  SUHostCloseProc: TSUHostCloseProc = nil;
+
+{ Register the host-close hook (no-op until the host registers). }
+procedure SURegisterHostClose(AProc: TSUHostCloseProc);
+
+{ Parse the published hashes file as MEASURED from the release pipeline
+  (hashdeep -c md5,sha1,sha256 -b): data lines are
+  "size,md5,sha1,sha256,filename", comma-separated, lowercase hex,
+  filename last. Lines that are empty, start with '%%%%' or start with
+  '##' are headers. Exactly one data line is required; field POSITION
+  decides (never the filename): field 0 = size (> 0), field 3 = SHA256
+  (exactly 64 chars of [0-9a-f], checked char by char). Every field
+  must be non-empty. Anything else returns False. }
+function SUParseHashesFile(const AText: string; out ASize: Int64;
+  out ASHA256: string): Boolean;
+
+{ GET the URL and stream the payload to ADestPath (status must be 200;
+  a 30s per-step receive budget - a stalled link aborts, a slow-but-
+  flowing one does not). Every failure returns False. }
+function SUDownloadToFile(const AUrl, ADestPath: string): Boolean;
+
+{ Native size of a file through raw Win32; False when the file cannot
+  be opened (never raises). The verify gate's length check. }
+function SUFileSizeOf(const APath: string; out ASize: Int64): Boolean;
+
+{ FAIL-CLOSED verification - the only gate between the download and the
+  extraction. True only when the hashes text parses, the file length
+  matches the published size AND the SHA256 of the file bytes equals
+  the published digest. Anything else (unreadable hashes, wrong size,
+  wrong digest, unreadable zip) is False; never raises. }
+function SUVerifyZipAgainstHashes(const AZipPath, AHashesText: string): Boolean;
+
+{ Extract the archive only when EVERY entry destination resolves inside
+  the staging directory (case-insensitive containment). The WHOLE
+  archive refuses when any entry violates - never per-entry extraction
+  (T-29-05). Directory entries (trailing '/') extract as nothing; their
+  names still pass the guard. Every failure returns False. }
+function SUExtractGuarded(const AZipPath, AStageDir: string): Boolean;
+
+{ The accept continuation, always entered from the main thread (the
+  offer dialog marshals there). Decision-for-decision port of
+  UpdateInstall.RunAsync: %TEMP%\WsusOfflineNext-Update staging root,
+  download-start/complete, fail-closed verify (hash-mismatch), guarded
+  extraction (extraction-rejected), the three-exe staging completeness
+  assert (incomplete-staging-tree), the minted healthy-launch marker
+  path, the updater handoff with the frozen CLI (updater-launched /
+  updater-missing), and the restart-now dialog (auto-Yes under
+  WSON_UPDATE_AUTO_ACCEPT=1 via the registered host-close hook). Every
+  failure path logs a named event with the actor, leaves the
+  application running and changes nothing on disk outside %TEMP%. }
+procedure SUInstallAccepted(const AActor: string; const AOffer: TSUUpdateOffer);
 
 { ----- check thread (the slice the tracer wires) }
 
@@ -164,6 +266,8 @@ type
     FActor: string;
     FChannelVersion: string;
     FLocalVersion: string;
+    FZipUrl: string;
+    FHashesUrl: string;
     procedure DoOfferDialog; { runs on the main thread via Synchronize }
   protected
     procedure Execute; override;
@@ -174,7 +278,7 @@ type
 implementation
 
 uses
-  enginecontracts;
+  enginecontracts, Process, zipper;
 
 { ===== Win32 API bindings ===== }
 
@@ -795,96 +899,646 @@ begin
   Result := SULoadBcrypt;
 end;
 
-{ KNOWN HAZARD (plan 29-01, flagged for 29-02): the digest itself is
-  CORRECT (verified against sha256sum on multi-chunk files), but on this
-  FPC 3.2.2 i386 lane the process's console output channel breaks
-  immediately AFTER the function completes (spurious EInOutError/Disk
-  Full or an AV at a fixed heap address). Suspected heap-adjacency
-  corruption; three fix attempts (NULL-object, explicit ObjectLength
-  object, allocation slack) did not clear it. NOT called by any shipped
-  path of this plan (the check thread uses SUSha256Supported only).
-  Plan 29-02 MUST NOT wire the accept pipeline through this function
-  until the corruption is root-caused - see 29-01-SUMMARY and
-  .planning/WINDOWS.md. }
+{ ROOT CAUSE (plan 29-02, resolves ledger entry 23): the earlier
+  console-channel hazard was NOT heap corruption. Probe matrix in
+  .planning/tmp/29-02-rootcause (probes 9-13): running the bcrypt
+  sequence with FPC try/finally exception frames ACTIVE ACROSS the
+  calls corrupts the exception-dispatch state on this FPC 3.2.2 i386
+  lane - the next raised exception then dies inside dispatch at a fixed
+  stack-top address (garbage handler, exit 217). With ZERO frames
+  spanning the CNG calls the identical sequence is deterministic and
+  correct in every combination (with/without console pre-writes, with
+  caller-level frames). This implementation therefore: opens the file
+  through raw Win32 (no exceptions possible inside), checks every
+  NTSTATUS, frees through one staged teardown, and has no try block in
+  the whole body - nothing can raise while bcrypt is in flight. }
 function SUSha256File(const APath: string; out AHexLower: string): Boolean;
 const
   ChunkSize = 65536;
   HexChars = '0123456789abcdef';
 var
   HAlg, HHash, HashObj, Buf: Pointer;
-  Fs: TFileStream;
+  HFile: THandle;
   HashBytes: array[0..31] of Byte;
-  Read, I: Integer;
+  Read: DWORD;
+  I: Integer;
   Status: LongInt;
   ObjLen, ResultLen: DWORD;
+  Ok: Boolean;
 begin
   Result := False;
   AHexLower := '';
+  HAlg := nil;
+  HHash := nil;
+  HashObj := nil;
+  Buf := nil;
+  HFile := INVALID_HANDLE_VALUE;
+  Ok := False;
   if not SULoadBcrypt then
     Exit;
-  try
-    Fs := TFileStream.Create(APath, fmOpenRead or fmShareDenyWrite);
-  except
+  HFile := Windows.CreateFileW(PWideChar(WideString(APath)), GENERIC_READ,
+    FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if HFile = INVALID_HANDLE_VALUE then
     Exit;
-  end;
-  try
-    Status := SUBcryptOpenAlgorithmProvider(@HAlg,
-      PWideChar(WideString('SHA256')), nil, 0);
-    if Status < 0 then
-      Exit;
-    try
-      { Explicit ownership for BOTH CNG-side buffers: the hash object
-        (ObjectLength query, our GetMem) and the 64KB chunk buffer. The
-        FPC PE default stack header (4KB reserve / 1MB commit swap) makes
-        big STACK frames a crash risk on this lane, so no chunk-sized
-        stack arrays; and DestroyHash with CNG-allocated object memory
-        corrupted the process on this pipeline - with buffers we own,
-        DestroyHash frees only the handle and we free ours. }
-      ObjLen := 0;
-      ResultLen := 0;
-      Status := SUBcryptGetProperty(HAlg,
-        PWideChar(WideString('ObjectLength')), @ObjLen, SizeOf(ObjLen),
-        ResultLen, 0);
-      if (Status < 0) or (ObjLen = 0) then
-        Exit;
+  { ---- CNG section: NO try/finally may span these calls ---- }
+  Status := SUBcryptOpenAlgorithmProvider(@HAlg,
+    PWideChar(WideString('SHA256')), nil, 0);
+  if Status >= 0 then
+  begin
+    ObjLen := 0;
+    ResultLen := 0;
+    Status := SUBcryptGetProperty(HAlg,
+      PWideChar(WideString('ObjectLength')), @ObjLen, SizeOf(ObjLen),
+      ResultLen, 0);
+    if (Status >= 0) and (ObjLen > 0) then
+    begin
       GetMem(HashObj, ObjLen + 4096); { slack: some CNG builds overrun ObjectLength }
-      try
-        Status := SUBcryptCreateHash(HAlg, @HHash, HashObj, ObjLen, nil, 0, 0);
-        if Status < 0 then
-          Exit;
-        try
-          GetMem(Buf, ChunkSize + 4096); { slack, same overrun guard }
-          try
-            repeat
-              Read := Fs.Read(Buf^, ChunkSize);
-              if Read > 0 then
-              begin
-                Status := SUBcryptHashData(HHash, Buf, DWORD(Read), 0);
-                if Status < 0 then
-                  Exit;
-              end;
-            until Read < ChunkSize;
-            Status := SUBcryptFinishHash(HHash, @HashBytes[0], SizeOf(HashBytes), 0);
+      Status := SUBcryptCreateHash(HAlg, @HHash, HashObj, ObjLen, nil, 0, 0);
+      if Status >= 0 then
+      begin
+        GetMem(Buf, ChunkSize + 4096); { slack, same overrun guard }
+        repeat
+          if not Windows.ReadFile(HFile, Buf^, ChunkSize, Read, nil) then
+            Break;
+          if Read > 0 then
+          begin
+            Status := SUBcryptHashData(HHash, Buf, Read, 0);
             if Status < 0 then
-              Exit;
+              Break;
+          end;
+        until Read < ChunkSize;
+        if Status >= 0 then
+        begin
+          Status := SUBcryptFinishHash(HHash, @HashBytes[0],
+            SizeOf(HashBytes), 0);
+          if Status >= 0 then
+          begin
             for I := 0 to SizeOf(HashBytes) - 1 do
               AHexLower := AHexLower + HexChars[1 + (HashBytes[I] shr 4)]
                 + HexChars[1 + (HashBytes[I] and $F)];
-            Result := True;
-          finally
-            FreeMem(Buf, ChunkSize + 4096);
+            Ok := True;
           end;
-        finally
-          SUBcryptDestroyHash(HHash, 0);
         end;
+      end;
+    end;
+  end;
+  { ---- single staged teardown, still frame-free ---- }
+  if Buf <> nil then
+    FreeMem(Buf, ChunkSize + 4096);
+  if HHash <> nil then
+    SUBcryptDestroyHash(HHash, 0);
+  if HashObj <> nil then
+    FreeMem(HashObj);
+  if HAlg <> nil then
+    SUBcryptCloseAlgorithmProvider(HAlg, 0);
+  Windows.CloseHandle(HFile);
+  Result := Ok;
+end;
+
+{ ===== accept pipeline (plan 29-02, UpdateInstall.cs parity) ===== }
+
+procedure SURegisterHostClose(AProc: TSUHostCloseProc);
+begin
+  SUHostCloseProc := AProc;
+end;
+
+{ Close the host so the process exits and the waiting updater proceeds
+  (the frozen Phase 28 swap cue). No-op when the host never registered. }
+procedure SURequestHostClose;
+begin
+  if Assigned(SUHostCloseProc) then
+    SUHostCloseProc;
+end;
+
+{ Native size of a file through raw Win32 (no exceptions). }
+function SUFileSizeOf(const APath: string; out ASize: Int64): Boolean;
+var
+  H: THandle;
+  Lo, Hi: DWORD;
+begin
+  Result := False;
+  ASize := 0;
+  H := Windows.CreateFileW(PWideChar(WideString(APath)), GENERIC_READ,
+    FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if H = INVALID_HANDLE_VALUE then
+    Exit;
+  Lo := Windows.GetFileSize(H, @Hi);
+  Windows.CloseHandle(H);
+  if (Lo = DWORD($FFFFFFFF)) and (Windows.GetLastError <> 0) then
+    Exit;
+  ASize := (Int64(Hi) shl 32) or Int64(Lo);
+  Result := True;
+end;
+
+function SUParseHashesFile(const AText: string; out ASize: Int64;
+  out ASHA256: string): Boolean;
+var
+  Rest, Line, DataLine, S, Field: string;
+  P, Nf, I: Integer;
+  V: Int64;
+begin
+  Result := False;
+  ASize := 0;
+  ASHA256 := '';
+  { Ordinal parity with the .NET parser: no BOM strip here - a BOM
+    before the first header makes that line a data line, which rejects
+    (same verdict as .NET reading the bytes via GetStringAsync). }
+  Rest := AText;
+  DataLine := '';
+  while Rest <> '' do
+  begin
+    P := Pos(#10, Rest);
+    if P = 0 then
+    begin
+      Line := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Line := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, MaxInt);
+    end;
+    { .NET: Trim('\r').Trim() }
+    while (Length(Line) > 0) and (Line[Length(Line)] = #13) do
+      SetLength(Line, Length(Line) - 1);
+    Line := SUTrimWs(Line);
+    if Line = '' then
+      Continue;
+    if Pos('%%%%', Line) = 1 then
+      Continue;
+    if Pos('##', Line) = 1 then
+      Continue;
+    if DataLine <> '' then
+      Exit; { more than one data line }
+    DataLine := Line;
+  end;
+  if DataLine = '' then
+    Exit;
+  { A trailing comma means an empty last field in the .NET Split(',') -
+    reject exactly like it. }
+  if DataLine[Length(DataLine)] = ',' then
+    Exit;
+  { Split by ',' - at least 4 fields, all non-empty, field 0 numeric
+    > 0, field 3 exactly 64 lowercase hex (char by char - Ordinal). }
+  Nf := 0;
+  V := 0;
+  ASHA256 := '';
+  S := DataLine;
+  while S <> '' do
+  begin
+    P := Pos(',', S);
+    if P = 0 then
+    begin
+      Field := S;
+      S := '';
+    end
+    else
+    begin
+      Field := Copy(S, 1, P - 1);
+      S := Copy(S, P + 1, MaxInt);
+    end;
+    Inc(Nf);
+    if Field = '' then
+      Exit; { an empty field anywhere rejects }
+    if Nf = 1 then
+    begin
+      { field 0 - the size }
+      if not TryStrToInt64(Field, V) then
+        Exit;
+      if V <= 0 then
+        Exit;
+    end
+    else if Nf = 4 then
+    begin
+      { field 3 - the SHA256 }
+      if Length(Field) <> 64 then
+        Exit;
+      for I := 1 to 64 do
+        if not (Field[I] in ['0'..'9', 'a'..'f']) then
+          Exit;
+      ASHA256 := Field;
+    end;
+  end;
+  if Nf < 4 then
+    Exit;
+  ASize := V;
+  Result := ASHA256 <> '';
+end;
+
+{ Streaming zip download - the SUFetchText loop with a 30s per-step
+  receive budget (UpdateInstall.cs: a 10s HttpClient timeout cannot
+  carry a multi-hundred-megabyte download on slow links; 30s per read
+  step aborts a stalled link, never a slow-but-flowing one). Status
+  must be 200; every failure returns False. }
+function SUDownloadToFile(const AUrl, ADestPath: string): Boolean;
+var
+  Session, Connect, Request: Pointer;
+  Scheme, Host, ObjectPath: string;
+  Port: DWORD;
+  WHost, WVerb, WPath, WDest: WideString;
+  Secure: Boolean;
+  Status, StatusLen: DWORD;
+  Avail, ReadBytes: DWORD;
+  Chunk: AnsiString;
+  Fs: TFileStream;
+begin
+  Result := False;
+  if not SUSplitUrl(AUrl, Scheme, Host, Port, ObjectPath) then
+    Exit;
+  Secure := SameText(Scheme, 'https');
+  WVerb := 'GET';
+  WHost := Host;
+  WPath := ObjectPath;
+  WDest := ADestPath;
+  Fs := nil;
+  Session := WinHttpOpen(PWideChar(WideString('WsusOfflineNext-selfupdate')),
+    SUWINHTTPACCESSTYPEDEFAULTPROXY, nil, nil, 0);
+  if Session = nil then
+    Exit;
+  try
+    { 30s resolve/connect/send/receive per step - the download budget. }
+    WinHttpSetTimeouts(Session, 30000, 30000, 30000, 30000);
+    Connect := WinHttpConnect(Session, PWideChar(WHost), Word(Port), 0);
+    if Connect = nil then
+      Exit;
+    try
+      if Secure then
+        Request := WinHttpOpenRequest(Connect, PWideChar(WVerb),
+          PWideChar(WPath), nil, nil, nil, SUWINHTTPFLAGSECURE)
+      else
+        Request := WinHttpOpenRequest(Connect, PWideChar(WVerb),
+          PWideChar(WPath), nil, nil, nil, 0);
+      if Request = nil then
+        Exit;
+      try
+        if not WinHttpSendRequest(Request, nil, 0, nil, 0, 0, 0) then
+          Exit;
+        if not WinHttpReceiveResponse(Request, nil) then
+          Exit;
+        Status := 0;
+        StatusLen := SizeOf(Status);
+        if not WinHttpQueryHeaders(Request,
+            SUWINHTTPQUERYSTATUSCODE or SUWINHTTPQUERYFLAGNUMBER,
+            nil, @Status, StatusLen, nil) then
+          Exit;
+        if Status <> 200 then
+          Exit;
+        try
+          Fs := TFileStream.Create(ADestPath, fmCreate or fmShareDenyWrite);
+        except
+          Fs := nil;
+          Exit;
+        end;
+        repeat
+          Avail := 0;
+          if not WinHttpQueryDataAvailable(Request, Avail) then
+            Exit;
+          if Avail = 0 then
+            Break;
+          SetLength(Chunk, Avail);
+          ReadBytes := 0;
+          if not WinHttpReadData(Request, @Chunk[1], Avail, ReadBytes) then
+            Exit;
+          if ReadBytes = 0 then
+            Break;
+          SetLength(Chunk, ReadBytes);
+          Fs.WriteBuffer(Chunk[1], Length(Chunk));
+        until False;
+        Result := True;
       finally
-        FreeMem(HashObj);
+        WinHttpCloseHandle(Request);
       end;
     finally
-      SUBcryptCloseAlgorithmProvider(HAlg, 0);
+      WinHttpCloseHandle(Connect);
     end;
   finally
+    WinHttpCloseHandle(Session);
     Fs.Free;
+  end;
+end;
+
+function SUVerifyZipAgainstHashes(const AZipPath, AHashesText: string): Boolean;
+var
+  PublishedSize, FileSize: Int64;
+  PublishedSha, Hex: string;
+begin
+  Result := False;
+  try
+    if not SUParseHashesFile(AHashesText, PublishedSize, PublishedSha) then
+      Exit;
+    if not SUFileSizeOf(AZipPath, FileSize) then
+      Exit;
+    if FileSize <> PublishedSize then
+      Exit;
+    if not SUSha256File(AZipPath, Hex) then
+      Exit;
+    Result := (Hex = PublishedSha);
+  except
+    Result := False; { unreadable zip fails closed, never raises }
+  end;
+end;
+
+{ Destination resolver behind the zip-slip guard - the twin of
+  GetFullPath(Path.Combine(stageDir, entry.FullName)). Returns the
+  resolved absolute destination, or '' when the name resolves OUTSIDE
+  the staging directory (refuse). }
+function SUGuardResolveDestination(const AStageExpanded,
+  AEntryName: string): string;
+var
+  Name, Base, Seg: string;
+  Segs, Stack: TStringList;
+  I: Integer;
+begin
+  Result := '';
+  Name := StringReplace(AEntryName, '/', '\', [rfReplaceAll]);
+  if Pos('\\', Name) = 1 then
+    Exit; { a UNC destination is outside by construction }
+  Base := ExcludeTrailingPathDelimiter(AStageExpanded);
+  if (Length(Name) >= 2) and (Name[2] = ':') then
+    Result := Name { drive-absolute - Path.Combine keeps it }
+  else if (Length(Name) >= 1) and (Name[1] = '\') then
+    Result := Copy(Base, 1, 2) + Name { drive-rooted - the stage's drive }
+  else
+    Result := Base + '\' + Name;
+  { Resolve '.' and '..' segments left-to-right with a stack
+    (GetFullPath semantics); '..' above the drive root refuses. }
+  Segs := TStringList.Create;
+  Stack := TStringList.Create;
+  try
+    Segs.StrictDelimiter := True;
+    Segs.Delimiter := '\';
+    Segs.DelimitedText := Result;
+    for I := 0 to Segs.Count - 1 do
+    begin
+      Seg := Segs[I];
+      if (Seg = '') or (Seg = '.') then
+        Continue;
+      if Seg = '..' then
+      begin
+        if Stack.Count <= 1 then
+          Exit; { '..' resolves at/above the drive root - outside }
+        Stack.Delete(Stack.Count - 1);
+      end
+      else
+        Stack.Add(Seg);
+    end;
+    Result := '';
+    for I := 0 to Stack.Count - 1 do
+    begin
+      if I > 0 then
+        Result := Result + '\';
+      Result := Result + Stack[I];
+    end;
+  finally
+    Stack.Free;
+    Segs.Free;
+  end;
+  { Containment: equal to the stage or below it (case-insensitive). }
+  if SameText(Result, AStageExpanded) then
+    Exit;
+  if (Length(Result) > Length(AStageExpanded))
+     and SameText(Copy(Result, 1, Length(AStageExpanded) + 1),
+           AStageExpanded + '\') then
+    Exit;
+  Result := ''; { outside - refuse }
+end;
+
+{ Guarded extraction: enumerate every entry FIRST and refuse the WHOLE
+  archive when any destination would resolve outside the staging
+  directory (zip-slip, T-29-05). Only then extract - through the FCL
+  zipper (TUnZipper, pure-Pascal inflate; no bin\unzip.exe dependency).
+  The whole archive refuses, never single entries. }
+function SUExtractGuarded(const AZipPath, AStageDir: string): Boolean;
+var
+  U: TUnZipper;
+  I: Integer;
+  Dest: string;
+  StageExpanded: string;
+begin
+  Result := False;
+  if not FileExists(AZipPath) then
+    Exit;
+  StageExpanded := ExpandFileName(AStageDir);
+  U := TUnZipper.Create;
+  try
+    try
+      U.FileName := AZipPath;
+      U.Examine;
+      { WHOLE-ARCHIVE GUARD FIRST: every entry (directories included)
+        must resolve inside the staging directory. }
+      for I := 0 to U.Entries.Count - 1 do
+      begin
+        Dest := SUGuardResolveDestination(StageExpanded,
+          U.Entries[I].ArchiveFileName);
+        if Dest = '' then
+          Exit; { one bad entry refuses the whole archive }
+      end;
+      ForceDirectories(AStageDir);
+      U.OutputPath := IncludeTrailingPathDelimiter(AStageDir);
+      U.UnZipAllFiles;
+      Result := True;
+    except
+      Result := False; { unreadable archive extracts nothing }
+    end;
+  finally
+    U.Free;
+  end;
+end;
+
+{ Best-effort deletes (temp cleanup never blocks the accept path). }
+procedure SUTryDelete(const APath: string);
+begin
+  try
+    if FileExists(APath) then
+      SysUtils.DeleteFile(APath);
+  except
+  end;
+end;
+
+procedure SUTryDeleteDir(const APath: string);
+begin
+  try
+    if DirectoryExists(APath) then
+      RemoveDir(APath);
+  except
+  end;
+end;
+
+{ The named warning box over the title 'WSUS Offline Next' - same
+  wording as the .NET MessageBox calls in UpdateInstall.RunAsync. }
+procedure SUAcceptWarning(const AText: string);
+var
+  WText, WTitle: WideString;
+begin
+  WTitle := 'WSUS Offline Next';
+  WText := AText;
+  SUMessageBoxW(0, PWideChar(WText), PWideChar(WTitle),
+    MB_TASKMODAL or MB_ICONWARNING or MB_OK);
+end;
+
+procedure SUInstallAccepted(const AActor: string; const AOffer: TSUUpdateOffer);
+var
+  StagingRoot, Stamp, ZipPath, StageDir: string;
+  HashesText: string;
+  StagedRoot, ExeDir, RootDir, InstallRoot, UpdaterPath: string;
+  MarkerPath, G: string;
+  RootTrimmed, RootName, RootParent, BackupDir: string;
+  Updater: TProcess;
+  GUID: TGUID;
+begin
+  try
+    { Staging root + stamp (UpdateInstall.cs 124-128; the stamp is a
+      local timestamp here - the value is only a unique temp name). }
+    StagingRoot := IncludeTrailingPathDelimiter(EngCallerTempDir)
+      + 'WsusOfflineNext-Update';
+    ForceDirectories(StagingRoot);
+    Stamp := FormatDateTime('yymmddhhnnsszzz', Now);
+    ZipPath := StagingRoot + '\update-' + Stamp + '.zip';
+    StageDir := StagingRoot + '\stage-' + Stamp;
+
+    SULogAppend(AActor, 'download-start');
+    { The hashes text first (small fetch), then the zip (streamed). A
+      failed fetch is an exception in .NET (GetStringAsync) - the same
+      install-error outcome here. }
+    if not SUFetchText(AOffer.HashesUrl, SUFetchTimeoutMs, HashesText) then
+    begin
+      SULogAppend(AActor, 'install-error');
+      SUAcceptWarning('The update could not be completed.' + #13#10 +
+        'Nothing was changed - the application continues normally.');
+      Exit;
+    end;
+    if not SUDownloadToFile(AOffer.ZipUrl, ZipPath) then
+    begin
+      SULogAppend(AActor, 'install-error');
+      SUAcceptWarning('The update could not be completed.' + #13#10 +
+        'Nothing was changed - the application continues normally.');
+      Exit;
+    end;
+    SULogAppend(AActor, 'download-complete');
+
+    { Fail-closed verification: nothing is extracted, the zip is
+      deleted and the app continues normally. }
+    if not SUVerifyZipAgainstHashes(ZipPath, HashesText) then
+    begin
+      SULogAppend(AActor, 'hash-mismatch');
+      SUTryDelete(ZipPath);
+      SUAcceptWarning('Verification of the downloaded update failed.' + #13#10 +
+        'Nothing was changed - the application continues normally.');
+      Exit;
+    end;
+    SULogAppend(AActor, 'hash-verified');
+
+    { Guarded extraction: enumerate-first whole-archive zip-slip
+      refusal (T-29-05). }
+    if not SUExtractGuarded(ZipPath, StageDir) then
+    begin
+      SULogAppend(AActor, 'extraction-rejected');
+      SUTryDelete(ZipPath);
+      SUAcceptWarning('The downloaded update was rejected.' + #13#10 +
+        'Nothing was changed - the application continues normally.');
+      Exit;
+    end;
+
+    { Staging completeness: the new tree must carry all THREE
+      application executables before anything is applied
+      (UpdateInstall.cs:179-181 - case-for-case parity). }
+    StagedRoot := IncludeTrailingPathDelimiter(StageDir) + 'wsusoffline';
+    if (not FileExists(StagedRoot + '\UpdateGeneratorModern.exe'))
+       or (not FileExists(StagedRoot + '\client\UpdateInstallerModern.exe'))
+       or (not FileExists(StagedRoot + '\WsusOfflineUpdater.exe')) then
+    begin
+      SULogAppend(AActor, 'incomplete-staging-tree');
+      SUTryDelete(ZipPath);
+      SUTryDeleteDir(StageDir);
+      SUAcceptWarning('The downloaded update is incomplete.' + #13#10 +
+        'Nothing was changed - the application continues normally.');
+      Exit;
+    end;
+    SULogAppend(AActor, 'staged');
+    SUTryDelete(ZipPath); { the staged tree is now the source of truth }
+
+    { Healthy-marker path is MINTED here; the marker file itself is
+      only written by the relaunched app after its window shows. }
+    CreateGUID(GUID);
+    { GUIDToString yields XX-... wrapped in braces - strip them. }
+    G := GUIDToString(GUID);
+    G := AnsiLowerCase(Copy(G, 2, Length(G) - 2));
+    ForceDirectories(SUStateRoot);
+    MarkerPath := SUStateRoot + '\launch-' + G + '.ok';
+
+    { The updater lives at the install root: the PARENT of this exe's
+      own directory (the native exe ships in client\). ParamStr(0) is
+      the LCL-free twin of Application.ExeName. }
+    ExeDir := ExcludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
+    RootDir := ExtractFilePath(ExeDir);          { the install root + '\' }
+    InstallRoot := ExcludeTrailingPathDelimiter(RootDir);
+    UpdaterPath := InstallRoot + '\WsusOfflineUpdater.exe';
+    if not FileExists(UpdaterPath) then
+    begin
+      SULogAppend(AActor, 'updater-missing');
+      SUAcceptWarning('The updater component is missing from this installation.' +
+        #13#10 + 'Nothing was changed - the application continues normally.');
+      Exit;
+    end;
+
+    { Backup dir (UpdateInstall.cs:212-220 parity): beside the install
+      root as <root>.bak-<timestamp>, with the %TEMP% staging fallback
+      when the root cannot be derived. }
+    RootTrimmed := InstallRoot;
+    RootName := ExtractFileName(RootTrimmed);
+    RootParent := ExtractFilePath(RootTrimmed); { ends with '\' }
+    if (RootName <> '') and (RootParent <> '') then
+      BackupDir := RootParent + RootName + '.bak-'
+        + FormatDateTime('yyyymmdd-hhnnss', Now)
+    else
+      BackupDir := StagingRoot + '\backup-'
+        + FormatDateTime('yyyymmdd-hhnnss', Now);
+
+    { The handoff - the frozen Phase 28 CLI, parsed by the updater at
+      Program.cs 525-541. TProcess quotes whitespace-bearing arguments
+      itself (MaybeQuoteIfNotQuoted); channel-controlled data never
+      reaches this command line - only local paths and the own pid
+      (T-29-06). The updater is asInvoker (28-02: manifest count 1):
+      launched from this elevated process it inherits elevation with
+      no new UAC prompt (SC4). }
+    Updater := TProcess.Create(nil);
+    try
+      Updater.Executable := UpdaterPath;
+      Updater.Parameters.Add('--pid');
+      Updater.Parameters.Add(IntToStr(Windows.GetCurrentProcessId));
+      Updater.Parameters.Add('--staging');
+      Updater.Parameters.Add(StageDir);
+      Updater.Parameters.Add('--backup');
+      Updater.Parameters.Add(BackupDir);
+      Updater.Parameters.Add('--relaunch');
+      Updater.Parameters.Add(ParamStr(0));
+      Updater.Parameters.Add('--marker');
+      Updater.Parameters.Add(MarkerPath);
+      Updater.Options := [poNoConsole];
+      Updater.Execute;
+    finally
+      Updater.Free;
+    end;
+    SULogAppend(AActor, 'updater-launched');
+
+    { Same test / Phase 30 harness hook as the offer dialog: auto-answer
+      Yes so the application closes itself and the waiting updater
+      proceeds (no dialog a headless harness would have to click). }
+    if SUEnv('WSON_UPDATE_AUTO_ACCEPT') = '1' then
+      SURequestHostClose
+    else if SUMessageBoxW(0,
+        PWideChar(WideString('Update downloaded and verified.' + #13#10 +
+          'It will be applied when this application closes.' + #13#10#13#10 +
+          'Restart now?')),
+        PWideChar(WideString('WSUS Offline Next')),
+        MB_TASKMODAL or MB_ICONINFORMATION or MB_YESNO) = IDYES then
+      SURequestHostClose;
+  except
+    { Same silent-failure discipline as the check slice: a named error
+      event, the app keeps running, nothing was applied. }
+    SULogAppend(AActor, 'install-error');
+    SUAcceptWarning('The update could not be completed.' + #13#10 +
+      'Nothing was changed - the application continues normally.');
   end;
 end;
 
@@ -902,6 +1556,8 @@ begin
   FActor := AActor;
   FChannelVersion := '';
   FLocalVersion := '';
+  FZipUrl := '';
+  FHashesUrl := '';
   FreeOnTerminate := True;
   Start;
 end;
@@ -910,6 +1566,7 @@ procedure TSelfUpdateCheckThread.DoOfferDialog;
 var
   WText, WTitle: WideString;
   Choice: Integer;
+  Offer: TSUUpdateOffer;
 begin
   if SUOfferLatch then
     Exit;
@@ -925,9 +1582,14 @@ begin
     if Choice = IDYES then
     begin
       SULogAppend(FActor, 'update-accepted');
-      { The accept pipeline (verified download, fail-closed SHA256,
-        guarded extraction, staging, updater handoff) arrives with plan
-        29-02 task 1 - this branch ONLY logs the event in this plan. }
+      { The accept continuation (plan 29-02): verified download,
+        fail-closed SHA256, guarded extraction, staging, updater
+        handoff - UpdateInstall.RunAsync parity. Every failure path
+        inside logs a named event and leaves the app running. }
+      Offer.ChannelVersion := FChannelVersion;
+      Offer.ZipUrl := FZipUrl;
+      Offer.HashesUrl := FHashesUrl;
+      SUInstallAccepted(FActor, Offer);
     end
     else
       SULogAppend(FActor, 'update-declined');
@@ -1004,8 +1666,11 @@ begin
       SULogAppend(FActor, 'update-declined');
       Exit;
     end;
-    { 12. The offer on the main thread (OfferGuard latch inside). }
+    { 12. The offer on the main thread (OfferGuard latch inside); the
+       offer carries the real URLs (the accept continuation needs them). }
     FLocalVersion := LocalVersion;
+    FZipUrl := ZipUrl;
+    FHashesUrl := HashesUrl;
     Synchronize(@DoOfferDialog);
   except
     { silent-failure discipline: any network or parse error logs

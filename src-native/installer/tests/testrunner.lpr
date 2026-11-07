@@ -30,7 +30,9 @@ program testrunner;
     script-dir fallback. Plan 261106-sgi adds the free-drive-letter
     selection pin: the pure DetectPickFreeDriveLetter contract
     (Z-downto-C order, occupied-letter skip, full-range exhaustion,
-    case-lenient match) behind the explicit device choice. }
+    case-lenient match) behind the explicit device choice.
+    Plan 261106-toz adds the modern-extras OS gate pin: Edge/WebView2
+    offers gated off on pre-Win10 OSes (2x2 OS/presence matrix). }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry, zipper,
@@ -352,6 +354,24 @@ begin
     'presence: absent -> disabled + unchecked');
   Check(GatePlainToggle(True).Enabled and GatePlainToggle(True).Checked,
     'plain toggle: always offerable, checked');
+end;
+
+procedure TestOsGate;
+begin
+  { plan 261106-toz: the 2x2 OS/presence matrix for the Edge/WebView2
+    modern-extras gate. }
+  Check(not GateModernExtrasByOs(False, True, True).Enabled and
+        not GateModernExtrasByOs(False, True, True).Checked,
+    'osgate: legacy OS + present + INI checked -> disabled + unchecked');
+  Check(GateModernExtrasByOs(True, True, True).Enabled and
+        GateModernExtrasByOs(True, True, True).Checked,
+    'osgate: modern OS + present + INI checked -> passthrough enabled + checked');
+  Check(not GateModernExtrasByOs(True, False, True).Enabled and
+        not GateModernExtrasByOs(True, False, True).Checked,
+    'osgate: modern OS + absent -> presence rule disabled + unchecked');
+  Check(not GateModernExtrasByOs(False, False, True).Enabled and
+        not GateModernExtrasByOs(False, False, True).Checked,
+    'osgate: legacy OS + absent -> disabled + unchecked');
 end;
 
 procedure TestPathValid;
@@ -1163,6 +1183,7 @@ begin
     TestDisplayMaps;
     TestEnablementPredicates;
     TestToggleGates;
+    TestOsGate;
     TestPathValid;
     TestUncSplit;
     TestPickFreeLetter;

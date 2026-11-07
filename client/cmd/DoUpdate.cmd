@@ -1058,6 +1058,20 @@ if "%MSEDGE_INSTALLED%" NEQ "1" (
   if "%INSTALL_EDGE%" NEQ "/instedge" goto SkipMSEdgeInst
 )
 
+rem DELIBERATE deviation from the au3 incumbent (au3:796-829, presence-only
+rem gating, plan 261106-toz): current Edge (Chromium) and WebView2 builds
+rem need Windows 10 or newer - Microsoft ended Win7/8.1 support 2023-01
+rem (last Edge 109); measured on the Win7 SP1 x86 VM 2026-11-06 the Edge
+rem installer exits 5 and the WebView2 installer exits -2147024769
+rem (0x8007007F). The offer is skipped on pre-Win10 without counting a
+rem failure; the guard also fires for the passive-update flow of an
+rem already installed Edge (no /instedge needed).
+if %OS_VER_MAJOR% LSS 10 (
+  echo Warning: Skipped installation of Microsoft Edge ^(Chromium^): requires Windows 10 or later ^(not supported on this Windows version^)
+  call :Log "Warning: Skipped installation of Microsoft Edge (Chromium): requires Windows 10 or later (not supported on this Windows version)"
+  goto SkipMSEdgeInst
+)
+
 if exist "..\edge\MicrosoftEdgeEnterprise%OS_ARCH%.msi" (
   if exist %SystemRoot%\Temp\wou_msedge_tried.txt goto SkipMSEdgeInst
   echo Installing Microsoft Edge Enterprise...
@@ -1181,6 +1195,13 @@ set MSEDGEUPDATE_FILENAME=
 
 rem *** Install Microsoft Edge WebView2 Evergreen Runtime ***
 if "%INSTALL_WEBVIEW2%" NEQ "/instwebview2" goto SkipWebView2Inst
+rem DELIBERATE deviation (plan 261106-toz): the WebView2 runtime offer is
+rem gated off on pre-Win10 exactly like the Edge block above.
+if %OS_VER_MAJOR% LSS 10 (
+  echo Warning: Skipped installation of Microsoft Edge WebView2 Runtime: requires Windows 10 or later ^(not supported on this Windows version^)
+  call :Log "Warning: Skipped installation of Microsoft Edge WebView2 Runtime: requires Windows 10 or later (not supported on this Windows version)"
+  goto SkipWebView2Inst
+)
 echo Checking Microsoft Edge WebView2 installation state...
 if "%WEBVIEW2_INSTALLED%"=="1" (
   echo Info: Microsoft Edge WebView2 is already installed.

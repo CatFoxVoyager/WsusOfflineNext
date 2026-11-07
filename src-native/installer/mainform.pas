@@ -440,15 +440,15 @@ begin
   chkUpdateCpp.Enabled := Gate.Enabled;
   chkUpdateCpp.Checked := Gate.Checked;
 
-  { Install Microsoft Edge (au3:796-812). }
-  Gate := GatePresence(DetectEdgePresent(FScriptDir),
+  { Install Microsoft Edge (au3:796-812; OS-gated per plan 261106-toz). }
+  Gate := GateModernExtrasByOs(FOsModern, DetectEdgePresent(FScriptDir),
     IniEnabled(ENG_INI_SECTION_INSTALLATION, 'instedge',
       ENG_INI_DISABLED));
   chkInstEdge.Enabled := Gate.Enabled;
   chkInstEdge.Checked := Gate.Checked;
 
-  { Install Edge WebView2 Runtime (au3:814-829). }
-  Gate := GatePresence(DetectWebView2Present(FScriptDir),
+  { Install Edge WebView2 Runtime (au3:814-829; OS-gated per plan 261106-toz). }
+  Gate := GateModernExtrasByOs(FOsModern, DetectWebView2Present(FScriptDir),
     IniEnabled(ENG_INI_SECTION_INSTALLATION, 'instwebview2',
       ENG_INI_DISABLED));
   chkInstWebView2.Enabled := Gate.Enabled;

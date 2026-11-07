@@ -191,10 +191,19 @@ procedure DetectReleaseScriptDirectory(const ADrive: string);
 procedure DetectWriteWUStatusServer(const AValue: string);
 
 { ---- PURE toggle gates (au3 665-942 verbatim) ---- }
-{ Presence-gated toggles (rcerts/cpp/edge/webview2/office/verify):
+{ Presence-gated toggles (rcerts/cpp/office/verify):
   present -> checked per INI, absent -> unchecked + disabled (au3:700-708
-  shape). AIniChecked = the MyIniRead state equals Enabled. }
+  shape). AIniChecked = the MyIniRead state equals Enabled. The Edge and
+  WebView2 toggles route through the modern-extras OS gate below instead. }
 function GatePresence(APresent, AIniChecked: Boolean): TGateState;
+{ Modern-extras OS gate (plan 261106-toz, DELIBERATE deviation from
+  au3:796-829): the Edge/WebView2 payloads require Windows 10 or later
+  and Microsoft ended Win7/8.1 support 2023-01 (last Edge 109). On a
+  pre-Win10 OS it returns the au3 absent shape regardless of presence;
+  a modern OS defers to GatePresence. AOsModern comes from
+  OsIsWin10OrNewer(DetectOsInfo) at the caller; the only consumers are
+  the Edge and WebView2 toggles. }
+function GateModernExtrasByOs(AOsModern, APresent, AIniChecked: Boolean): TGateState;
 { Always-offerable toggles (dotnet35/dotnet5/shutdown/auditonly). }
 function GatePlainToggle(AIniChecked: Boolean): TGateState;
 
@@ -941,6 +950,19 @@ begin
     Result.Enabled := False;
     Result.Checked := False;
   end;
+end;
+
+function GateModernExtrasByOs(AOsModern, APresent, AIniChecked: Boolean): TGateState;
+begin
+  { Pre-Win10 -> the au3 absent shape regardless of presence (plan
+    261106-toz); a modern OS keeps the incumbent presence rule. }
+  if not AOsModern then
+  begin
+    Result.Enabled := False;
+    Result.Checked := False;
+  end
+  else
+    Result := GatePresence(APresent, AIniChecked);
 end;
 
 function GatePlainToggle(AIniChecked: Boolean): TGateState;

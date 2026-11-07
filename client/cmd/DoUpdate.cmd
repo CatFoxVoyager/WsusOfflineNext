@@ -955,6 +955,83 @@ if %IE_VER_REVIS% GEQ %IE_VER_TARGET_REVIS% goto SkipIEInst
 :InstallIE
 goto IE%OS_NAME%
 
+:IEw61
+rem *** Internet Explorer 11 for Windows 7 / Server 2008 R2 ***
+rem *** Restored 2026-11-07: the continuation lineage had stripped ***
+rem *** the w61 IE flow entirely - no such section ever existed in ***
+rem *** this repo's history or upstream master - so the version ***
+rem *** ladder's install route landed on a missing label. ***
+rem *** Authored new, modeled on the Server 2012 sibling above. ***
+rem *** The classic prerequisite list route (static ids + catalog ***
+rem *** mapping) is not viable here: the catalog-carried names ***
+rem *** mismatch the static prerequisite files on disk and 2 of ***
+rem *** the 9 classic prerequisites are absent from the mapping ***
+rem *** entirely - hence direct installs via the system servicing ***
+rem *** tool, per the pre-12.x approach. ***
+if exist %SystemRoot%\Temp\wou_ie_tried.txt goto SkipIEInst
+if /i "%OS_ARCH%"=="x64" (set IE_PRE_DIR=..\w61-x64\glb) else (set IE_PRE_DIR=..\w61\glb)
+set IE_FILENAME=%IE_PRE_DIR%\IE11-Windows6.1-%OS_ARCH%-%OS_LANG_EXT%.exe
+dir /B %IE_FILENAME% >nul 2>&1
+if errorlevel 1 (
+  echo Warning: File %IE_FILENAME% not found.
+  call :Log "Warning: File %IE_FILENAME% not found"
+  set IE_PRE_DIR=
+  goto SkipIEInst
+)
+if exist %SystemRoot%\Temp\wou_iepre_tried.txt goto SkipIEw61Pre
+echo Checking Internet Explorer 11 prerequisites...
+for %%k in (KB2574819-v2 KB2670838 KB2729094-v2 KB2731771 KB2786081 KB2834140-v2 KB2852386 KB2882822 KB2888049) do (
+  dir /B %IE_PRE_DIR%\Windows6.1-%%k-*.msu >nul 2>&1
+  if errorlevel 1 (
+    echo Warning: Prerequisite file %IE_PRE_DIR%\Windows6.1-%%k-*.msu not found
+    call :Log "Warning: Prerequisite file %IE_PRE_DIR%\Windows6.1-%%k-*.msu not found"
+  ) else (
+    for /F "delims=" %%i in ('dir /B %IE_PRE_DIR%\Windows6.1-%%k-*.msu') do (
+      %SystemRoot%\System32\wusa.exe "%IE_PRE_DIR%\%%i" /quiet /norestart
+      set ERR_LEVEL=!errorlevel!
+      if "!ERR_LEVEL!"=="3010" (
+        set REBOOT_REQUIRED=1
+      ) else if "!ERR_LEVEL!"=="3011" (
+        set RECALL_REQUIRED=1
+      ) else if "!ERR_LEVEL!"=="2359302" (
+        echo Info: Prerequisite %%i already installed
+        call :Log "Info: Prerequisite %%i already installed"
+      ) else if "!ERR_LEVEL!"=="2359301" (
+        echo Info: Prerequisite %%i already installed
+        call :Log "Info: Prerequisite %%i already installed"
+      ) else if "!ERR_LEVEL!"=="-2145124329" (
+        echo Info: Prerequisite %%i not applicable to this system
+        call :Log "Info: Prerequisite %%i not applicable to this system"
+      ) else if "!ERR_LEVEL!" NEQ "0" (
+        echo Warning: Prerequisite installation %%i failed with error !ERR_LEVEL!
+        call :Log "Warning: Prerequisite installation %%i failed with error !ERR_LEVEL!"
+      )
+    )
+  )
+)
+if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
+echo. >%SystemRoot%\Temp\wou_iepre_tried.txt
+:SkipIEw61Pre
+echo Installing Internet Explorer 11...
+"%IE_FILENAME%" /passive /norestart
+set ERR_LEVEL=!errorlevel!
+if "!ERR_LEVEL!"=="3010" (
+  set REBOOT_REQUIRED=1
+) else if "!ERR_LEVEL!"=="3011" (
+  set RECALL_REQUIRED=1
+) else if "!ERR_LEVEL!" NEQ "0" (
+  if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
+  echo. >%SystemRoot%\Temp\wou_ie_tried.txt
+  set IE_PRE_DIR=
+  goto IEInstalled
+)
+rem FIXME 12.5 (b69)
+set RECALL_REQUIRED=1
+if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
+echo. >%SystemRoot%\Temp\wou_ie_tried.txt
+set IE_PRE_DIR=
+goto IEInstalled
+
 :IEw62
 if /i "%OS_ARCH%" NEQ "x64" goto SkipIEInst
 if exist %SystemRoot%\Temp\wou_ie_tried.txt goto SkipIEInst

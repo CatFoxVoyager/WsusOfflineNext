@@ -100,6 +100,8 @@ goto SetOfficeName
 
 :Windows6.1
 rem *** Windows 7 / Server 2008 R2 ***
+set IE_VER_TARGET_MAJOR=9
+set IE_VER_TARGET_MINOR=11
 set OS_NAME=w61
 goto SetOfficeName
 

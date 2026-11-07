@@ -2064,10 +2064,14 @@ rem *** are absent, so the offline catalog scan dies with a      ***
 rem *** signature validation error instead of listing missing    ***
 rem *** updates. The pair installs from the arch-specific tree   ***
 rem *** before the SHA2 warnings and the catalog scan.           ***
-rem *** A successful pass flips both support flags for this      ***
-rem *** session (same idiom as the agent-update flip above),     ***
-rem *** assuming the pair just installed covers the catalog      ***
-rem *** validation without an intervening reboot.                ***
+rem *** USER REQUIREMENT (2026-11-07): after the pair installs, Windows MUST  ***
+rem *** reboot before anything else runs - the SHA2 kernel and crypto          ***
+rem *** components activate at boot only. A genuine-install pass therefore     ***
+rem *** ends this run reboot-required through the incumbent end-of-run         ***
+rem *** reporting label, flipping no support flag for this session - the      ***
+rem *** next session's system-properties probe re-reads the real state.       ***
+rem *** Already-present shapes do not end the run - nothing needs             ***
+rem *** activating; continuing surfaces the real flag state loudly.           ***
 if "%OS_NAME%" NEQ "w61" goto SkipSha2Pair
 if "%OS_SHA2_SUPPORT%"=="1" goto SkipSha2Pair
 if exist %SystemRoot%\Temp\wou_sha2_tried.txt goto SkipSha2Pair
@@ -2092,11 +2096,9 @@ for %%k in (KB4474419 KB4490628) do (
       ) else if "!ERR_LEVEL!"=="2359302" (
         echo Info: SHA2 support update %%i already installed
         call :Log "Info: SHA2 support update %%i already installed"
-        set SHA2_INSTALLED=1
       ) else if "!ERR_LEVEL!"=="2359301" (
         echo Info: SHA2 support update %%i already installed
         call :Log "Info: SHA2 support update %%i already installed"
-        set SHA2_INSTALLED=1
       ) else if "!ERR_LEVEL!"=="0" (
         set SHA2_INSTALLED=1
       ) else if "!ERR_LEVEL!"=="-2145124329" (
@@ -2109,12 +2111,16 @@ for %%k in (KB4474419 KB4490628) do (
     )
   )
 )
-rem *** A successful pass flips the OS flag and the agent flag  ***
-rem *** above, so this run's warnings are suppressed.           ***
-if "%SHA2_INSTALLED%"=="1" set OS_SHA2_SUPPORT=1
-if "%SHA2_INSTALLED%"=="1" set WUA_SHA2_SUPPORT=1
+rem *** A genuine-install pass (any success shape that installed a package      ***
+rem *** this session) ends the run below, after the session marker lands.       ***
 if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
 echo. >%SystemRoot%\Temp\wou_sha2_tried.txt
+if "%SHA2_INSTALLED%"=="1" (
+  echo Reboot required to activate the SHA2 code signing components...
+  call :Log "Info: SHA2 code signing pair installed - reboot required to activate it"
+  set REBOOT_REQUIRED=1
+  goto Installed
+)
 set SHA2_PRE_DIR=
 set SHA2_INSTALLED=
 :SkipSha2Pair
@@ -2180,9 +2186,12 @@ if errorlevel 1 (
 ) else (
   for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5022338-*.cab') do (
     set WUABOOT_PKG=%%~fi
+    rem The servicing tool cannot read the mapped share path - hand it a local copy.
+    copy /Y "!WUABOOT_PKG!" "%TEMP%\wou_wuaboot_ssu.cab" >nul
     echo Installing %%i via %SystemRoot%\System32\Dism.exe...
-    %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"!WUABOOT_PKG!" /IgnoreCheck
+    %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"%TEMP%\wou_wuaboot_ssu.cab" /IgnoreCheck
     set ERR_LEVEL=!errorlevel!
+    del "%TEMP%\wou_wuaboot_ssu.cab" >nul 2>&1
     if "!ERR_LEVEL!"=="3010" (
       set REBOOT_REQUIRED=1
       set WUABOOT_SSU=1
@@ -2213,9 +2222,12 @@ if "%WUABOOT_SSU%"=="1" (
   ) else (
     for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5022339-*.cab') do (
       set WUABOOT_PKG=%%~fi
+      rem The servicing tool cannot read the mapped share path - hand it a local copy.
+      copy /Y "!WUABOOT_PKG!" "%TEMP%\wou_wuaboot_lcu.cab" >nul
       echo Installing %%i via %SystemRoot%\System32\Dism.exe...
-      %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"!WUABOOT_PKG!" /IgnoreCheck
+      %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"%TEMP%\wou_wuaboot_lcu.cab" /IgnoreCheck
       set ERR_LEVEL=!errorlevel!
+      del "%TEMP%\wou_wuaboot_lcu.cab" >nul 2>&1
       if "!ERR_LEVEL!"=="0" (
         set REBOOT_REQUIRED=1
         goto Installed

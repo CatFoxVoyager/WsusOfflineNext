@@ -2118,6 +2118,127 @@ echo. >%SystemRoot%\Temp\wou_sha2_tried.txt
 set SHA2_PRE_DIR=
 set SHA2_INSTALLED=
 :SkipSha2Pair
+
+:WuaBootw61
+rem *** Windows Update Agent SHA2 bootstrap for Windows 7 / Server 2008 R2   ***
+rem *** Authored 2026-11-07 (user-requested condition): with the OS code      ***
+rem *** signing pair present, the scan service inside an un-refreshed agent   ***
+rem *** still rejects the SHA2-signed offline catalog with a signature        ***
+rem *** error, and no standalone agent-only package reaches the catalog-      ***
+rem *** capable revision - the agent ships only inside the cumulative         ***
+rem *** monthly rollups. This section installs the final servicing stack      ***
+rem *** package (fallback: the 2021 standalone) plus the final cumulative     ***
+rem *** rollup from the arch-specific tree, then ends the run requiring a     ***
+rem *** reboot so the next run's agent clears the version ladder. Both        ***
+rem *** packages are the last of their kind, so the globs below are           ***
+rem *** permanently stable, and the cumulative rollup, cumulative back to     ***
+rem *** the base service pack, also patches the machine fully.                ***
+if "%OS_NAME%" NEQ "w61" goto SkipWuaBoot
+if "%WUA_SHA2_SUPPORT%"=="1" goto SkipWuaBoot
+if exist %SystemRoot%\Temp\wou_wuaboot_tried.txt goto SkipWuaBoot
+if /i "%OS_ARCH%"=="x64" (set WUABOOT_PRE_DIR=..\w61-x64\glb) else (set WUABOOT_PRE_DIR=..\w61\glb)
+echo Checking Windows Update Agent SHA2 bootstrap prerequisites...
+set WUABOOT_DISM=%SystemRoot%\System32\Dism.exe
+if exist %SystemRoot%\Sysnative\Dism.exe set WUABOOT_DISM=%SystemRoot%\Sysnative\Dism.exe
+set WUABOOT_SSU=
+dir /B %WUABOOT_PRE_DIR%\*KB5022338-*.cab >nul 2>&1
+if errorlevel 1 (
+  dir /B %WUABOOT_PRE_DIR%\*KB5005112-*.msu >nul 2>&1
+  if errorlevel 1 (
+    echo Warning: Servicing stack file %WUABOOT_PRE_DIR%\*KB5022338-*.cab not found
+    call :Log "Warning: Servicing stack file %WUABOOT_PRE_DIR%\*KB5022338-*.cab not found"
+  ) else (
+    for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5005112-*.msu') do (
+      echo Installing %%i via %SystemRoot%\System32\wusa.exe...
+      %SystemRoot%\System32\wusa.exe "%WUABOOT_PRE_DIR%\%%i" /quiet /norestart
+      set ERR_LEVEL=!errorlevel!
+      if "!ERR_LEVEL!"=="3010" (
+        set REBOOT_REQUIRED=1
+        set WUABOOT_SSU=1
+      ) else if "!ERR_LEVEL!"=="3011" (
+        set RECALL_REQUIRED=1
+        set WUABOOT_SSU=1
+      ) else if "!ERR_LEVEL!"=="2359302" (
+        echo Info: Servicing stack update %%i already installed
+        call :Log "Info: Servicing stack update %%i already installed"
+        set WUABOOT_SSU=1
+      ) else if "!ERR_LEVEL!"=="2359301" (
+        echo Info: Servicing stack update %%i already installed
+        call :Log "Info: Servicing stack update %%i already installed"
+        set WUABOOT_SSU=1
+      ) else if "!ERR_LEVEL!"=="0" (
+        set WUABOOT_SSU=1
+      ) else if "!ERR_LEVEL!"=="-2145124329" (
+        echo Info: Servicing stack update %%i not applicable to this system
+        call :Log "Info: Servicing stack update %%i not applicable to this system"
+      ) else if "!ERR_LEVEL!" NEQ "0" (
+        echo Warning: Servicing stack update %%i failed with error !ERR_LEVEL!
+        call :Log "Warning: Servicing stack update %%i failed with error !ERR_LEVEL!"
+      )
+    )
+  )
+) else (
+  for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5022338-*.cab') do (
+    set WUABOOT_PKG=%%~fi
+    echo Installing %%i via %SystemRoot%\System32\Dism.exe...
+    %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"!WUABOOT_PKG!" /IgnoreCheck
+    set ERR_LEVEL=!errorlevel!
+    if "!ERR_LEVEL!"=="3010" (
+      set REBOOT_REQUIRED=1
+      set WUABOOT_SSU=1
+    ) else if "!ERR_LEVEL!"=="3011" (
+      set RECALL_REQUIRED=1
+      set WUABOOT_SSU=1
+    ) else if "!ERR_LEVEL!"=="0" (
+      set WUABOOT_SSU=1
+    ) else if "!ERR_LEVEL!"=="-2146498530" (
+      echo Info: Servicing stack update %%i already installed or not applicable
+      call :Log "Info: Servicing stack update %%i already installed or not applicable"
+      set WUABOOT_SSU=1
+    ) else (
+      echo Warning: Servicing stack update %%i failed with error !ERR_LEVEL!
+      call :Log "Warning: Servicing stack update %%i failed with error !ERR_LEVEL!"
+    )
+  )
+)
+rem *** The session marker lands here: every path past the entry guards counts as attempted (including a failed or missing package), ***
+rem *** the next run retries once cleanup deletes it, and it precedes the cumulative phase so the end-of-run reporting path still carries it. ***
+if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
+echo. >%SystemRoot%\Temp\wou_wuaboot_tried.txt
+if "%WUABOOT_SSU%"=="1" (
+  dir /B %WUABOOT_PRE_DIR%\*KB5022339-*.cab >nul 2>&1
+  if errorlevel 1 (
+    echo Warning: Cumulative update file %WUABOOT_PRE_DIR%\*KB5022339-*.cab not found
+    call :Log "Warning: Cumulative update file %WUABOOT_PRE_DIR%\*KB5022339-*.cab not found"
+  ) else (
+    for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5022339-*.cab') do (
+      set WUABOOT_PKG=%%~fi
+      echo Installing %%i via %SystemRoot%\System32\Dism.exe...
+      %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"!WUABOOT_PKG!" /IgnoreCheck
+      set ERR_LEVEL=!errorlevel!
+      if "!ERR_LEVEL!"=="0" (
+        set REBOOT_REQUIRED=1
+        goto Installed
+      ) else if "!ERR_LEVEL!"=="3010" (
+        set REBOOT_REQUIRED=1
+        goto Installed
+      ) else if "!ERR_LEVEL!"=="3011" (
+        set RECALL_REQUIRED=1
+        goto Installed
+      ) else if "!ERR_LEVEL!"=="-2146498530" (
+        echo Info: Cumulative update %%i already installed or not applicable
+        call :Log "Info: Cumulative update %%i already installed or not applicable"
+      ) else (
+        echo Warning: Cumulative update %%i failed with error !ERR_LEVEL!
+        call :Log "Warning: Cumulative update %%i failed with error !ERR_LEVEL!"
+      )
+    )
+  )
+)
+set WUABOOT_PRE_DIR=
+set WUABOOT_PKG=
+set WUABOOT_SSU=
+:SkipWuaBoot
 if "%OS_SHA2_SUPPORT%" NEQ "1" (
   echo Warning: Support for SHA2 signed updates is missing. Updates might fail to install.
   call :Log "Warning: Support for SHA2 signed updates is missing"
@@ -2507,6 +2628,7 @@ if exist %SystemRoot%\Temp\wou_wua_tried.txt del %SystemRoot%\Temp\wou_wua_tried
 if exist %SystemRoot%\Temp\wou_iepre_tried.txt del %SystemRoot%\Temp\wou_iepre_tried.txt
 if exist %SystemRoot%\Temp\wou_ie_tried.txt del %SystemRoot%\Temp\wou_ie_tried.txt
 if exist %SystemRoot%\Temp\wou_sha2_tried.txt del %SystemRoot%\Temp\wou_sha2_tried.txt
+if exist %SystemRoot%\Temp\wou_wuaboot_tried.txt del %SystemRoot%\Temp\wou_wuaboot_tried.txt
 if exist %SystemRoot%\Temp\wou_msedge_tried.txt del %SystemRoot%\Temp\wou_msedge_tried.txt
 if exist %SystemRoot%\Temp\wou_webview2_tried.txt del %SystemRoot%\Temp\wou_webview2_tried.txt
 if exist %SystemRoot%\Temp\wou_net35_tried.txt del %SystemRoot%\Temp\wou_net35_tried.txt

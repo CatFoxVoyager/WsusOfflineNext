@@ -2055,6 +2055,69 @@ if errorlevel 1 (
 )
 if exist "%TEMP%\hash-wsusscn2.txt" del "%TEMP%\hash-wsusscn2.txt"
 :SkipVerifyCatalog
+
+:Sha2w61
+rem *** SHA2 code signing support for Windows 7 / Server 2008 R2 ***
+rem *** Authored 2026-11-07: on a snapshot with a pre-2019 patch  ***
+rem *** state both servicing updates of the code signing pair    ***
+rem *** are absent, so the offline catalog scan dies with a      ***
+rem *** signature validation error instead of listing missing    ***
+rem *** updates. The pair installs from the arch-specific tree   ***
+rem *** before the SHA2 warnings and the catalog scan.           ***
+rem *** A successful pass flips both support flags for this      ***
+rem *** session (same idiom as the agent-update flip above),     ***
+rem *** assuming the pair just installed covers the catalog      ***
+rem *** validation without an intervening reboot.                ***
+if "%OS_NAME%" NEQ "w61" goto SkipSha2Pair
+if "%OS_SHA2_SUPPORT%"=="1" goto SkipSha2Pair
+if exist %SystemRoot%\Temp\wou_sha2_tried.txt goto SkipSha2Pair
+if /i "%OS_ARCH%"=="x64" (set SHA2_PRE_DIR=..\w61-x64\glb) else (set SHA2_PRE_DIR=..\w61\glb)
+echo Checking SHA2 code signing prerequisites...
+for %%k in (KB4474419 KB4490628) do (
+  dir /B %SHA2_PRE_DIR%\*%%k-*.msu >nul 2>&1
+  if errorlevel 1 (
+    echo Warning: SHA2 support file %SHA2_PRE_DIR%\*%%k-*.msu not found
+    call :Log "Warning: SHA2 support file %SHA2_PRE_DIR%\*%%k-*.msu not found"
+  ) else (
+    for /F "delims=" %%i in ('dir /B %SHA2_PRE_DIR%\*%%k-*.msu') do (
+      echo Installing %%i via %SystemRoot%\System32\wusa.exe...
+      %SystemRoot%\System32\wusa.exe "%SHA2_PRE_DIR%\%%i" /quiet /norestart
+      set ERR_LEVEL=!errorlevel!
+      if "!ERR_LEVEL!"=="3010" (
+        set REBOOT_REQUIRED=1
+        set SHA2_INSTALLED=1
+      ) else if "!ERR_LEVEL!"=="3011" (
+        set RECALL_REQUIRED=1
+        set SHA2_INSTALLED=1
+      ) else if "!ERR_LEVEL!"=="2359302" (
+        echo Info: SHA2 support update %%i already installed
+        call :Log "Info: SHA2 support update %%i already installed"
+        set SHA2_INSTALLED=1
+      ) else if "!ERR_LEVEL!"=="2359301" (
+        echo Info: SHA2 support update %%i already installed
+        call :Log "Info: SHA2 support update %%i already installed"
+        set SHA2_INSTALLED=1
+      ) else if "!ERR_LEVEL!"=="0" (
+        set SHA2_INSTALLED=1
+      ) else if "!ERR_LEVEL!"=="-2145124329" (
+        echo Info: SHA2 support update %%i not applicable to this system
+        call :Log "Info: SHA2 support update %%i not applicable to this system"
+      ) else if "!ERR_LEVEL!" NEQ "0" (
+        echo Warning: SHA2 support update %%i failed with error !ERR_LEVEL!
+        call :Log "Warning: SHA2 support update %%i failed with error !ERR_LEVEL!"
+      )
+    )
+  )
+)
+rem *** A successful pass flips the OS flag and the agent flag  ***
+rem *** above, so this run's warnings are suppressed.           ***
+if "%SHA2_INSTALLED%"=="1" set OS_SHA2_SUPPORT=1
+if "%SHA2_INSTALLED%"=="1" set WUA_SHA2_SUPPORT=1
+if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
+echo. >%SystemRoot%\Temp\wou_sha2_tried.txt
+set SHA2_PRE_DIR=
+set SHA2_INSTALLED=
+:SkipSha2Pair
 if "%OS_SHA2_SUPPORT%" NEQ "1" (
   echo Warning: Support for SHA2 signed updates is missing. Updates might fail to install.
   call :Log "Warning: Support for SHA2 signed updates is missing"
@@ -2443,6 +2506,7 @@ if exist %SystemRoot%\Temp\wou_w63upd2_tried.txt del %SystemRoot%\Temp\wou_w63up
 if exist %SystemRoot%\Temp\wou_wua_tried.txt del %SystemRoot%\Temp\wou_wua_tried.txt
 if exist %SystemRoot%\Temp\wou_iepre_tried.txt del %SystemRoot%\Temp\wou_iepre_tried.txt
 if exist %SystemRoot%\Temp\wou_ie_tried.txt del %SystemRoot%\Temp\wou_ie_tried.txt
+if exist %SystemRoot%\Temp\wou_sha2_tried.txt del %SystemRoot%\Temp\wou_sha2_tried.txt
 if exist %SystemRoot%\Temp\wou_msedge_tried.txt del %SystemRoot%\Temp\wou_msedge_tried.txt
 if exist %SystemRoot%\Temp\wou_webview2_tried.txt del %SystemRoot%\Temp\wou_webview2_tried.txt
 if exist %SystemRoot%\Temp\wou_net35_tried.txt del %SystemRoot%\Temp\wou_net35_tried.txt

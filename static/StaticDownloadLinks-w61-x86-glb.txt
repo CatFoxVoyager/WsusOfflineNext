@@ -18,3 +18,5 @@ http://download.microsoft.com/download/9/2/F/92FC119C-3BCD-476C-B425-038A3962555
 http://download.microsoft.com/download/3/7/1/3712057D-154F-4F00-A183-0BD7285DF503/IE11-Windows6.1-x86-de-de.exe
 http://download.microsoft.com/download/6/F/5/6F5FF66C-6775-42B0-86C4-47D41F2DA187/Win7-KB3191566-x86.zip
 http://download.windowsupdate.com/d/msdownload/update/software/updt/2016/09/windows6.1-kb3172605-x86_ae03ccbd299e434ea2239f1ad86f164e5f4deeda.msu
+https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2019/09/windows6.1-kb4474419-v3-x86_0f687d50402790f340087c576886501b3223bec6.msu
+https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2019/03/kb4490628-x86_3cdb3df55b9cd7ef7fcb24fc4e237ea287ad0992.msu

@@ -103,6 +103,11 @@ rem *** Windows 7 / Server 2008 R2 ***
 set IE_VER_TARGET_MAJOR=9
 set IE_VER_TARGET_MINOR=11
 set OS_NAME=w61
+rem WUA supporting SHA2-signed catalogs since 7.6.7601.23806 [ESU era]
+set WUA_VER_SHA2_MAJOR=7
+set WUA_VER_SHA2_MINOR=6
+set WUA_VER_SHA2_BUILD=7601
+set WUA_VER_SHA2_REVIS=23806
 goto SetOfficeName
 
 :Windows6.2

@@ -1834,7 +1834,7 @@ if "%4"=="/skipdynamic" (
 )
 if not exist ..\client\UpdateTable\nul md ..\client\UpdateTable
 
-set PLATFORM_WINDOWS=w62 w63 w100
+set PLATFORM_WINDOWS=w61 w62 w63 w100
 set PLATFORM_OFFICE=o2k16
 
 rem *** Determine dynamic update urls for %1 %2 ***

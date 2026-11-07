@@ -55,6 +55,7 @@ Else
   strArgument = WScript.Arguments(0)
 End If
 
+On Error Resume Next
 Set objUpdateService = CreateObject("Microsoft.Update.ServiceManager").AddScanPackageService("Offline Sync Service", strTempFolder & "\wsusscn2.cab")
 Set objUpdateSearcher = CreateObject("Microsoft.Update.Session").CreateUpdateSearcher()
 objUpdateSearcher.ServerSelection = 3 ' ssOthers
@@ -64,8 +65,13 @@ If LCase(strArgument) = "/all" Then
 Else
   Set objSearchResult = objUpdateSearcher.Search("Type='Software' and IsInstalled=0 and IsHidden=0")
 End If
+If Err.Number <> 0 Then
+  LogInfo wshShell, "Error: offline scan failed (0x" & Hex(Err.Number) & ": " & Err.Description & ")"
+  WScript.Quit(2)
+End If
 
 On Error Resume Next
+Set objIDFile = CreateObject("Scripting.FileSystemObject").CreateTextFile(strTextFileName, True)
 If objSearchResult.Updates.Count > 0 Then
   Set objIDFile = CreateObject("Scripting.FileSystemObject").CreateTextFile(strTextFileName, True)
   For Each objUpdate In objSearchResult.Updates
@@ -91,6 +97,6 @@ If objSearchResult.Updates.Count > 0 Then
       objIDFile.WriteLine(strKBId & "," & objUpdate.Identity.UpdateID)
     End If
   Next
-  objIDFile.Close
 End If
+objIDFile.Close
 WScript.Quit(0)

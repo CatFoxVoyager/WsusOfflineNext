@@ -1988,11 +1988,18 @@ if "%WUA_SHA2_SUPPORT%" NEQ "1" (
 )
 echo %TIME% - Listing ids of missing updates (please be patient, this will take a while)...
 copy /Y ..\wsus\wsusscn2.cab "%TEMP%" >nul
+if exist "%TEMP%\MissingUpdateIds.txt" del "%TEMP%\MissingUpdateIds.txt"
 %CSCRIPT_PATH% //Nologo //E:vbs ListMissingUpdateIds.vbs %LIST_MODE_IDS%
+if errorlevel 1 (
+  if exist "%TEMP%\wsusscn2.cab" del "%TEMP%\wsusscn2.cab"
+  goto ScanError
+)
 if exist "%TEMP%\wsusscn2.cab" del "%TEMP%\wsusscn2.cab"
 echo %TIME% - Done.
 call :Log "Info: Listed ids of missing updates"
-if not exist "%TEMP%\MissingUpdateIds.txt" set NO_MISSING_IDS=1
+if not exist "%TEMP%\MissingUpdateIds.txt" goto ScanError
+for %%A in ("%TEMP%\MissingUpdateIds.txt") do set MISSING_IDS_FILE_SIZE=%%~zA
+if "%MISSING_IDS_FILE_SIZE%"=="0" set NO_MISSING_IDS=1
 
 :ListInstalledIds
 rem *** List ids of installed updates ***
@@ -2599,6 +2606,13 @@ goto EoF
 echo.
 echo ERROR: Listing of update files failed.
 call :Log "Error: Listing of update files failed"
+echo.
+goto Error
+
+:ScanError
+echo.
+echo ERROR: Offline scan for missing updates failed.
+call :Log "Error: offline scan failed"
 echo.
 goto Error
 

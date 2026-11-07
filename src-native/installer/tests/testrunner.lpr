@@ -27,7 +27,10 @@ program testrunner;
     section (a) matrix. Plan 261106-p8q adds the UNC share-root split
     matrix: the pure DetectSplitUncPath scanner pin (share root +
     remainder, malformed and root-only shapes) behind the network
-    script-dir fallback. }
+    script-dir fallback. Plan 261106-sgi adds the free-drive-letter
+    selection pin: the pure DetectPickFreeDriveLetter contract
+    (Z-downto-C order, occupied-letter skip, full-range exhaustion,
+    case-lenient match) behind the explicit device choice. }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry, zipper,
@@ -420,6 +423,25 @@ begin
     'uncsplit: non-UNC path rejected');
   CheckEq(LRoot, '', 'uncsplit: non-UNC ARoot stays empty');
   CheckEq(LRest, '', 'uncsplit: non-UNC ARemainder stays empty');
+end;
+
+procedure TestPickFreeLetter;
+begin
+  { Plan 261106-sgi: pin the free-drive-letter selection contract the
+    explicit-letter map consumes. Pascal backslashes are literal
+    characters. }
+  CheckEq(DetectPickFreeDriveLetter(''), 'Z:',
+    'freeletter: empty drive set picks Z: (first candidate, last letter first)');
+  CheckEq(DetectPickFreeDriveLetter('Z:\'), 'Y:',
+    'freeletter: Z: occupied picks Y:');
+  CheckEq(DetectPickFreeDriveLetter('Y:\Z:\'), 'X:',
+    'freeletter: Y: and Z: occupied pick X:');
+  CheckEq(DetectPickFreeDriveLetter(
+    'C:\D:\E:\F:\G:\H:\I:\J:\K:\L:\M:\N:\O:\P:\Q:\R:\S:\T:\U:\V:\W:\X:\Y:\Z:\'),
+    '',
+    'freeletter: full range from C: to Z: exhausted returns empty');
+  CheckEq(DetectPickFreeDriveLetter('z:\'), 'Y:',
+    'freeletter: lowercase existing entry still occupies Z: (case-lenient match)');
 end;
 
 procedure TestLanguageSelect;
@@ -1143,6 +1165,7 @@ begin
     TestToggleGates;
     TestPathValid;
     TestUncSplit;
+    TestPickFreeLetter;
     TestLanguageSelect;
     TestIniMergeOrder;
     TestSysNativeMatrix;

@@ -159,11 +159,26 @@ function DetectIsNetworkPath(const APath: string): Boolean;
   non-empty server and share component. }
 function DetectSplitUncPath(const APath: string;
   out ARoot, ARemainder: string): Boolean;
+{ Pure free-drive-letter picker used by the explicit-letter map (plan
+  261106-sgi): AExistingDrives is the concatenated 'X:\' strings exactly
+  as GetLogicalDriveStringsW and the drive-snapshot loops build them.
+  The scan runs from 'Z' downto 'C' - the WNetAddConnection2
+  automatic-assignment convention (assignment begins with the last
+  letter and ends with C). Returns the first letter whose three-char
+  token is NOT present in the concatenation, formatted as 'L:'; the
+  empty string when the whole C..Z range is taken. Matching is
+  case-lenient. Provenance: the star auto device is rejected by
+  WNetAddConnection2W with ERROR_BAD_DEVICE (1200) before any provider
+  lookup (measured on the dev host and the Win7 SP1 VM, 2026-11-06);
+  the au3 DriveMapAdd star call resolved client-side and this picker is
+  that mechanism. }
+function DetectPickFreeDriveLetter(const AExistingDrives: string): string;
 { Returns the usable script directory: a UNC path is mapped to a free
   drive letter - delimiter-stripped deep-path attempt first, then a
   share-root fallback (DetectSplitUncPath) returning device + remainder,
-  the same shape as the reuse branch; '*' is resolved via
-  WNetGetConnectionW (WNetAddConnection2 never writes lpLocalName back).
+  the same shape as the reuse branch; the letter is chosen client-side
+  by DetectPickFreeDriveLetter (plan 261106-sgi) and passed explicitly
+  as the device to WNetAddConnection2W.
   An existing mapped-drive spelling is reused; lettered network paths
   and local paths pass through. AMapped=True marks a NEW mapping the
   caller must release with DetectReleaseScriptDirectory when the GUI
@@ -719,89 +734,84 @@ begin
   Result := True;
 end;
 
-{ Plan 261106-p8q (Bug B): '*' map helper - WNetAddConnection2W with the
-  '*' auto device, then the assigned device resolved via the two-call
-  WNetGetConnectionW pattern (lpLocalName is an [in] parameter: the API
-  never writes the '*' back - the old map block's comment claimed
-  otherwise and was wrong). The resolved device must be the exact 'X:'
-  shape; on a bad shape or an unresolvable device the new 'X:\' entry
-  absent from the pre-call snapshot is cancelled by force so a failed
-  resolution cannot leak the mapping. }
-function MapWithStar(const ARemote: string; out ADevice: string): Boolean;
+{ Plan 261106-sgi free-letter picker: case-lenient Z-downto-C scan over
+  the normalized snapshot; the interface comment carries the contract. }
+function DetectPickFreeDriveLetter(const AExistingDrives: string): string;
 var
-  Before: WideString;
+  C: Char;
+  Drives: string;
+  Token: string;
+begin
+  Drives := UpperCase(AExistingDrives);
+  for C := 'Z' downto 'C' do
+  begin
+    Token := C + ':\';
+    if Pos(Token, Drives) = 0 then
+      Exit(C + ':');
+  end;
+  Result := '';
+end;
+
+{ Plan 261106-sgi replaces the star-device helper: the star was
+  rejected with ERROR_BAD_DEVICE (1200) before any provider lookup
+  (measured on the dev host and the Win7 SP1 VM, 2026-11-06), so the
+  letter is chosen client-side by DetectPickFreeDriveLetter and passed
+  explicitly as lpLocalName. Letter exhaustion fails closed (no
+  mapping attempted); a failed add returns False with nothing to
+  release - the device is known by construction, so no mapping exists
+  unless the add succeeded. The remote name is the UNC path itself -
+  no user-derived content. }
+function MapRemote(const ARemote: string; out ADevice: string): Boolean;
+var
   DrivesBuf: array[0..511] of WideChar;
   DLen: Integer;
   I: Integer;
   DriveLetter: WideString;
-  LocalStar: WideString;
+  K: Integer;
+  Letter: string;
+  LetterWide: WideString;
   Nr: TDetNetResourceW;
   RemoteWide: WideString;
-  Resolved: WideString;
-  ResolvedLen: DWord;
+  Snapshot: WideString;
   Res: DWord;
 begin
   ADevice := '';
   Result := False;
 
-  { Fresh drive snapshot: the entry the call adds is identifiable by
-    diffing against it. }
+  { Fresh drive snapshot for the free-letter picker. }
   FillChar(DrivesBuf, SizeOf(DrivesBuf), 0);
   DLen := GetLogicalDriveStringsW(Length(DrivesBuf) - 1, @DrivesBuf[0]);
-  Before := '';
+  Snapshot := '';
   I := 0;
   while (DLen > 0) and (I + 3 < DLen) do
   begin
     DriveLetter := PWideChar(@DrivesBuf[I]); { 'X:\' }
-    Before := Before + DriveLetter;
+    Snapshot := Snapshot + DriveLetter;
     Inc(I, 4);
   end;
+
+  Letter := DetectPickFreeDriveLetter(string(Snapshot));
+  if Letter = '' then
+    Exit; { C..Z exhausted: fail closed, no mapping attempted. }
+
+  { Materialize the letter as a WideChar buffer element-wise - no
+    implicit AnsiString-to-WideString string conversion on this path. }
+  SetLength(LetterWide, Length(Letter));
+  for K := 1 to Length(Letter) do
+    LetterWide[K] := Letter[K];
 
   { The remote name is the UNC path itself - no user-derived content. }
   FillChar(Nr, SizeOf(Nr), 0);
   Nr.dwType := DET_RESOURCETYPE_DISK;
   RemoteWide := ARemote;
   Nr.lpRemoteName := PWideChar(RemoteWide);
-  LocalStar := '*';
-  Nr.lpLocalName := PWideChar(LocalStar);
+  Nr.lpLocalName := PWideChar(LetterWide);
   Res := WNetAddConnection2W(@Nr, nil, nil, 0);
   if Res <> NO_ERROR then
     Exit;
 
-  { Resolve the assigned device with the same sizing-call pattern the
-    reuse loop uses, then validate the shape: exactly 'X:'. }
-  ResolvedLen := 0;
-  Res := WNetGetConnectionW(PWideChar(LocalStar), nil, ResolvedLen);
-  if (Res = ERROR_MORE_DATA) and (ResolvedLen > 0) then
-  begin
-    SetLength(Resolved, ResolvedLen);
-    if WNetGetConnectionW(PWideChar(LocalStar), PWideChar(Resolved),
-        ResolvedLen) = NO_ERROR then
-    begin
-      SetLength(Resolved, StrLen(PWideChar(Resolved)));
-      if (Length(Resolved) = 2) and (Resolved[2] = ':') then
-      begin
-        ADevice := string(Resolved);
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-
-  { Release-then-fail: cancel the drive this call created (the new
-    'X:\' entry absent from the snapshot) so the mapping cannot leak
-    when the device cannot be resolved (Bug-B discipline). }
-  FillChar(DrivesBuf, SizeOf(DrivesBuf), 0);
-  DLen := GetLogicalDriveStringsW(Length(DrivesBuf) - 1, @DrivesBuf[0]);
-  I := 0;
-  while (DLen > 0) and (I + 3 < DLen) do
-  begin
-    DriveLetter := PWideChar(@DrivesBuf[I]); { 'X:\' }
-    if (Length(DriveLetter) = 3)
-       and (Pos(DriveLetter, Before) = 0) then
-      WNetCancelConnection2W(PWideChar(Copy(DriveLetter, 1, 2)), 0, True);
-    Inc(I, 4);
-  end;
+  ADevice := Letter;
+  Result := True;
 end;
 
 function DetectAssignScriptDirectory(const AExeDir: string;
@@ -857,19 +867,23 @@ begin
     Inc(I, 4);
   end;
 
-  { No reuse: map a fresh drive with the '*' auto device. DELIBERATE
-    deviation from au3:190-196 (incumbent commit 0a4358b,
-    DriveMapAdd("*", @ScriptDir)), documented per plan 261106-p8q: the
-    incumbent mapped the full UNC spelling and shared its deep-path
-    limitation (providers like VMware HGFS only map the share root), so
-    this port first maps the delimiter-stripped deep path (the au3
-    @ScriptDir carried no trailing backslash) and falls back to the
-    share root, returning device + remainder in the reuse branch's
-    shape; '*' is resolved via WNetGetConnectionW (WNetAddConnection2
-    never writes lpLocalName back - the old in-code comment claimed
-    otherwise and was wrong). The remote name is the UNC path itself -
-    no user-derived content. }
-  if MapWithStar(ExcludeTrailingPathDelimiter(AExeDir), Dev) then
+  { No reuse: map a fresh drive with an explicitly chosen letter.
+    DELIBERATE deviation from au3:190-196 (incumbent commit 0a4358b,
+    DriveMapAdd("*", @ScriptDir)), documented per plans 261106-p8q and
+    261106-sgi: the au3 star call resolved the auto device client-side,
+    but the direct API rejects the star with ERROR_BAD_DEVICE (1200)
+    before any provider lookup (measured on the dev host and the Win7
+    SP1 VM, 2026-11-06) - the MSDN lpLocalName contract admits only a
+    lettered device, an LPT device, or NULL/empty, so this port picks
+    the letter client-side (DetectPickFreeDriveLetter, Z downto C) and
+    passes it explicitly as the device. The incumbent's deep-path
+    limitation stands: providers like VMware HGFS reject deep
+    spellings (measured 1202), so this port first maps the
+    delimiter-stripped deep path (the au3 @ScriptDir carried no
+    trailing backslash) and falls back to the share root, returning
+    device + remainder in the reuse branch's shape. The remote name is
+    the UNC path itself - no user-derived content. }
+  if MapRemote(ExcludeTrailingPathDelimiter(AExeDir), Dev) then
   begin
     AMapped := True;
     Exit(Dev);
@@ -879,7 +893,7 @@ begin
     UNC (or the root is unmappable too) -> the au3 error shape: ''. }
   if not DetectSplitUncPath(AExeDir, Root, Rest) then
     Exit('');
-  if MapWithStar(Root, Dev) then
+  if MapRemote(Root, Dev) then
   begin
     AMapped := True;
     Exit(Dev + Rest);

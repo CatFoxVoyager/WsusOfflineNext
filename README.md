@@ -144,7 +144,7 @@ ISO creation produces update-data images, not bootable Windows installation medi
 
 ### 2. Apply updates on the offline computer
 
-1. Open the copied client directory and launch **`client\UpdateInstaller.cmd`** — the launcher accepts the elevation prompt and routes to the modern (.NET 8) or classic (native) installer interface.
+1. Open the copied client directory and launch **`client\UpdateInstaller.cmd`** — the launcher accepts the elevation prompt, installs a missing .NET 8 Desktop Runtime or WebView2 runtime silently from the local tree when needed (still within the same single elevation prompt), and routes to the modern (.NET 8) or classic (native) installer interface; an incomplete medium keeps the classic fallback.
 2. Review the detected system, select the required updates, and keep **Verify package integrity** enabled.
 3. Leave automatic restart and shutdown disabled unless you want those actions. Click **Start installation**.
 4. Review the console and logs. If a restart is required, restart and run the Installer again, or use **Automatic restart and resume** when appropriate.

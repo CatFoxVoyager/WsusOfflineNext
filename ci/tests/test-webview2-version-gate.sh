@@ -37,6 +37,10 @@
 #      expansion, no window-spawning shell verb as a command word, no echo
 #      of registry-derived values) and the generator/installer elevation
 #      asymmetry (elevation only in the installer)
+#   f. the offline runtime bootstrap: helper probe parity and parse shape,
+#      its bans (no elevation artifacts, no floor site, no modern-name
+#      literal), the bilingual [runtime-bootstrap] contract, and the
+#      launcher-side Gate 5 / bootstrap-handoff pins
 #
 # Counting rule for every section e occurrence gate: lines whose first
 # token is rem/REM or :: are stripped before counting — code lines only.
@@ -49,6 +53,7 @@ GEN_CS="src-modern/generator/host/Program.cs"
 INS_CS="src-modern/installer/host/Program.cs"
 GEN_CMD="UpdateGenerator.cmd"
 INS_CMD="client/UpdateInstaller.cmd"
+RBS_CMD="client/cmd/RuntimeBootstrap.cmd"
 
 FAILED_CASES=0
 
@@ -341,6 +346,116 @@ check_cmd_launcher_structure () {
 check_cmd_launcher_structure "${GEN_CMD}"
 check_cmd_launcher_structure "${INS_CMD}"
 
+# --- Section f: offline runtime bootstrap helper + Gate 5 (code lines only) -
+echo "== Section f: runtime bootstrap helper + Gate 5 pins =="
+
+# Comment-stripped code lines (the section e strip idiom), reused by the
+# can-fail controls in section d.
+rbs_code () {
+    grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "$1"
+}
+
+# The launcher floor variable name must appear NOWHERE in the helper: the
+# floor reaches it positionally from the launcher (single-sourced).
+rbs_floor_ban_ok () {
+    [ "$(rbs_code "$1" | grep -icF 'MIN_WEBVIEW2_VERSION')" -eq 0 ]
+}
+
+# Exactly one desktop-runtime filter token over code lines (comments must
+# not recopy it).
+rbs_filter_token_ok () {
+    [ "$(rbs_code "$1" | grep -c 'Microsoft.WindowsDesktop.App 8\.')" -eq 1 ]
+}
+
+rbs="$(rbs_code "${RBS_CMD}")"
+
+# Probe parity: both EdgeUpdate GUIDs exactly 3 views each - the helper
+# carries the six-key probe copy of the launcher.
+probe_parity_ok "${RBS_CMD}" \
+    || fail_case "section f: probe parity broken in ${RBS_CMD} (expected 3 occurrences of each EdgeUpdate GUID over code lines)"
+
+# Parse shape: exactly one value-shape filter line and exactly one
+# comparator invocation (the fresh re-probe pass after any install).
+[ "$(printf '%s\n' "${rbs}" | grep -cF 'REG_SZ')" -eq 1 ] \
+    || fail_case "section f: expected exactly 1 value-shape filter line in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -c 'CompareVersions.vbs')" -eq 1 ] \
+    || fail_case "section f: expected exactly 1 comparator invocation in ${RBS_CMD}"
+
+rbs_filter_token_ok "${RBS_CMD}" \
+    || fail_case "section f: expected exactly 1 desktop-runtime filter token in ${RBS_CMD}"
+
+# Bans mirrored from the launcher section, all exact zero counts over code
+# lines: no elevation artifacts (the helper runs INSIDE the already-elevated
+# context and never elevates on its own), no delayed expansion, no
+# window-spawning verb as a command, no echo of registry-derived values, no
+# floor site, and the modern exe name never as a literal (it arrives as the
+# caller-supplied target-name argument, pinned launcher-side below).
+[ "$(printf '%s\n' "${rbs}" | grep -icE '(^|[[:space:]&|])net session([[:space:]]|$)')" -eq 0 ] \
+    || fail_case "section f: helper must not probe elevation in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -icF 'Shell.Application')" -eq 0 ] \
+    || fail_case "section f: helper must not use Shell.Application in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -icF 'runas')" -eq 0 ] \
+    || fail_case "section f: helper must not carry the elevation verb in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -icF 'enableDelayedExpansion')" -eq 0 ] \
+    || fail_case "section f: delayed expansion must not be enabled in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -icE '^[[:space:]]*start([[:space:]]|$)')" -eq 0 ] \
+    || fail_case "section f: window-spawning shell verb used as a command in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -icE '^echo.*WEBVIEW2_PV')" -eq 0 ] \
+    || fail_case "section f: registry-derived pv value echoed in ${RBS_CMD}"
+rbs_floor_ban_ok "${RBS_CMD}" \
+    || fail_case "section f: the launcher floor variable name must not appear in ${RBS_CMD}"
+[ "$(printf '%s\n' "${rbs}" | grep -cF 'UpdateInstallerModern.exe')" -eq 0 ] \
+    || fail_case "section f: the modern exe name must never be a helper literal in ${RBS_CMD}"
+
+# Presence gates (>= 1 each): the /apply dispatch token, the only target
+# literal the helper carries (the classic fallback), the caller-supplied
+# target-name token, the two documented silent-switch literals, the
+# [runtime-bootstrap] message prefix, and the AMD64 arch guard.
+for tok in '/apply' 'UpdateInstallerLegacy.exe' 'TARGET_NAME' '/install /quiet /norestart' '/silent /install' '[runtime-bootstrap]'; do
+    [ "$(printf '%s\n' "${rbs}" | grep -cF "${tok}")" -ge 1 ] \
+        || fail_case "section f: token ${tok} missing in ${RBS_CMD}"
+done
+[ "$(printf '%s\n' "${rbs}" | grep -cF 'PROCESSOR_ARCHITEW6432')" -ge 1 ] \
+    || fail_case "section f: no AMD64 arch guard in ${RBS_CMD}"
+
+# Bilingual [runtime-bootstrap] message contract: at least 2 DE-led and 2
+# EN-led lines; every DE-led line immediately followed by an EN-led line in
+# the [runtime-bootstrap] echo sequence (adjacency rule from section e).
+de_led="$(printf '%s\n' "${rbs}" | grep -icE '^echo \[runtime-bootstrap\] (FEHLER|Starte|Vorgang)')"
+en_led="$(printf '%s\n' "${rbs}" | grep -icE '^echo \[runtime-bootstrap\] (ERROR|Launching|Operation)')"
+[ "${de_led}" -ge 2 ] \
+    || fail_case "section f: fewer than 2 DE-led [runtime-bootstrap] echoes in ${RBS_CMD} (${de_led})"
+[ "${en_led}" -ge 2 ] \
+    || fail_case "section f: fewer than 2 EN-led [runtime-bootstrap] echoes in ${RBS_CMD} (${en_led})"
+adj_bad="$(printf '%s\n' "${rbs}" | awk '
+    /^echo \[runtime-bootstrap\] (FEHLER|Starte|Vorgang)/ { pending = 1; next }
+    /^echo \[runtime-bootstrap\] / {
+        if (pending) {
+            if ($0 !~ /^echo \[runtime-bootstrap\] (ERROR|Launching|Operation)/) bad++
+            pending = 0
+        }
+    }
+    END { print bad + 0 }')"
+[ "${adj_bad}" -eq 0 ] \
+    || fail_case "section f: ${adj_bad} DE-led [runtime-bootstrap] echo(s) without a following EN-led line in ${RBS_CMD}"
+
+# Launcher-side pins: Gate 5 wired into CAN_MODERN, the provisional
+# bootstrap route, exactly one desktop-runtime filter token, exactly one
+# helper file reference, and the bootstrap handoff line carrying /apply
+# together with the provisional modern target name (where the modern name
+# is pinned instead of the helper).
+ins_code="$(rbs_code "${INS_CMD}")"
+[ "$(printf '%s\n' "${ins_code}" | grep -c 'Microsoft.WindowsDesktop.App 8\.')" -eq 1 ] \
+    || fail_case "section f: expected exactly 1 desktop-runtime filter token in ${INS_CMD}"
+[ "$(printf '%s\n' "${ins_code}" | grep -cF 'RuntimeBootstrap.cmd')" -eq 1 ] \
+    || fail_case "section f: expected exactly 1 helper file reference in ${INS_CMD}"
+[ "$(printf '%s\n' "${ins_code}" | grep -cF 'if "%DOTNET8_OK%"=="0" set "CAN_MODERN=0"')" -ge 1 ] \
+    || fail_case "section f: Gate 5 CAN_MODERN condition missing in ${INS_CMD}"
+[ "$(printf '%s\n' "${ins_code}" | grep -cF 'if "%BOOTSTRAP_NEEDED%"=="1" set "ROUTE_MODERN=1"')" -ge 1 ] \
+    || fail_case "section f: provisional bootstrap route condition missing in ${INS_CMD}"
+[ "$(printf '%s\n' "${ins_code}" | grep -cE '/apply.*UpdateInstallerModern.exe')" -ge 1 ] \
+    || fail_case "section f: no bootstrap handoff line carrying /apply and the provisional modern target in ${INS_CMD}"
+
 # --- Generator-zombie gate (Phase 25; compile-lane leg retired Phase 26) -----
 # The retired generator surface must not reappear in the launcher. The
 # compile-lane leg policed the AutoIt compile script itself and retired
@@ -415,6 +530,46 @@ seeded_zombies="$(grep -ivE '^[[:space:]]*(rem([[:space:]]|$)|::)' "${SANDBOX}/G
 [ "${seeded_zombies}" -ge 1 ] \
     || fail_case "section d: generator-zombie control seed did not land (${seeded_zombies} hits)"
 echo "  control ok: generator-zombie count fires on a seeded legacy reference"
+
+# Control 5: seeding the launcher floor variable name into a sandbox copy
+# of the bootstrap helper must fire the section f helper floor-ban gate.
+cp "${RBS_CMD}" "${SANDBOX}/RbsFloor.cmd"
+printf 'set "MIN_WEBVIEW2_VERSION=156.0.9999.99"\r\n' >> "${SANDBOX}/RbsFloor.cmd"
+seeded_floor="$(rbs_code "${SANDBOX}/RbsFloor.cmd" | grep -icF 'MIN_WEBVIEW2_VERSION')"
+[ "${seeded_floor}" -ge 1 ] \
+    || fail_case "section d: helper floor-ban control seed did not land (${seeded_floor} hits)"
+if rbs_floor_ban_ok "${SANDBOX}/RbsFloor.cmd"; then
+    fail_case "section d: helper floor-ban gate did not detect the seeded floor name"
+else
+    echo "  control ok: helper floor-ban rejects a seeded floor variable name"
+fi
+
+# Control 6: corrupting the FIRST probe GUID occurrence in a sandbox copy
+# of the helper (GNU sed 0,/re/ address, mirroring control 3) must fire
+# probe parity - 2 of 3 views remain.
+sed '0,/F3017226-FE2A-4295-8BDF-00C3A9A7E4C5/s//F3017226-FE2A-4295-8BDF-00C3A9A7E4C0/' \
+    "${RBS_CMD}" > "${SANDBOX}/RbsParity.cmd"
+rbs_corrupt="$(rbs_code "${SANDBOX}/RbsParity.cmd" | grep -cF 'F3017226-FE2A-4295-8BDF-00C3A9A7E4C5')"
+[ "${rbs_corrupt}" -eq 2 ] \
+    || fail_case "section d: helper GUID corruption did not land (${rbs_corrupt}/3 remaining)"
+if probe_parity_ok "${SANDBOX}/RbsParity.cmd"; then
+    fail_case "section d: probe-parity gate did not detect the corrupted helper GUID"
+else
+    echo "  control ok: probe-parity gate rejects a corrupted helper probe GUID"
+fi
+
+# Control 7: mutating the desktop-runtime filter token in a sandbox copy of
+# the installer launcher must fire the section f exactly-1 gate (0 left).
+sed 's/Microsoft\.WindowsDesktop\.App 8\./MUTATED-PROBE-TOKEN/' \
+    "${INS_CMD}" > "${SANDBOX}/InsFilter.cmd"
+filter_left="$(rbs_code "${SANDBOX}/InsFilter.cmd" | grep -c 'Microsoft.WindowsDesktop.App 8\.')"
+[ "${filter_left}" -eq 0 ] \
+    || fail_case "section d: launcher filter mutation did not land (${filter_left} remaining)"
+if rbs_filter_token_ok "${SANDBOX}/InsFilter.cmd"; then
+    fail_case "section d: filter-token gate did not detect the mutated launcher filter"
+else
+    echo "  control ok: filter-token gate rejects a mutated launcher filter"
+fi
 
 # --- Verdict ---
 if [ "${FAILED_CASES}" -eq 0 ]; then

@@ -148,8 +148,8 @@ export default function App() {
     w61_x86: false, // Win 7 x86
     w60_x64: false, // Win Vista x64 / Server 2008
     w60_x86: false, // Win Vista x86 / Server 2008
-    w63_x64: false, // Server 2012 R2
-    w63_x86: false, // Win 8.1
+    w63_x64: false, // Win 8.1 / Server 2012 R2
+    w63_x86: false, // Win 8.1 (x86)
     w62_x64: false, // Server 2012
     wxp_x86: false  // Win XP / Server 2003
   });
@@ -811,8 +811,8 @@ export default function App() {
                   { id: 'w61_x86', name: 'Windows 7 SP1 Client', arch: 'x86', eol: 'January 2020 / ESU 2023', target: 'w61' },
                   { id: 'w60_x64', name: 'Windows Vista SP2 / Windows Server 2008', arch: 'x64', eol: 'April 2017 / January 2020', target: 'w60-x64' },
                   { id: 'w60_x86', name: 'Windows Vista SP2 / Windows Server 2008', arch: 'x86', eol: 'April 2017 / January 2020', target: 'w60' },
-                  { id: 'w63_x64', name: 'Windows Server 2012 R2', arch: 'x64', eol: 'October 2023', target: 'w63-x64' },
-                  { id: 'w63_x86', name: 'Windows 8.1', arch: 'x86 / x64', eol: 'January 2023', target: 'w63' },
+                  { id: 'w63_x64', name: 'Windows 8.1 / Windows Server 2012 R2', arch: 'x64', eol: 'October 2023', target: 'w63-x64' },
+                  { id: 'w63_x86', name: 'Windows 8.1 (x86)', arch: 'x86', eol: 'January 2023', target: 'w63' },
                   { id: 'w62_x64', name: 'Windows Server 2012', arch: 'x64', eol: 'October 2023', target: 'w62-x64' },
                   { id: 'wxp_x86', name: 'Windows XP SP3 / Windows Server 2003', arch: 'x86', eol: 'April 2014 / July 2015', target: 'wxp' }
                 ].map(item => {

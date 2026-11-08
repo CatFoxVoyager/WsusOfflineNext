@@ -123,11 +123,11 @@ export default function App() {
     { key: '19041_x64', label: 'Windows 10 (22H2/21H2)', sublabel: 'Client 64-bit (ESU)', version: 'Build 19041-19045', arch: 'x64', enabled: true, status: 'esu' },
     { key: '17763_x64', label: 'Windows Server 2019 / 1809', sublabel: 'LTSC 64-bit', version: 'Build 17763', arch: 'x64', enabled: true, status: 'supported' },
     { key: '14393_x64', label: 'Windows Server 2016 / 1607', sublabel: 'LTSC 64-bit', version: 'Build 14393', arch: 'x64', enabled: true, status: 'supported' },
-    { key: '10240_x64', label: 'Windows 10 Enterprise 2015', sublabel: 'LTSB 64-bit', version: 'Build 10240', arch: 'x64', enabled: false, status: 'eol' },
+    { key: '10240_x64', label: 'Windows 10 Enterprise 2015', sublabel: 'LTSB 64-bit', version: 'Build 10240', arch: 'x64', enabled: true, status: 'eol' },
     { key: '19041_x86', label: 'Windows 10 (22H2/21H2) x86', sublabel: 'Client 32-bit (ESU)', version: 'Build 19041-19045', arch: 'x86', enabled: true, status: 'esu' },
-    { key: '17763_x86', label: 'Windows 10 (1809) x86', sublabel: 'Client 32-bit', version: 'Build 17763', arch: 'x86', enabled: false, status: 'eol' },
-    { key: '14393_x86', label: 'Windows 10 (1607) x86', sublabel: 'Client 32-bit', version: 'Build 14393', arch: 'x86', enabled: false, status: 'eol' },
-    { key: '10240_x86', label: 'Windows 10 (1507) x86', sublabel: 'Client 32-bit', version: 'Build 10240', arch: 'x86', enabled: false, status: 'eol' },
+    { key: '17763_x86', label: 'Windows 10 (1809) x86', sublabel: 'Client 32-bit', version: 'Build 17763', arch: 'x86', enabled: true, status: 'eol' },
+    { key: '14393_x86', label: 'Windows 10 (1607) x86', sublabel: 'Client 32-bit', version: 'Build 14393', arch: 'x86', enabled: true, status: 'eol' },
+    { key: '10240_x86', label: 'Windows 10 (1507) x86', sublabel: 'Client 32-bit', version: 'Build 10240', arch: 'x86', enabled: true, status: 'eol' },
   ]);
 
   // Office Builds

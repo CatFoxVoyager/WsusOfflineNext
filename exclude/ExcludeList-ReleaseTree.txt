@@ -45,6 +45,7 @@ client\office\
 client\msedge\
 UpdateGenerator.ini
 Windows10Versions.ini
+windows-10-versions.ini
 .planning\
 .playwright-mcp\
 .tmp-

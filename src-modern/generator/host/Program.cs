@@ -937,6 +937,26 @@ namespace WSUSOffline.Generator
                     }
                 }
                 File.WriteAllLines(win10Ini, lines);
+
+                var bashLines = new List<string>();
+                if (payload.TryGetProperty("win10", out var bashW10))
+                {
+                    foreach (var prop in bashW10.EnumerateObject())
+                    {
+                        bashLines.Add($"{prop.Name}={(prop.Value.GetBoolean() ? "on" : "off")}");
+                    }
+                }
+                if (payload.TryGetProperty("win11", out var bashW11))
+                {
+                    foreach (var prop in bashW11.EnumerateObject())
+                    {
+                        bashLines.Add($"{prop.Name}={(prop.Value.GetBoolean() ? "on" : "off")}");
+                    }
+                }
+                if (bashLines.Count > 0)
+                {
+                    File.WriteAllLines(Path.Combine(root, "sh", "windows-10-versions.ini"), bashLines);
+                }
             }
 
             string genIni = Path.Combine(root, "UpdateGenerator.ini");

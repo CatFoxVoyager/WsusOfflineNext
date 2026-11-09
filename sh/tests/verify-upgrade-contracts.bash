@@ -1,0 +1,499 @@
+#!/usr/bin/env bash
+# =======================================================================
+# WSUS Offline Update - Upgrade Contract Twin (Linux / Bash)
+# File: sh/tests/verify-upgrade-contracts.bash
+#
+# Plan 31-04: cross-tier parity for the frozen upgrade path-deduction
+# layer (PATH-01/PATH-02/PATH-03). Three sections:
+#   A. Verdict evaluator parity: re-implements the frozen UpgResolvePath
+#      rules (src-native/installer/upgradespredicates.pas) as a bash
+#      evaluator and asserts every case of the canonical golden matrix
+#      over the IDENTICAL GOLDEN_UPGRADES fixture the FPC testrunner
+#      freezes (src-native/installer/tests/testrunner.lpr). Same rows,
+#      same rule order R0-R12, same reason tokens, same expected
+#      verdict/NeedsBaselineCU/reason triples.
+#   B. Generated contracts: both generation twins' --check drift gates
+#      plus the live generated data files' frozen shape (upgrades.txt,
+#      builds.txt, StaticUpdateIds-BuildUpgrades.txt). Read-only.
+#   C. Consent contracts: the frozen engine/GUI/host literals
+#      (25/25 counts, /upgradeos token, template default, engine
+#      refusal/acceptance literals, write-back absence, gitignore).
+#
+# Fixtures are self-created in a temp sandbox - no test reads the repo's
+# gitignored runtime-state INI files (research Pitfall 7). Every failure
+# prints a FAIL: line and exits 1; success prints UPGRADE-CONTRACTS-PASS.
+# =======================================================================
+
+set -e
+set -u
+export LC_ALL=C
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/../.." && pwd)"
+cd "$repo_root"
+
+echo "======================================================================="
+echo "WSUS Offline Update - Upgrade Contract Twin (Linux / Bash)"
+echo "======================================================================="
+
+# Isolated sandbox for the section-A fixture (never the repo's runtime state)
+tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t 'wou_upgrade_contracts')"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+# -----------------------------------------------------------------------
+# The canonical GOLDEN_UPGRADES fixture - rows byte-identical to the
+# GOLDEN_UPGRADES constant in src-native/installer/tests/testrunner.lpr
+# (plan 31-03 shipped matrix; 8 valid rows + 1 malformed 11-field row,
+# skipped by the exactly-12 gate).
+# -----------------------------------------------------------------------
+fixture_file="${tmp_dir}/upgrades-golden.txt"
+cat > "$fixture_file" <<'GOLDEN_UPGRADES_EOF'
+# comment line - ignored
+
+26200|x64|glb|win11|26100|active|26100|kb5054156|5074|kb5064081|0|
+26300|x64|glb|win11|26100|active|26100|kb5054156|||0|
+28000|x64|glb|win11|28000|ineligible|||||0|new-devices-only
+19045|x64|glb|win10|19041|active|19041|kb5015684|1865|kb5021233|0|
+19045|x86|glb|win10|19041|active|19041|kb5015684|1865|kb5021233|0|
+19044|x64|glb|win10|19041|eol|19041|kb5003791|1237|kb5008212|0|
+20348|x64|glb|win10|20348|active|||||1|
+25398|x64|glb|win10|25398|active|||||0|
+this|row|is|malformed|nine|fields|x|x|x|x|x
+GOLDEN_UPGRADES_EOF
+
+# ===== Global variables =================================================
+# Parsed fixture rows (parallel arrays; order preserved - the first
+# matching row decides, exactly like the FPC table).
+UP_TARGET=()   # field 1
+UP_ARCH=()     # field 2
+UP_LANG=()     # field 3
+UP_FAMILY=()   # field 4
+UP_STATUS=()   # field 6
+UP_EKBSRC=()   # field 7
+UP_EKBKB=()    # field 8
+UP_MINREV=()   # field 9
+UP_PREREQ=()   # field 10
+UP_FUMEDIA=()  # field 11
+UP_BLOCKED=()  # field 12
+# Evaluator answer triple (set by upg_resolve)
+UP_V="upgBlocked"
+UP_B="false"
+UP_R=""
+# Per-section pass counter
+SECTION_PASS=0
+
+# Tolerant 12-field parser (parity with UpgParseUpgradesFile): comments,
+# blank lines and rows whose field count is not exactly 12 are skipped;
+# fields are whitespace-trimmed.
+upg_parse() {
+    local raw_line="" line="" field="" i
+    local -i n_fields
+    UP_TARGET=()
+    UP_ARCH=()
+    UP_LANG=()
+    UP_FAMILY=()
+    UP_STATUS=()
+    UP_EKBSRC=()
+    UP_EKBKB=()
+    UP_MINREV=()
+    UP_PREREQ=()
+    UP_FUMEDIA=()
+    UP_BLOCKED=()
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        line="${raw_line%$'\r'}"
+        line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        if [[ -z "$line" ]]; then
+            continue
+        fi
+        case "$line" in
+            '#'*)
+                continue
+                ;;
+        esac
+        # Split on '|' with a delimiter walk (parity with the FPC
+        # Pos('|') loop): the walk continues while a pipe remains and
+        # appends the WHOLE remainder - even when empty - as the final
+        # field, so a trailing pipe yields an EMPTY 12th field (bash's
+        # IFS-based `read -a` would silently drop it).
+        local fields=()
+        local rest="$line"
+        while :; do
+            if [[ "$rest" == *"|"* ]]; then
+                fields+=("${rest%%|*}")
+                rest="${rest#*|}"
+            else
+                fields+=("$rest")
+                break
+            fi
+        done
+        n_fields=${#fields[@]}
+        if [[ "$n_fields" -ne 12 ]]; then
+            continue
+        fi
+        for i in "${!fields[@]}"; do
+            field="${fields[$i]}"
+            field="$(printf '%s' "$field" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            fields[$i]="$field"
+        done
+        UP_TARGET+=("${fields[0]}")
+        UP_ARCH+=("${fields[1]}")
+        UP_LANG+=("${fields[2]}")
+        UP_FAMILY+=("${fields[3]}")
+        UP_STATUS+=("${fields[5]}")
+        UP_EKBSRC+=("${fields[6]}")
+        UP_EKBKB+=("${fields[7]}")
+        UP_MINREV+=("${fields[8]}")
+        UP_PREREQ+=("${fields[9]}")
+        UP_FUMEDIA+=("${fields[10]}")
+        UP_BLOCKED+=("${fields[11]}")
+    done < "$fixture_file"
+}
+
+# StrToIntDef equivalent for every reachable verdict input: a digits-only
+# string converts base-10 (leading zeros stripped so arithmetic never
+# goes octal), anything else - including empty - answers 0, mirroring the
+# FPC default. The verdict rules only branch on <= 0 vs > 0 afterwards,
+# so the positive-integer shape check carries the same outcome for the
+# whole matrix (negative input answers 0 here and would read <= 0 in
+# Pascal too).
+upg_str_to_int() {
+    local s="$1" t
+    if [[ ! "$s" =~ ^[0-9]+$ ]]; then
+        printf '0\n'
+        return
+    fi
+    t="${s#"${s%%[!0]*}"}"
+    if [[ -z "$t" ]]; then
+        printf '0\n'
+    else
+        printf '%s\n' "$t"
+    fi
+}
+
+# The frozen verdict rules R0-R12 (upgradespredicates.pas), evaluated in
+# this exact order. Sets UP_V/UP_B/UP_R.
+upg_resolve() {
+    local curr_build="$1" curr_rev="$2" curr_arch="$3" curr_lang="$4"
+    local curr_family="$5" target="$6"
+    local curr_num target_num src_num rev_num min_rev_num
+    local -i i t2 t ineligible
+    UP_V="upgBlocked"
+    UP_B="false"
+    UP_R=""
+    # R0 current build not a positive number
+    curr_num="$(upg_str_to_int "$curr_build")"
+    if [[ "$curr_num" -le 0 ]]; then
+        UP_R="unknown-current"
+        return
+    fi
+    # R1 target build not a positive number
+    target_num="$(upg_str_to_int "$target")"
+    if [[ "$target_num" -le 0 ]]; then
+        UP_R="bad-target"
+        return
+    fi
+    # R2 numeric target = numeric current
+    if [[ "$target_num" -eq "$curr_num" ]]; then
+        UP_R="already-on-target"
+        return
+    fi
+    # R3 numeric target < numeric current
+    if [[ "$target_num" -lt "$curr_num" ]]; then
+        UP_R="downgrade"
+        return
+    fi
+    # R4 current OS family is neither win10 nor win11 (legacy floor)
+    if [[ "$curr_family" != "win10" ]] && [[ "$curr_family" != "win11" ]]; then
+        UP_R="legacy-os"
+        return
+    fi
+    # R5 + R6 over the target's rows: the first ineligible row decides
+    # (R6 before the matrix gate); R5 answers no-media only when no row
+    # carries the target at all.
+    t2=-1
+    ineligible=0
+    for i in "${!UP_TARGET[@]}"; do
+        if [[ "${UP_TARGET[$i]}" == "$target" ]]; then
+            if [[ "$t2" -lt 0 ]]; then
+                t2="$i"
+            fi
+            if [[ "${UP_STATUS[$i]}" == "ineligible" ]]; then
+                if [[ -n "${UP_BLOCKED[$i]}" ]]; then
+                    UP_R="${UP_BLOCKED[$i]}"
+                else
+                    UP_R="ineligible"
+                fi
+                ineligible=1
+                break
+            fi
+        fi
+    done
+    if [[ "$ineligible" -eq 1 ]]; then
+        return
+    fi
+    if [[ "$t2" -lt 0 ]]; then
+        UP_R="no-media"
+        return
+    fi
+    # R7 matrix gate on the first target row: x86 never sees a win11
+    # target, arm64 never a win10 one.
+    if [[ "$curr_arch" == "x86" && "${UP_FAMILY[$t2]}" == "win11" ]] || \
+       [[ "$curr_arch" == "arm64" && "${UP_FAMILY[$t2]}" == "win10" ]]; then
+        UP_R="arch-unsupported"
+        return
+    fi
+    # T = the caller's (target, arch, lang) row
+    t=-1
+    for i in "${!UP_TARGET[@]}"; do
+        if [[ "${UP_TARGET[$i]}" == "$target" && "${UP_ARCH[$i]}" == "$curr_arch" && "${UP_LANG[$i]}" == "$curr_lang" ]]; then
+            t="$i"
+            break
+        fi
+    done
+    if [[ "$t" -ge 0 ]]; then
+        # R8 EKB: exact ekb_source_build match OR the servicing-window
+        # rule (source <= current < target) that keeps the 19041-branch
+        # family answering EKB like the incumbent lane; an incomplete
+        # EKB triple or a non-positive current revision answers
+        # baseline-unknown - never a guessed baseline.
+        src_num="$(upg_str_to_int "${UP_EKBSRC[$t]}")"
+        if [[ "${UP_EKBSRC[$t]}" == "$curr_build" ]] || \
+           [[ "$src_num" -gt 0 && "$src_num" -le "$curr_num" && "$curr_num" -lt "$target_num" ]]; then
+            if [[ -n "${UP_EKBKB[$t]}" ]]; then
+                if [[ -z "${UP_MINREV[$t]}" ]] || [[ -z "${UP_PREREQ[$t]}" ]]; then
+                    UP_R="baseline-unknown"
+                    return
+                fi
+                rev_num="$(upg_str_to_int "$curr_rev")"
+                if [[ "$rev_num" -le 0 ]]; then
+                    UP_R="baseline-unknown"
+                    return
+                fi
+                min_rev_num="$(upg_str_to_int "${UP_MINREV[$t]}")"
+                UP_V="upgEKB"
+                if [[ "$rev_num" -lt "$min_rev_num" ]]; then
+                    UP_B="true"
+                else
+                    UP_B="false"
+                fi
+                return
+            fi
+        fi
+        # R9 full feature update: same family + staged media
+        if [[ "${UP_FAMILY[$t]}" == "$curr_family" && "${UP_FUMEDIA[$t]}" == "1" ]]; then
+            UP_V="upgFullFU"
+            return
+        fi
+        # R11 the row exists but carries no FU media
+        UP_R="no-media"
+        return
+    fi
+    # R10 the arch is carried but not this language - never substitute
+    for i in "${!UP_TARGET[@]}"; do
+        if [[ "${UP_TARGET[$i]}" == "$target" && "${UP_ARCH[$i]}" == "$curr_arch" ]]; then
+            UP_R="language-not-carried"
+            return
+        fi
+    done
+    # R12 no (target, arch) row at all
+    UP_R="no-media"
+}
+
+# Shared assert: green increments the section counter, red prints the
+# FAIL line and exits 1.
+assert_eq() {
+    local actual="$1" expected="$2" desc="$3"
+    if [[ "$actual" != "$expected" ]]; then
+        printf 'FAIL: %s (expected "%s", got "%s")\n' "$desc" "$expected" "$actual"
+        exit 1
+    fi
+    SECTION_PASS=$((SECTION_PASS + 1))
+}
+
+has_literal() {
+    local desc="$1" file="$2" literal="$3"
+    if ! grep -qF -- "$literal" "$file"; then
+        printf 'FAIL: %s (literal "%s" not found in %s)\n' "$desc" "$literal" "$file"
+        exit 1
+    fi
+    SECTION_PASS=$((SECTION_PASS + 1))
+}
+
+has_min_count() {
+    local desc="$1" file="$2" min="$3" literal="$4"
+    local n
+    n="$(grep -cF -- "$literal" "$file" || true)"
+    if [[ "$n" -lt "$min" ]]; then
+        printf 'FAIL: %s (expected >= %s hits for "%s", got %s)\n' "$desc" "$min" "$literal" "$n"
+        exit 1
+    fi
+    SECTION_PASS=$((SECTION_PASS + 1))
+}
+
+# -----------------------------------------------------------------------
+# Section A: verdict evaluator parity over the canonical golden matrix
+# -----------------------------------------------------------------------
+echo "--- Section A: verdict evaluator parity (golden matrix) ---"
+SECTION_PASS=0
+
+upg_parse
+
+assert_eq "${#UP_TARGET[@]}" "8" "upg-parse-1: 9 candidate fixture lines yield 8 rows (comment, blank, malformed skipped)"
+
+malformed_in=0
+for i in "${!UP_TARGET[@]}"; do
+    if [[ "${UP_TARGET[$i]}" == "this" ]]; then
+        malformed_in=1
+    fi
+done
+assert_eq "$malformed_in" "0" "upg-parse-2: the 11-field malformed row is not in the parsed table"
+
+assert_eq "${UP_TARGET[0]}" "26200" "upg-parse-3: comment and blank lines skipped (first parsed row is 26200)"
+
+# Golden matrix: verdict/NeedsBaselineCU/reason triples, same order and
+# tokens as testrunner.lpr TestUpgradesVerdict (cases 01-20).
+check_case() {
+    local num="$1" curr="$2" rev="$3" arch="$4" lang="$5" fam="$6" target="$7"
+    local exp_v="$8" exp_b="$9" exp_r="${10}"
+    upg_resolve "$curr" "$rev" "$arch" "$lang" "$fam" "$target"
+    if [[ "$UP_V" == "$exp_v" && "$UP_B" == "$exp_b" && "$UP_R" == "$exp_r" ]]; then
+        SECTION_PASS=$((SECTION_PASS + 1))
+    else
+        printf 'FAIL: case %s expected %s/%s/%s got %s/%s/%s\n' \
+            "$num" "$exp_v" "$exp_b" "$exp_r" "$UP_V" "$UP_B" "$UP_R"
+        exit 1
+    fi
+}
+
+check_case 01 '26100' '1000' 'x64' 'glb' 'win11' '26200' upgEKB true ''
+check_case 02 '26100' '5074' 'x64' 'glb' 'win11' '26200' upgEKB false ''
+check_case 03 '26100' '6000' 'x64' 'glb' 'win11' '26200' upgEKB false ''
+check_case 04 '26100' '5074' 'x64' 'glb' 'win11' '26300' upgBlocked false baseline-unknown
+check_case 05 '26100' '' 'x64' 'glb' 'win11' '26200' upgBlocked false baseline-unknown
+check_case 06 '26100' '5074' 'x64' 'glb' 'win11' '26100' upgBlocked false already-on-target
+check_case 07 '26200' '5074' 'x64' 'glb' 'win11' '26100' upgBlocked false downgrade
+check_case 08 '26100' '5074' 'x64' 'glb' 'win11' 'abc' upgBlocked false bad-target
+check_case 09 '' '5074' 'x64' 'glb' 'win11' '26200' upgBlocked false unknown-current
+check_case 10 '26100' '5074' 'x64' 'glb' 'win11' '28000' upgBlocked false new-devices-only
+check_case 11 '19045' '1865' 'x86' 'glb' 'win10' '26200' upgBlocked false arch-unsupported
+check_case 12 '19045' '1865' 'arm64' 'glb' 'win11' '20348' upgBlocked false arch-unsupported
+check_case 13 '26100' '5074' 'arm64' 'glb' 'win11' '26200' upgBlocked false no-media
+check_case 14 '7601' '1' 'x86' 'glb' 'win7' '19045' upgBlocked false legacy-os
+check_case 15 '19042' '1237' 'x64' 'glb' 'win10' '19044' upgEKB false ''
+check_case 16 '19045' '1865' 'x64' 'glb' 'win10' '20348' upgFullFU false ''
+check_case 17 '19045' '1865' 'x64' 'glb' 'win10' '25398' upgBlocked false no-media
+check_case 18 '26100' '5074' 'x64' 'deu' 'win11' '26200' upgBlocked false language-not-carried
+check_case 19 '19045' '1865' 'x86' 'glb' 'win10' '28000' upgBlocked false new-devices-only
+check_case 20 '19044' '1000' 'x64' 'glb' 'win10' '19045' upgEKB true ''
+
+A_PASS=$SECTION_PASS
+printf '[A] verdict evaluator parity: %s checks green (3 parser facts + 20 matrix cases)\n' "$A_PASS"
+
+# -----------------------------------------------------------------------
+# Section B: generated contracts (read-only over the live tree)
+# -----------------------------------------------------------------------
+echo "--- Section B: generated contracts (--check twins + data census) ---"
+SECTION_PASS=0
+
+bash sh/generate-build-sites.bash --check > /dev/null
+SECTION_PASS=$((SECTION_PASS + 1))
+echo "[B] bash generation twin --check exit 0 (all sites in sync)"
+
+if command -v cscript > /dev/null 2>&1; then
+    cscript //Nologo cmd/GenerateBuildSites.vbs --check > /dev/null
+    SECTION_PASS=$((SECTION_PASS + 1))
+    echo "[B] VBS generation twin --check exit 0 (all sites in sync)"
+else
+    echo "SKIP-VBS: cscript unavailable - the VBS twin --check was not run"
+fi
+
+upg_file="${repo_root}/client/UpdateTable/upgrades.txt"
+builds_file="${repo_root}/client/UpdateTable/builds.txt"
+hop_file="${repo_root}/client/static/StaticUpdateIds-BuildUpgrades.txt"
+
+if [[ ! -f "$upg_file" ]]; then
+    printf 'FAIL: missing generated file client/UpdateTable/upgrades.txt\n'
+    exit 1
+fi
+SECTION_PASS=$((SECTION_PASS + 1))
+
+upg_lines="$(wc -l < "$upg_file" | tr -d '[:space:]')"
+assert_eq "$upg_lines" "15" "upgrades.txt carries exactly 15 lines (3-line frozen header + 12 rows)"
+
+upg_rows="$(awk -F'|' '$0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*$/ && NF==12 {c++} END{printf "%d", c+0}' "$upg_file")"
+assert_eq "$upg_rows" "12" "upgrades.txt carries exactly 12 twelve-field data rows"
+
+has_literal "upgrades.txt freezes the 12-field # Format: header" "$upg_file" \
+    '# Format: target_build|arch|lang|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_min_revision|ekb_prereq_kb|fu_media|blocked_reason'
+
+upg_28000="$(awk -F'|' '{sub(/\r$/, "")} $1=="28000" && $12=="new-devices-only" {c++} END{printf "%d", c+0}' "$upg_file")"
+assert_eq "$upg_28000" "1" "upgrades.txt 28000 row carries the new-devices-only blocked reason"
+
+upg_26300="$(awk -F'|' '{sub(/\r$/, "")} $1=="26300" && $9=="" && $10=="" {c++} END{printf "%d", c+0}' "$upg_file")"
+assert_eq "$upg_26300" "1" "upgrades.txt 26300 row carries empty ekb_min_revision/ekb_prereq_kb (baseline-unknown shape)"
+
+if [[ ! -f "$builds_file" ]]; then
+    printf 'FAIL: missing generated file client/UpdateTable/builds.txt\n'
+    exit 1
+fi
+has_literal "builds.txt freezes the 10-field # Format: header (contract never extended)" "$builds_file" \
+    '# Format: build|arch|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_prereq_kb|ekb_min_revision|is_enforced'
+
+builds_rows="$(grep -c '^[0-9]' "$builds_file" || true)"
+assert_eq "$builds_rows" "12" "builds.txt carries exactly 12 data rows (frozen census)"
+
+if [[ ! -f "$hop_file" ]]; then
+    printf 'FAIL: missing generated file client/static/StaticUpdateIds-BuildUpgrades.txt\n'
+    exit 1
+fi
+hop_rows="$(grep -c '^[0-9]' "$hop_file" || true)"
+assert_eq "$hop_rows" "6" "StaticUpdateIds-BuildUpgrades.txt carries exactly 6 hop rows"
+
+B_PASS=$SECTION_PASS
+printf '[B] generated contracts: %s checks green\n' "$B_PASS"
+
+# -----------------------------------------------------------------------
+# Section C: consent contracts (frozen source literals)
+# -----------------------------------------------------------------------
+echo "--- Section C: consent contracts (frozen source literals) ---"
+SECTION_PASS=0
+
+contracts_file="${repo_root}/src-native/installer/enginecontracts.pas"
+ini_file="${repo_root}/client/UpdateInstaller.ini"
+engine_file="${repo_root}/client/cmd/DoUpdate.cmd"
+mainform_file="${repo_root}/src-native/installer/mainform.pas"
+host_file="${repo_root}/src-modern/generator/host/Program.cs"
+gitignore_file="${repo_root}/.gitignore"
+
+has_literal "enginecontracts freezes ENG_SWITCH_COUNT = 25" "$contracts_file" 'ENG_SWITCH_COUNT = 25'
+has_literal "enginecontracts freezes ENG_INI_DEFAULT_COUNT = 25" "$contracts_file" 'ENG_INI_DEFAULT_COUNT = 25'
+has_literal "enginecontracts carries the /upgradeos argv token" "$contracts_file" "'/upgradeos'"
+has_literal "UpdateInstaller.ini template defaults upgradeos=Disabled" "$ini_file" 'upgradeos=Disabled'
+has_literal "DoUpdate.cmd carries the loud refusal literal" "$engine_file" \
+    'ERROR: /upgradeos target must be a build number'
+has_literal "DoUpdate.cmd carries the acceptance literal" "$engine_file" 'Info: Upgrade target build'
+
+if grep 'WriteString' "$mainform_file" | grep -qi 'upgradeos'; then
+    printf 'FAIL: mainform.pas must not write the upgradeos key back (no WriteString line may carry it)\n'
+    exit 1
+fi
+SECTION_PASS=$((SECTION_PASS + 1))
+echo "[C] mainform.pas write-back absence: no WriteString line carries the upgradeos key"
+
+has_min_count "Program.cs carries the [OS Upgrades] section contract (>= 2 sites)" "$host_file" 2 '[OS Upgrades]'
+has_literal "Program.cs carries the flat bash twin file name" "$host_file" 'os-upgrades.ini'
+has_literal "Program.cs carries the section reader" "$host_file" 'ReadOsUpgradesSelection'
+has_literal ".gitignore excludes the bash twin runtime file" "$gitignore_file" 'sh/os-upgrades.ini'
+
+C_PASS=$SECTION_PASS
+printf '[C] consent contracts: %s checks green\n' "$C_PASS"
+
+# -----------------------------------------------------------------------
+# All green
+# -----------------------------------------------------------------------
+echo ""
+echo "======================================================================="
+echo "Upgrade contract twin: A=${A_PASS} B=${B_PASS} C=${C_PASS} checks green."
+echo "======================================================================="
+echo "UPGRADE-CONTRACTS-PASS"
+exit 0

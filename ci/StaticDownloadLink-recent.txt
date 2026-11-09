@@ -1,2 +1,2 @@
-https://github.com/CatFoxVoyager/WsusOfflineNext/releases/download/v6.0.4/WsusOfflineNext-6.0.4.zip
-https://github.com/CatFoxVoyager/WsusOfflineNext/releases/download/v6.0.4/WsusOfflineNext-6.0.4_hashes.txt
+https://github.com/CatFoxVoyager/WsusOfflineNext/releases/download/v6.1.0/WsusOfflineNext-6.1.0.zip
+https://github.com/CatFoxVoyager/WsusOfflineNext/releases/download/v6.1.0/WsusOfflineNext-6.1.0_hashes.txt

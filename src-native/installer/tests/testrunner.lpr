@@ -278,6 +278,116 @@ begin
     'upg-parse-5: field mapping exact (row 26200: min_revision 5074, fu_media 0, empty blocked_reason)');
 end;
 
+procedure TestUpgradesVerdict;
+var
+  Rows: TUpgradeRows;
+  FixturePath: string;
+  P: TUpgradePath;
+
+  function Resolve(const CurrBuild, CurrRev, Arch, Lang, Family,
+    Target: string): TUpgradePath;
+  begin
+    Result := UpgResolvePath(Rows, CurrBuild, CurrRev, Arch, Lang, Family,
+      Target);
+  end;
+
+begin
+  { Plan 31-03 Task 2: the 19-case golden matrix (+1 branch-window pin)
+    over the canonical fixture - every boundary answers exactly ONE
+    verdict with the mandated reason token (PATH-01/PATH-02). }
+  FixturePath := WriteFixture('upgrades-golden.txt', GOLDEN_UPGRADES);
+  Rows := UpgParseUpgradesFile(FixturePath, @AlwaysProbe);
+
+  { EKB baseline strictly below / exactly at / above min_revision. }
+  P := Resolve('26100', '1000', 'x64', 'glb', 'win11', '26200');
+  Check((P.Verdict = upgEKB) and P.NeedsBaselineCU and (P.Reason = ''),
+    'upg-case-01-EKB: 26100 rev 1000 -> 26200 (below baseline 5074) = upgEKB NeedsBaselineCU=true');
+  P := Resolve('26100', '5074', 'x64', 'glb', 'win11', '26200');
+  Check((P.Verdict = upgEKB) and (not P.NeedsBaselineCU) and (P.Reason = ''),
+    'upg-case-02-EKB: 26100 rev 5074 -> 26200 (exactly at baseline) = upgEKB NeedsBaselineCU=false');
+  P := Resolve('26100', '6000', 'x64', 'glb', 'win11', '26200');
+  Check((P.Verdict = upgEKB) and (not P.NeedsBaselineCU) and (P.Reason = ''),
+    'upg-case-03-EKB: 26100 rev 6000 -> 26200 (above baseline) = upgEKB NeedsBaselineCU=false');
+
+  { DEC-02: an incomplete EKB triple answers baseline-unknown - never a
+    guessed baseline. }
+  P := Resolve('26100', '5074', 'x64', 'glb', 'win11', '26300');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'baseline-unknown'),
+    'upg-case-04-baseline-unknown: 26100 -> 26300 (empty baseline fields) = blocked baseline-unknown');
+  P := Resolve('26100', '', 'x64', 'glb', 'win11', '26200');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'baseline-unknown'),
+    'upg-case-05-baseline-unknown: empty current revision -> 26200 = blocked baseline-unknown');
+
+  { Numeric input boundaries. }
+  P := Resolve('26100', '5074', 'x64', 'glb', 'win11', '26100');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'already-on-target'),
+    'upg-case-06-already-on-target: 26100 -> 26100 = blocked already-on-target');
+  P := Resolve('26200', '5074', 'x64', 'glb', 'win11', '26100');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'downgrade'),
+    'upg-case-07-downgrade: 26200 -> 26100 = blocked downgrade');
+  P := Resolve('26100', '5074', 'x64', 'glb', 'win11', 'abc');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'bad-target'),
+    'upg-case-08-bad-target: 26100 -> abc = blocked bad-target');
+  P := Resolve('', '5074', 'x64', 'glb', 'win11', '26200');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'unknown-current'),
+    'upg-case-09-unknown-current: empty current build -> 26200 = blocked unknown-current');
+
+  { Ineligible reason (data-driven) + rule order (R6 before R7). }
+  P := Resolve('26100', '5074', 'x64', 'glb', 'win11', '28000');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'new-devices-only'),
+    'upg-case-10-new-devices-only: 26100 -> 28000 (ineligible) = blocked new-devices-only');
+
+  { Arch matrix. }
+  P := Resolve('19045', '1865', 'x86', 'glb', 'win10', '26200');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'arch-unsupported'),
+    'upg-case-11-arch-unsupported: 19045 x86 -> 26200 (win11) = blocked arch-unsupported');
+  P := Resolve('19045', '1865', 'arm64', 'glb', 'win11', '20348');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'arch-unsupported'),
+    'upg-case-12-arch-unsupported: 19045 arm64 -> 20348 (win10) = blocked arch-unsupported');
+  P := Resolve('26100', '5074', 'arm64', 'glb', 'win11', '26200');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'no-media'),
+    'upg-case-13-no-media: 26100 arm64 -> 26200 (no arm64 row) = blocked no-media');
+
+  { Legacy floor (VAL-02 seed). }
+  P := Resolve('7601', '1', 'x86', 'glb', 'win7', '19045');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'legacy-os'),
+    'upg-case-14-legacy-os: 7601 win7 -> 19045 = blocked legacy-os');
+
+  { DEC-05: the eol TARGET stays EKB-viable (19044 is eol; only
+    ineligible blocks). 19042 rev 1237 sits exactly at the hop's
+    baseline revision 1237 -> no baseline CU needed. Real incumbent
+    hop (19042->19044 in the shipped StaticUpdateIds-BuildUpgrades). }
+  P := Resolve('19042', '1237', 'x64', 'glb', 'win10', '19044');
+  Check((P.Verdict = upgEKB) and (not P.NeedsBaselineCU) and (P.Reason = ''),
+    'upg-case-15-EKB: 19042 rev 1237 -> 19044 (eol target, DEC-05) = upgEKB NeedsBaselineCU=false');
+
+  { Full FU hit and no-media. }
+  P := Resolve('19045', '1865', 'x64', 'glb', 'win10', '20348');
+  Check((P.Verdict = upgFullFU) and (not P.NeedsBaselineCU) and (P.Reason = ''),
+    'upg-case-16-full-FU: 19045 -> 20348 (fu_media=1) = upgFullFU');
+  P := Resolve('19045', '1865', 'x64', 'glb', 'win10', '25398');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'no-media'),
+    'upg-case-17-no-media: 19045 -> 25398 (fu_media=0) = blocked no-media');
+
+  { Language scoping (DEC-06): never a substitution. }
+  P := Resolve('26100', '5074', 'x64', 'deu', 'win11', '26200');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'language-not-carried'),
+    'upg-case-18-language-not-carried: 26100 deu -> 26200 = blocked language-not-carried');
+
+  { Rule order: ineligible answers before the arch gate. }
+  P := Resolve('19045', '1865', 'x86', 'glb', 'win10', '28000');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'new-devices-only'),
+    'upg-case-19-new-devices-only: 19045 x86 -> 28000 = blocked new-devices-only (ineligible before arch)');
+
+  { Branch-window EKB hop pin: 19044 -> 19045 carries ekb_source 19041,
+    the window rule (source <= current < target) keeps the real
+    incumbent 19044->19045 lane answering EKB (deviation note: the
+    plan's literal R8 exact-source match would regress it to no-media). }
+  P := Resolve('19044', '1000', 'x64', 'glb', 'win10', '19045');
+  Check((P.Verdict = upgEKB) and P.NeedsBaselineCU and (P.Reason = ''),
+    'upg-case-20-EKB: 19044 rev 1000 -> 19045 (branch-window hop) = upgEKB NeedsBaselineCU=true');
+end;
+
 procedure TestDisplayMaps;
 var
   Os: TOsInfo;
@@ -1347,6 +1457,7 @@ begin
     TestDisplayMaps;
     TestEnablementPredicates;
     TestUpgradesParser;
+    TestUpgradesVerdict;
     TestToggleGates;
     TestOsGate;
     TestPathValid;

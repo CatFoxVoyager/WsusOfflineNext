@@ -87,8 +87,13 @@ function UpgParseUpgradesFile(const APath: string;
   AProbe: TFileProbe): TUpgradeRows;
 
 { The frozen verdict rules for one current -> target pair (plan 31-03
-  Task 2; pinned case-by-case by the testrunner golden matrix).
-  Declared in Task 1 with a marked stub body; Task 2 replaces it. }
+  Task 2; pinned case-by-case by the testrunner golden matrix):
+  R0 unknown-current, R1 bad-target, R2 already-on-target, R3
+  downgrade, R4 legacy-os, R5 no-media (no target row), R6 the target's
+  ineligible row reason, R7 arch-unsupported (x86->win11, arm64->win10),
+  R8 upgEKB with the NeedsBaselineCU annotation (baseline-unknown on an
+  incomplete EKB triple), R9 upgFullFU, R10 language-not-carried,
+  R11/R12 no-media. }
 function UpgResolvePath(ARows: TUpgradeRows; const ACurrBuild,
   ACurrRevision, ACurrArch, ACurrLang, ACurrOsFamily,
   ATargetBuild: string): TUpgradePath;
@@ -178,13 +183,156 @@ end;
 function UpgResolvePath(ARows: TUpgradeRows; const ACurrBuild,
   ACurrRevision, ACurrArch, ACurrLang, ACurrOsFamily,
   ATargetBuild: string): TUpgradePath;
+var
+  I, T2, T: Integer;
+  CurrNum, TargetNum, RevNum, SrcNum, MinRevNum: Integer;
+  Ineligible: Boolean;
 begin
-  { STUB (plan 31-03 Task 1): this body only keeps the runner
-    compiling; Task 2 of this plan replaces it with the frozen verdict
-    rules and the 20-case golden matrix pins. }
+  { The frozen rule table (plan 31-03 Task 2), evaluated in this exact
+    order. All numeric comparisons go through StrToIntDef (0 default);
+    reason tokens are the frozen vocabulary; non-blocked verdicts carry
+    an empty Reason (threat T-31-09: every blocked answer is loud and
+    machine-comparable, a false "upgraded" belief is impossible). }
   Result.Verdict := upgBlocked;
   Result.NeedsBaselineCU := False;
-  Result.Reason := 'unimplemented';
+  Result.Reason := '';
+
+  { R0 current build not a positive number. }
+  CurrNum := StrToIntDef(ACurrBuild, 0);
+  if CurrNum <= 0 then
+  begin
+    Result.Reason := 'unknown-current';
+    Exit;
+  end;
+  { R1 target build not a positive number. }
+  TargetNum := StrToIntDef(ATargetBuild, 0);
+  if TargetNum <= 0 then
+  begin
+    Result.Reason := 'bad-target';
+    Exit;
+  end;
+  { R2 numeric target = numeric current. }
+  if TargetNum = CurrNum then
+  begin
+    Result.Reason := 'already-on-target';
+    Exit;
+  end;
+  { R3 numeric target < numeric current. }
+  if TargetNum < CurrNum then
+  begin
+    Result.Reason := 'downgrade';
+    Exit;
+  end;
+  { R4 current OS family is neither win10 nor win11 - the upgrade
+    machinery never leaks pre-Win10 (VAL-02 seed). }
+  if (ACurrOsFamily <> 'win10') and (ACurrOsFamily <> 'win11') then
+  begin
+    Result.Reason := 'legacy-os';
+    Exit;
+  end;
+
+  { R5 + R6 over the target's rows: first matching row decides the
+    ineligible verdict (buildsupgrade.pas shape), R5 answers no-media
+    only when NO row carries the target at all. }
+  T2 := -1;
+  Ineligible := False;
+  for I := 0 to High(ARows) do
+    if ARows[I].TargetBuild = ATargetBuild then
+    begin
+      if T2 < 0 then
+        T2 := I;
+      if ARows[I].Status = 'ineligible' then
+      begin
+        { R6 fires before the matrix gate (pinned by matrix case 19). }
+        if ARows[I].BlockedReason <> '' then
+          Result.Reason := ARows[I].BlockedReason
+        else
+          Result.Reason := 'ineligible';
+        Ineligible := True;
+        Break;
+      end;
+    end;
+  if Ineligible then
+    Exit;
+  if T2 < 0 then
+  begin
+    Result.Reason := 'no-media';
+    Exit;
+  end;
+
+  { R7 matrix gate on the first target row (any arch/lang): x86 never
+    sees a win11 target, arm64 never a win10 one. }
+  if ((ACurrArch = 'x86') and (ARows[T2].OsFamily = 'win11'))
+     or ((ACurrArch = 'arm64') and (ARows[T2].OsFamily = 'win10')) then
+  begin
+    Result.Reason := 'arch-unsupported';
+    Exit;
+  end;
+
+  { T = the caller's (target, arch, lang) row. }
+  T := -1;
+  for I := 0 to High(ARows) do
+    if (ARows[I].TargetBuild = ATargetBuild)
+       and (ARows[I].Arch = ACurrArch)
+       and (ARows[I].Lang = ACurrLang) then
+    begin
+      T := I;
+      Break;
+    end;
+
+  if T >= 0 then
+  begin
+    { R8 EKB: the row's EKB hop must carry the current build - by exact
+      ekb_source_build, or through the servicing-window rule
+      (source <= current < target) that lets the 19041-branch family
+      keep answering EKB exactly like the incumbent lane
+      (BuBuildUpgradeAvailable's branch rule; DEC-05 forbids regressing
+      it). An incomplete EKB triple (empty min_revision/prereq_kb or a
+      non-positive current revision) answers baseline-unknown - never a
+      guessed baseline (DEC-02). }
+    SrcNum := StrToIntDef(ARows[T].EkbSourceBuild, 0);
+    if ((ARows[T].EkbSourceBuild = ACurrBuild)
+        or ((SrcNum > 0) and (SrcNum <= CurrNum) and (CurrNum < TargetNum)))
+       and (ARows[T].EkbKb <> '') then
+    begin
+      if (ARows[T].EkbMinRevision = '') or (ARows[T].EkbPrereqKb = '') then
+      begin
+        Result.Reason := 'baseline-unknown';
+        Exit;
+      end;
+      RevNum := StrToIntDef(ACurrRevision, 0);
+      if RevNum <= 0 then
+      begin
+        Result.Reason := 'baseline-unknown';
+        Exit;
+      end;
+      MinRevNum := StrToIntDef(ARows[T].EkbMinRevision, 0);
+      Result.Verdict := upgEKB;
+      Result.NeedsBaselineCU := RevNum < MinRevNum;
+      Exit;
+    end;
+    { R9 full feature update: same family + staged media. }
+    if (ARows[T].OsFamily = ACurrOsFamily) and (ARows[T].FuMedia = '1') then
+    begin
+      Result.Verdict := upgFullFU;
+      Exit;
+    end;
+    { R11 the row exists but carries no FU media. }
+    Result.Reason := 'no-media';
+    Exit;
+  end;
+
+  { R10 the arch is carried but not this language - never substitute. }
+  for I := 0 to High(ARows) do
+    if (ARows[I].TargetBuild = ATargetBuild)
+       and (ARows[I].Arch = ACurrArch) then
+    begin
+      Result.Reason := 'language-not-carried';
+      Exit;
+    end;
+
+  { R12 no (target, arch) row at all. }
+  Result.Reason := 'no-media';
 end;
 
 end.

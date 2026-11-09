@@ -13,9 +13,15 @@
       (threat T-26-06: the command line is the short trusted exe path +
       /resume only - no user-derived content);
     - registers/deletes it under HKLM;
-    - answers the /resume startup decision: the engine staging in
-      %SystemRoot%\Temp (WOUpdatesToInstall.txt present, SetWOUpdateStage
-      deleted-on-read by the engine) decides resume vs nothing-to-resume.
+    - answers the /resume startup decision: a run is pending when the
+      engine staging in %SystemRoot%\Temp exists (WOUpdatesToInstall.txt
+      present, SetWOUpdateStage deleted-on-read by the engine) OR the GUI's
+      own pending marker (WOUResumePending.txt, written together with the
+      RunOnce value) exists. The marker is what makes the reboots that
+      happen BEFORE the engine stages anything (IE11 prerequisites and IE11,
+      the SHA-2 pair, the agent refresh, .NET, WMF) resumable: the RunOnce is
+      only registered when a reboot was explicitly part of a run, so its
+      registration is the proof that a run was interrupted.
 
     There is NO second loop counter here: the engine's wourecall.1-9
     files stay the ONLY anti-loop guard (plan prohibition). }
@@ -36,6 +42,15 @@ const
   RES_RUNONCE_NAME = '!WOUResume';
   RES_RUNONCE_MAX = 260; { Microsoft: command line <= 260 chars }
   RES_RESUME_FLAG = '/resume';
+  { GUI-written companion of the RunOnce value: written when it is
+    registered, removed when it is deleted. Lives next to the engine staging
+    but is NOT touched by the engine (its own cleanup names are wou_*.txt). }
+  RES_PENDING_MARKER = 'WOUResumePending.txt';
+  { The engine's OWN automatic recall (PrepareRecall.cmd: WOUTempAdmin
+    autologon + a HKLM Run entry, legacy <= 8.1 with /autoreboot) keeps its
+    script here until CleanupRecall removes the directory. While it exists
+    the engine resumes the run by itself. }
+  RES_ENGINE_RECALL_REL = 'WOURecall\RecallUpdate.cmd';
 
 { Pure builder (unit-proven): AName = '!WOUResume'; AData = the quoted
   exe path (short-path spelling when the file exists and 8.3 names are
@@ -62,6 +77,25 @@ function ResWantsResume: Boolean;
   ResStagingPresent applies it to the frozen %SystemRoot%\Temp location. }
 function ResStagingPresentIn(const ADir: string): Boolean;
 function ResStagingPresent: Boolean;
+
+{ Pending-marker lifecycle (pure inputs: the directory is a parameter, the
+  production wrappers pass the frozen %SystemRoot%\Temp location). }
+function ResMarkerWriteIn(const ADir: string): Boolean;
+procedure ResMarkerDeleteIn(const ADir: string);
+function ResMarkerPresentIn(const ADir: string): Boolean;
+
+{ The /resume startup decision: staging present OR marker present. Evaluate
+  it BEFORE ResDeleteResume, which also removes the marker. }
+function ResResumePendingIn(const ADir: string): Boolean;
+function ResResumePending: Boolean;
+
+{ True while the engine's own automatic recall is prepared (legacy <= 8.1,
+  /autoreboot): the engine itself continues the run after the reboot, so the
+  GUI's RunOnce resume must stay OUT - it runs BEFORE the Run-key recall and
+  a modal dialog, a UAC prompt or a second engine instance there blocks or
+  duplicates the very continuation it is supposed to provide. }
+function ResEngineRecallPreparedIn(const ADir: string): Boolean;
+function ResEngineRecallPrepared: Boolean;
 
 implementation
 
@@ -115,6 +149,11 @@ begin
   finally
     R.Free;
   end;
+  { Companion marker AFTER the registry write: without it a reboot before the
+    engine staged anything would land on the nothing-to-resume dead end. A
+    marker failure degrades to that old behaviour, it never fails the run. }
+  if Result then
+    ResMarkerWriteIn(EngEngineTempDir);
 end;
 
 procedure ResDeleteResume;
@@ -129,6 +168,7 @@ begin
   finally
     R.Free;
   end;
+  ResMarkerDeleteIn(EngEngineTempDir);
 end;
 
 function ResWantsResume: Boolean;
@@ -153,6 +193,57 @@ end;
 function ResStagingPresent: Boolean;
 begin
   Result := ResStagingPresentIn(EngEngineTempDir);
+end;
+
+function ResMarkerPresentIn(const ADir: string): Boolean;
+begin
+  Result := FileExists(IncludeTrailingPathDelimiter(ADir) + RES_PENDING_MARKER);
+end;
+
+function ResMarkerWriteIn(const ADir: string): Boolean;
+var
+  Sl: TStringList;
+begin
+  Result := False;
+  Sl := TStringList.Create;
+  try
+    Sl.Add(DateTimeToStr(Now));
+    try
+      ForceDirectories(ADir);
+      Sl.SaveToFile(IncludeTrailingPathDelimiter(ADir) + RES_PENDING_MARKER);
+      Result := True;
+    except
+      Result := False; { degrade to the old behaviour, never fail the caller }
+    end;
+  finally
+    Sl.Free;
+  end;
+end;
+
+procedure ResMarkerDeleteIn(const ADir: string);
+begin
+  SysUtils.DeleteFile(IncludeTrailingPathDelimiter(ADir) + RES_PENDING_MARKER);
+end;
+
+function ResResumePendingIn(const ADir: string): Boolean;
+begin
+  Result := ResStagingPresentIn(ADir) or ResMarkerPresentIn(ADir);
+end;
+
+function ResResumePending: Boolean;
+begin
+  Result := ResResumePendingIn(EngEngineTempDir);
+end;
+
+function ResEngineRecallPreparedIn(const ADir: string): Boolean;
+begin
+  Result := FileExists(IncludeTrailingPathDelimiter(ADir)
+    + RES_ENGINE_RECALL_REL);
+end;
+
+function ResEngineRecallPrepared: Boolean;
+begin
+  Result := ResEngineRecallPreparedIn(EngEngineTempDir);
 end;
 
 end.

@@ -100,6 +100,9 @@ type
     FLastCounts: TSpineOutcomeCounts;
     FLastCountsRaw: string; { change-guard for the live status label }
     FAuditReportPath: string;
+    { FileAge of each audit report candidate captured BEFORE the engine was
+      spawned (-1 = absent): the pane only shows a report this run wrote. }
+    FAuditBaseline: array[0..2] of LongInt;
     FSwitches: string;      { the argv of the current/last run }
     FHealthyMarkerPath: string; { updater-provided; written on first show }
     FMarkerWritten: Boolean;    { once-guard for the form-show hook }
@@ -142,6 +145,8 @@ type
     procedure SpineIdle;
     procedure SpineWatch;
     procedure RenderOutcomeState(Res: TSpineResult);
+    function AuditCandidatePath(AIndex: Integer): string;
+    procedure SnapshotAuditReports;
     procedure RenderAuditView;
     procedure HandleRebootOutcome(Res: TSpineResult);
     procedure FormShowSelfUpdate(Sender: TObject);
@@ -929,41 +934,74 @@ begin
   end;
 end;
 
+function TMainForm.AuditCandidatePath(AIndex: Integer): string;
+begin
+  { Report candidates: the engine's own primary log location
+    (..\..\log\MissingUpdates.txt relative to the cmd dir), the engine's
+    %SystemRoot% fallback, and the caller %TEMP% spelling the plan names. }
+  case AIndex of
+    0: Result := ExpandFileName(FCmdDir + '\..\..\log\MissingUpdates.txt');
+    1: Result := IncludeTrailingPathDelimiter(EngEngineTempDir)
+         + '..\wsusofflineupdate_MissingUpdates.txt';
+  else
+    Result := IncludeTrailingPathDelimiter(EngCallerTempDir)
+      + 'MissingUpdates.txt';
+  end;
+end;
+
+procedure TMainForm.SnapshotAuditReports;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FAuditBaseline) do
+    if FileExists(AuditCandidatePath(I)) then
+      FAuditBaseline[I] := FileAge(AuditCandidatePath(I))
+    else
+      FAuditBaseline[I] := -1;
+end;
+
 procedure TMainForm.RenderAuditView;
 var
   Sl: TStringList;
   Counts: TSpineAuditCounts;
-  Candidates: TStringList;
-  I: Integer;
+  I, Start: Integer;
 begin
   if (Pos('/auditonly', FSwitches) = 0) then
     Exit;
-  { Report candidates: the engine's own primary log location
-    (..\..\log\MissingUpdates.txt relative to the cmd dir), the engine's
-    %SystemRoot% fallback, and the caller %TEMP% spelling the plan names.
-    First existing file wins. }
-  Candidates := TStringList.Create;
-  try
-    Candidates.Add(ExpandFileName(FCmdDir + '\..\..\log\MissingUpdates.txt'));
-    Candidates.Add(IncludeTrailingPathDelimiter(EngEngineTempDir)
-      + '..\wsusofflineupdate_MissingUpdates.txt');
-    Candidates.Add(IncludeTrailingPathDelimiter(EngCallerTempDir)
-      + 'MissingUpdates.txt');
-    FAuditReportPath := '';
-    for I := 0 to Candidates.Count - 1 do
-      if FileExists(Candidates.Strings[I]) then
-      begin
-        FAuditReportPath := Candidates.Strings[I];
-        Break;
-      end;
-  finally
-    Candidates.Free;
-  end;
+  { First candidate THIS run wrote wins. A leftover report of an earlier run
+    is never shown: it used to print "System is fully up to date" after a
+    run whose scan had failed. }
+  FAuditReportPath := '';
+  for I := 0 to High(FAuditBaseline) do
+    if FileExists(AuditCandidatePath(I))
+       and SpineAuditReportIsFresh(FAuditBaseline[I],
+         FileAge(AuditCandidatePath(I))) then
+    begin
+      FAuditReportPath := AuditCandidatePath(I);
+      Break;
+    end;
   if FAuditReportPath = '' then
     Exit;
   Sl := TStringList.Create;
   try
     Sl.LoadFromFile(FAuditReportPath);
+    { The report file is an APPEND log (the engine appends every run's
+      report): show only the LAST report block. The parser already ends with
+      the last block's values; without this trim the pane printed the whole
+      history, stale reports included. }
+    Start := -1;
+    for I := Sl.Count - 1 downto 0 do
+      if Pos('WSUS Offline Update - Offline Applicability',
+          Sl.Strings[I]) > 0 then
+      begin
+        Start := I;
+        if (Start > 0) and (Pos('====', Sl.Strings[Start - 1]) > 0) then
+          Dec(Start);
+        Break;
+      end;
+    if Start > 0 then
+      for I := 1 to Start do
+        Sl.Delete(0);
     if SpineParseAuditReport(Sl, Counts) then
     begin
       memoProgress.Lines.Add('');
@@ -1044,10 +1082,17 @@ begin
 
     { INST-05: with /autoreboot in the argv the ENGINE issues the reboot
       itself - the RunOnce resume must be registered BEFORE the spawn or
-      the machine dies before the GUI could react. }
-    if Toggles.AutoReboot then
+      the machine dies before the GUI could react. Only on the modern
+      (Win10+) path: on legacy <= 8.1 the engine has its OWN automatic recall
+      (WOUTempAdmin autologon + Run key) and a RunOnce here would run first
+      and block it with its modal dialog / UAC prompt. }
+    if Toggles.AutoReboot and FOsModern then
       if not ResRegisterResume(Application.ExeName) then
         memoProgress.Lines.Add(StringsGet(siResumeRegisterFailed));
+
+    { Capture the report files' state BEFORE the engine runs (see
+      SpineAuditReportIsFresh). }
+    SnapshotAuditReports;
 
     FSpine.OnLine := @SpineLine;
     FSpine.OnIdle := @SpineIdle;
@@ -1060,14 +1105,26 @@ begin
       [Res.ExitCode]));
     RenderOutcomeState(Res);
 
+    { A run that ended WITHOUT a pending reboot leaves nothing to resume:
+      drop the RunOnce value and marker the /autoreboot pre-registration
+      wrote, or the next logon would start a surprise run. Reboot outcomes
+      are handled by HandleRebootOutcome below; an abrupt death under a
+      finish mode (the engine rebooted the machine) keeps the registration. }
+    if SpineOutcomeKind(Switches, Res.Observed, Res.ExitCode,
+        Res.Canceled) in [soCompleted, soError, soCanceled, soNoVerdict] then
+      ResDeleteResume;
+
     { /showlog parity: open the engine-produced log when requested. }
     if (Pos('/showlog', Switches) > 0) and Res.Observed then
       ShellExecute(0, 'open',
         PChar(IncludeTrailingPathDelimiter(EngEngineTempDir)
           + '..\' + ENG_ENGINE_LOG_NAME), nil, nil, SW_SHOWNORMAL);
 
-    { /auditonly: switch the completion view to the report pane. }
-    RenderAuditView;
+    { /auditonly: switch the completion view to the report pane - only for a
+      run that COMPLETED; a failed or canceled run has no report to show. }
+    if SpineOutcomeKind(Switches, Res.Observed, Res.ExitCode,
+        Res.Canceled) = soCompleted then
+      RenderAuditView;
 
     { 3010/3011 reboot prompt (INST-05). }
     HandleRebootOutcome(Res);

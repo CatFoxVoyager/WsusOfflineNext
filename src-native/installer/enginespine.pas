@@ -129,6 +129,16 @@ type
 function SpineParseAuditReport(ALines: TStrings;
   out ACounts: TSpineAuditCounts): Boolean;
 
+{ Was this audit report file produced by THE CURRENT run? (unit-testable)
+  ABaselineAge = FileAge of the candidate captured BEFORE the engine was
+  spawned (-1 = absent), ACurrentAge = FileAge afterwards (-1 = absent).
+  Fresh = present now AND (new or rewritten). A file that is unchanged is a
+  leftover of an earlier run: showing it as this run's result printed a
+  false "System is fully up to date" after a run that had failed. Comparing
+  the two ages (not the age against the clock) keeps it correct when the
+  guest clock and the share host clock disagree (a VM on a shared folder). }
+function SpineAuditReportIsFresh(ABaselineAge, ACurrentAge: LongInt): Boolean;
+
 { Decode raw OEM console bytes into display text (UTF-8 for the LCL). }
 function SpineOemToDisplay(const ARaw: AnsiString): string;
 
@@ -138,6 +148,11 @@ function SpineAbruptDeathIsSuccess(const ASwitches: string): Boolean;
 begin
   Result := (Pos('/autoreboot', ASwitches) > 0)
     or (Pos('/shutdown', ASwitches) > 0);
+end;
+
+function SpineAuditReportIsFresh(ABaselineAge, ACurrentAge: LongInt): Boolean;
+begin
+  Result := (ACurrentAge <> -1) and (ACurrentAge <> ABaselineAge);
 end;
 
 function SpineOutcomeKind(const ASwitches: string; AObserved: Boolean;

@@ -10,3 +10,4 @@ https://catalog.s.download.windowsupdate.com/c/csa/csa/secu/2017/04/ie8-windowsx
 https://catalog.s.download.windowsupdate.com/d/csa/csa/secu/2017/06/windowsxp-kb4024323-x86-custom-enu_edb5a850bcbcc640c2b8c8aad3ab4d36a3b6fb26.exe
 https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2013/10/windowsxp-kb2868626-x86-enu_1a00424d2070b57a4d9e2e73e54d90f51bb0562a.exe
 https://catalog.s.download.windowsupdate.com/msdownload/update/software/updt/2009/11/windowsxp-kb969084-x86-enu_153587172bf060ddc9d2c966f1eaaf4f47926f28.exe
+http://download.microsoft.com/download/C/C/0/CC0BD555-33DD-411E-936B-73AC6F95AE11/IE8-WindowsXP-x86-ENU.exe

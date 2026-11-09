@@ -717,10 +717,65 @@ begin
   end;
 end;
 
+procedure TestAuditParserLastReportWins;
+var
+  Sl: TStringList;
+  Counts: TSpineAuditCounts;
+begin
+  { The report file APPENDS every run's report: the parser must end with the
+    LAST report's values (an older "fully up to date" above must not win). }
+  Sl := TStringList.Create;
+  try
+    Sl.Text :=
+      '================================================================================' + LineEnding +
+      'Total Missing Items:     0' + LineEnding +
+      '[Windows Cumulative & Checkpoint Updates] [Count: 0]' + LineEnding +
+      'Audit Result: System is fully up to date [0 missing updates]' + LineEnding +
+      '================================================================================' + LineEnding +
+      '================================================================================' + LineEnding +
+      'Total Missing Items:     7' + LineEnding +
+      '[Windows Cumulative & Checkpoint Updates] [Count: 3]' + LineEnding +
+      '[Integrated Servicing Stack Updates] [Count: 1]' + LineEnding +
+      '[Windows Defender Security Intelligence] [Count: 0]' + LineEnding +
+      '[Microsoft Office Updates] [Count: 2]' + LineEnding +
+      '[Modern Extras & Runtimes] [Count: 1]' + LineEnding +
+      '[Other Components] [Count: 0]' + LineEnding +
+      'Audit Result: Updates required [7 item(s) missing]' + LineEnding;
+    Check(SpineParseAuditReport(Sl, Counts),
+      'audit append: report recognized across two appended blocks');
+    CheckEq(IntToStr(Counts.Total), '7', 'audit append: the LAST report total wins');
+    CheckEq(IntToStr(Counts.Lcu), '3', 'audit append: the LAST report lcu wins');
+    Check(Pos('Updates required', Counts.ResultLine) > 0,
+      'audit append: the LAST report result line wins');
+  finally
+    Sl.Free;
+  end;
+end;
+
+procedure TestAuditReportFreshness;
+begin
+  { baseline absent, still absent -> nothing to show }
+  Check(not SpineAuditReportIsFresh(-1, -1),
+    'audit fresh: absent before and after -> not fresh');
+  { baseline absent, now present -> this run wrote it }
+  Check(SpineAuditReportIsFresh(-1, 12345),
+    'audit fresh: new file -> fresh');
+  { present and unchanged -> a leftover of an earlier run (the false up-to-date bug) }
+  Check(not SpineAuditReportIsFresh(12345, 12345),
+    'audit fresh: unchanged leftover -> not fresh');
+  { present and rewritten -> this run wrote it }
+  Check(SpineAuditReportIsFresh(12345, 12346),
+    'audit fresh: rewritten file -> fresh');
+  { present before, gone after -> nothing to show }
+  Check(not SpineAuditReportIsFresh(12345, -1),
+    'audit fresh: file vanished -> not fresh');
+end;
+
 procedure TestRunOnceResume;
 var
   Name, Data: string;
   LongPath: string;
+  MarkerDir: string;
 begin
   { Builder shape (threat T-26-06): '!'-prefixed name, quoted exe +
     /resume only. }
@@ -756,6 +811,47 @@ begin
   Check(ResStagingPresentIn(
       IncludeTrailingPathDelimiter(GTempDir) + 'staging'),
     'resume: SetWOUpdateStage.cmd present -> resume the stage');
+
+  { Pending marker (reboots before the engine staged anything): the
+    decision is staging OR marker, and the marker has its own lifecycle. }
+  MarkerDir := IncludeTrailingPathDelimiter(GTempDir) + 'resumemarker';
+  ForceDirectories(MarkerDir);
+  Check(not ResResumePendingIn(MarkerDir),
+    'resume: no staging and no marker -> nothing to resume');
+  Check(ResMarkerWriteIn(MarkerDir),
+    'resume: marker write succeeds');
+  Check(ResMarkerPresentIn(MarkerDir),
+    'resume: marker present after write');
+  Check(ResResumePendingIn(MarkerDir),
+    'resume: marker alone (reboot before staging) -> resume the run');
+  ResMarkerDeleteIn(MarkerDir);
+  Check(not ResMarkerPresentIn(MarkerDir),
+    'resume: marker gone after delete');
+  Check(not ResResumePendingIn(MarkerDir),
+    'resume: marker deleted and no staging -> nothing to resume');
+  { staging alone still resumes (the pre-existing contract). }
+  Check(ResResumePendingIn(
+      IncludeTrailingPathDelimiter(GTempDir) + 'staging'),
+    'resume: staging alone still resumes the run');
+  { deleting a marker that is not there is harmless. }
+  ResMarkerDeleteIn(MarkerDir);
+  Check(not ResMarkerPresentIn(MarkerDir),
+    'resume: deleting an absent marker is harmless');
+
+  { The engine's own automatic recall (legacy /autoreboot) owns the
+    continuation: the GUI resume must detect it and stay out. }
+  Check(not ResEngineRecallPreparedIn(MarkerDir),
+    'resume: no WOURecall directory -> engine recall not prepared');
+  ForceDirectories(IncludeTrailingPathDelimiter(MarkerDir) + 'WOURecall');
+  Check(not ResEngineRecallPreparedIn(MarkerDir),
+    'resume: empty WOURecall directory -> engine recall not prepared');
+  WriteFixture('resumemarker\WOURecall\RecallUpdate.cmd',
+    '@echo recall' + LineEnding);
+  Check(ResEngineRecallPreparedIn(MarkerDir),
+    'resume: WOURecall\\RecallUpdate.cmd present -> engine recall prepared');
+  { the marker and the engine recall are independent signals. }
+  Check(not ResResumePendingIn(MarkerDir),
+    'resume: engine recall alone is not a GUI-pending run');
 end;
 
 procedure TestCompletionMatrix;
@@ -1196,6 +1292,8 @@ begin
     TestWatcherCounts;
     TestAuditReportParsing;
     TestRunOnceResume;
+    TestAuditReportFreshness;
+    TestAuditParserLastReportWins;
     TestCompletionMatrix;
     TestSelfUpdateCore;
     TestSelfUpdateAccept;

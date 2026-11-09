@@ -44,6 +44,7 @@ uses
 var
   HealthyMarkerPath: string;
   I: Integer;
+  ResumePending, EngineRecall: Boolean;
 begin
   RequireDerivedFormResource := True;
   Application.Scaled := True;
@@ -96,8 +97,23 @@ begin
     adds no counter. }
   if ResWantsResume then
   begin
+    { Decide BEFORE deleting: ResDeleteResume also removes the pending
+      marker. A run is pending when the engine staged updates OR the GUI
+      registered this very RunOnce (marker): reboots that happen before the
+      update list exists (IE11, SHA-2 pair, agent refresh, .NET, WMF) leave
+      no staging and must still continue - stopping there ended the run. }
+    ResumePending := ResResumePending;
+    EngineRecall := ResEngineRecallPrepared;
     ResDeleteResume;
-    if ResStagingPresent then
+    if EngineRecall then
+    begin
+      { Legacy /autoreboot: the engine's own recall (Run key, WOUTempAdmin
+        autologon) continues the run. This RunOnce entry runs BEFORE it - any
+        dialog, UAC prompt or second engine here would block or duplicate the
+        recall. Leave silently. }
+      Halt(0);
+    end;
+    if ResumePending then
     begin
       { FormCreate restores the prior toggle set from the INI (the same
         MyIniRead layering the interrupted run wrote); StartRun re-emits

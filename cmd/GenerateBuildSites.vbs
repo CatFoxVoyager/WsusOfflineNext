@@ -9,6 +9,10 @@
 '   4. client/UpdateTable/builds.txt (whole-file emission - the native
 '      installer's Enablement-Package data file, consumed at GUI runtime
 '      by src-native/installer/buildsupgrade.pas)
+'   5. client/UpdateTable/upgrades.txt (whole-file emission - the
+'      OS-upgrade decision data file, consumed at GUI runtime by
+'      src-native/installer/upgradespredicates.pas and
+'      client/cmd/DoUpdate.cmd (/auditonly))
 '
 ' Preserves CRLF line endings and Windows-1252 ANSI encoding.
 ' =======================================================================
@@ -313,6 +317,40 @@ For i = 0 To UBound(arrRegistrySections)
                       enf & vbCrLf
 Next
 
+' client/UpdateTable/upgrades.txt - the OS-upgrade decision data file
+' (plan 31-01). One row per census section, 12 pipe fields in the SAME
+' order with the SAME derivation rules as the bash twin: lang literal
+' glb; fu_media column 1 only when builds.ini carries fu_media=1;
+' blocked_reason column the builds.ini value when non-empty, else
+' ineligible when status=ineligible, else empty. An incomplete EKB
+' triple (e.g. 26300) stays empty here and answers blocked
+' baseline-unknown downstream.
+Dim strUpgradesTxtPath, strUpgradesTxtNew, strUpgradesTxtContent
+Dim strFuMediaCol, strBlockedReasonCol
+strUpgradesTxtPath = objFSO.BuildPath(strRepoRoot, "client\UpdateTable\upgrades.txt")
+strUpgradesTxtNew = "# client/UpdateTable/upgrades.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT" & vbCrLf & _
+                    "# Format: target_build|arch|lang|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_min_revision|ekb_prereq_kb|fu_media|blocked_reason" & vbCrLf & _
+                    "# Consumed at GUI runtime by src-native/installer/upgradespredicates.pas and client/cmd/DoUpdate.cmd (/auditonly)" & vbCrLf
+For i = 0 To UBound(arrRegistrySections)
+    sSec = arrRegistrySections(i)
+    Set dictSection = dictSections(sSec)
+    If dictSection("fu_media") = "1" Then
+        strFuMediaCol = "1"
+    Else
+        strFuMediaCol = "0"
+    End If
+    If dictSection("blocked_reason") <> "" Then
+        strBlockedReasonCol = dictSection("blocked_reason")
+    ElseIf dictSection("status") = "ineligible" Then
+        strBlockedReasonCol = "ineligible"
+    Else
+        strBlockedReasonCol = ""
+    End If
+    strUpgradesTxtNew = strUpgradesTxtNew & dictSection("build") & "|" & dictSection("arch") & "|glb|" & dictSection("os_family") & "|" & dictSection("servicing_branch") & "|" & dictSection("status") & "|" & _
+                        dictSection("ekb_source_build") & "|" & dictSection("ekb_kb") & "|" & dictSection("ekb_min_revision") & "|" & dictSection("ekb_prereq_kb") & "|" & _
+                        strFuMediaCol & "|" & strBlockedReasonCol & vbCrLf
+Next
+
 ' StaticUpdateIds-BuildUpgrades.txt
 Dim strStaticUpgradesPath, strStaticUpgradesContent, strStaticUpgradesNew
 strStaticUpgradesPath = objFSO.BuildPath(strRepoRoot, "client\static\StaticUpdateIds-BuildUpgrades.txt")
@@ -431,6 +469,24 @@ If Not bCheckOnly Then
     Call WriteTextFile1252(strBuildsTxtPath, strBuildsTxtNew)
 End If
 
+' Synchronize client/UpdateTable/upgrades.txt - whole-file emission,
+' same mechanics as builds.txt above (plan 31-01)
+If objFSO.FileExists(strUpgradesTxtPath) Then
+    strUpgradesTxtContent = ReadTextFile1252(strUpgradesTxtPath)
+Else
+    strUpgradesTxtContent = ""
+End If
+If strUpgradesTxtNew <> strUpgradesTxtContent Then
+    bDrift = True
+    If bCheckOnly Then WScript.Echo "ERROR: File client/UpdateTable/upgrades.txt is out of sync with static/builds.ini."
+End If
+If Not bCheckOnly Then
+    Dim strUpgradesTxtDir
+    strUpgradesTxtDir = objFSO.GetParentFolderName(strUpgradesTxtPath)
+    If Not objFSO.FolderExists(strUpgradesTxtDir) Then objFSO.CreateFolder(strUpgradesTxtDir)
+    Call WriteTextFile1252(strUpgradesTxtPath, strUpgradesTxtNew)
+End If
+
 ' -----------------------------------------------------------------------
 ' Exit status report
 ' -----------------------------------------------------------------------
@@ -438,11 +494,11 @@ If bCheckOnly Then
     If bDrift Then
         WScript.Quit 1
     Else
-        WScript.Echo "All 3 build sites plus the builds.txt data file are in sync with static/builds.ini."
+        WScript.Echo "All 3 build sites plus the builds.txt and upgrades.txt data files are in sync with static/builds.ini."
         WScript.Quit 0
     End If
 Else
-    WScript.Echo "Successfully updated 3 build sites plus the builds.txt data file from static/builds.ini."
+    WScript.Echo "Successfully updated 3 build sites plus the builds.txt and upgrades.txt data files from static/builds.ini."
     WScript.Quit 0
 End If
 

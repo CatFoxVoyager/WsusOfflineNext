@@ -773,7 +773,10 @@ begin
   { au3 IniCopy (231-260) parity: byte copy of the client INI, read-only
     bit cleared, then every GUI toggle state written on top. The
     upgradebuilds key is deliberately NOT written - incumbent verbatim
-    (au3:239-253). The /autoreboot-present path skips IniCopy entirely
+    (au3:239-253). upgradeos is the SECOND never-written key: per-run
+    consent travels by argv (/upgradeos:<build>), the template default
+    stays Disabled and the full consent UX is Phase 36. The
+    /autoreboot-present path skips IniCopy entirely
     (au3:1264-1269, enforced by the caller). }
   if FileExists(FClientIni) then
   begin

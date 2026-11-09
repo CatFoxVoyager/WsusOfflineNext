@@ -26,6 +26,7 @@ set SHOW_LOG=
 set DISM_MODE=
 set MONITOR_ON=
 set INSTALL_MSI=
+set WOU_UPGRADE_TARGET=
 
 if "%DIRCMD%" NEQ "" set DIRCMD=
 
@@ -116,6 +117,26 @@ if /i "%1"=="/showlog" set SHOW_LOG=/showlog
 if /i "%1"=="/showdismprogress" set DISM_MODE=/showdismprogress
 if /i "%1"=="/monitoron" set MONITOR_ON=/monitoron
 if /i "%1"=="/instmsi" set INSTALL_MSI=/instmsi
+rem *** First value-carrying client switch (DEC-11): /upgradeos:<build>. ***
+rem *** Accepted only as digits, refused loudly otherwise - the refusal   ***
+rem *** happens during parse, before any install step. The bare-token     ***
+rem *** list above stays untouched (this switch is value-carrying).       ***
+set "WOU_ARG=%1"
+if /i "!WOU_ARG:~0,11!"=="/upgradeos:" (
+  set "WOU_UPGRADE_TARGET_CAND="
+  for /f "tokens=2 delims=:" %%v in ("!WOU_ARG!") do set "WOU_UPGRADE_TARGET_CAND=%%v"
+  set "WOU_TARGET_BAD="
+  if not defined WOU_UPGRADE_TARGET_CAND set "WOU_TARGET_BAD=1"
+  if defined WOU_UPGRADE_TARGET_CAND for /f "eol= delims=0123456789" %%z in ("!WOU_UPGRADE_TARGET_CAND!") do set "WOU_TARGET_BAD=1"
+  if defined WOU_TARGET_BAD (
+    echo ERROR: /upgradeos target must be a build number
+    call :Log "ERROR: /upgradeos target must be a build number"
+    exit /b 1
+  )
+  set "WOU_UPGRADE_TARGET=!WOU_UPGRADE_TARGET_CAND!"
+  echo Info: Upgrade target build !WOU_UPGRADE_TARGET! accepted
+  call :Log "Info: Upgrade target build !WOU_UPGRADE_TARGET! accepted"
+)
 shift /1
 goto EvalParams
 
@@ -2729,7 +2750,7 @@ if "%RECALL_REQUIRED%"=="1" (
     )
     if "%USERNAME%" NEQ "WOUTempAdmin" (
       echo Preparing automatic recall...
-      call PrepareRecall.cmd "%~f0" %DO_UPGRADES% %UPDATE_RCERTS% %INSTALL_DOTNET35% %INSTALL_DOTNET4% %INSTALL_WMF% %UPDATE_DOTNET5% %UPDATE_CPP% %SKIP_IEINST% %SKIP_DEFS% %SKIP_DYNAMIC% %LIST_MODE_IDS% %LIST_MODE_UPDATES% %VERIFY_MODE% %BOOT_MODE% %FINISH_MODE% %SHOW_LOG% %DISM_MODE% %MONITOR_ON% %INSTALL_MSI% %INSTALL_EDGE% %INSTALL_WEBVIEW2% %UPDATE_OFFICE%
+      call PrepareRecall.cmd "%~f0" %DO_UPGRADES% %UPDATE_RCERTS% %INSTALL_DOTNET35% %INSTALL_DOTNET4% %INSTALL_WMF% %UPDATE_DOTNET5% %UPDATE_CPP% %SKIP_IEINST% %SKIP_DEFS% %SKIP_DYNAMIC% %LIST_MODE_IDS% %LIST_MODE_UPDATES% %VERIFY_MODE% %BOOT_MODE% %FINISH_MODE% %SHOW_LOG% %DISM_MODE% %MONITOR_ON% %INSTALL_MSI% %INSTALL_EDGE% %INSTALL_WEBVIEW2% %UPDATE_OFFICE% %WOU_UPGRADE_TARGET%
     )
     if exist %SystemRoot%\System32\bcdedit.exe (
       echo Adjusting boot sequence for next reboot...

@@ -32,12 +32,17 @@ program testrunner;
     (Z-downto-C order, occupied-letter skip, full-range exhaustion,
     case-lenient match) behind the explicit device choice.
     Plan 261106-toz adds the modern-extras OS gate pin: Edge/WebView2
-    offers gated off on pre-Win10 OSes (2x2 OS/presence matrix). }
+    offers gated off on pre-Win10 OSes (2x2 OS/presence matrix).
+    Plan 31-03 adds the upgrade path-deduction layer pins: the tolerant
+    12-field upgrades.txt parser (upg-parse- cases) and the frozen
+    UpgResolvePath verdict rules (upg-case- matrix), both over the
+    canonical GOLDEN_UPGRADES fixture shared with plan 31-04's bash
+    twin evaluator. }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry, zipper,
-  enginecontracts, enginespine, detection, buildsupgrade, strings_de_en,
-  resume, selfupdate;
+  enginecontracts, enginespine, detection, buildsupgrade,
+  upgradespredicates, strings_de_en, resume, selfupdate;
 
 var
   GCaseCount: Integer = 0;
@@ -77,6 +82,22 @@ const
     '26200|x64|win11|26100|active|26100|kb5054156|kb5064081|5074|0' + LineEnding +
     '28000|x64|win11|28000|ineligible|||||0' + LineEnding +
     'this|row|is|malformed|nine|fields|only|so|skipped' + LineEnding;
+
+  { Plan 31-03: the CANONICAL upgrades matrix fixture - plan 31-04
+    embeds the identical rows in its bash twin evaluator. 8 valid rows
+    + 1 malformed (11 fields, skipped by the exactly-12 gate). }
+  GOLDEN_UPGRADES =
+    '# comment line - ignored' + LineEnding +
+    LineEnding +
+    '26200|x64|glb|win11|26100|active|26100|kb5054156|5074|kb5064081|0|' + LineEnding +
+    '26300|x64|glb|win11|26100|active|26100|kb5054156|||0|' + LineEnding +
+    '28000|x64|glb|win11|28000|ineligible|||||0|new-devices-only' + LineEnding +
+    '19045|x64|glb|win10|19041|active|19041|kb5015684|1865|kb5021233|0|' + LineEnding +
+    '19045|x86|glb|win10|19041|active|19041|kb5015684|1865|kb5021233|0|' + LineEnding +
+    '19044|x64|glb|win10|19041|eol|19041|kb5003791|1237|kb5008212|0|' + LineEnding +
+    '20348|x64|glb|win10|20348|active|||||1|' + LineEnding +
+    '25398|x64|glb|win10|25398|active|||||0|' + LineEnding +
+    'this|row|is|malformed|nine|fields|x|x|x|x|x' + LineEnding;
 
 var
   GTempDir: string;
@@ -127,6 +148,18 @@ begin
     if Token = APath then
       Exit(True);
   end;
+end;
+
+{ Plan 31-03 parser probes: the injected TFileProbe is driven to both
+  polarities without a real tree. }
+function AlwaysProbe(const APath: string): Boolean;
+begin
+  Result := True;
+end;
+
+function NeverProbe(const APath: string): Boolean;
+begin
+  Result := False;
 end;
 
 procedure TestEnablementPredicates;
@@ -208,6 +241,41 @@ begin
   Check(BuBuildUpgradeAvailable(Rows, 'C:\tree', 0, '26200', 'x64',
     @StubProbe) = 0, 'available: 26200 has no target row above it -> 0');
   GProbeTrue := '';
+end;
+
+procedure TestUpgradesParser;
+var
+  Rows: TUpgradeRows;
+  FixturePath: string;
+  MalformedIn: Boolean;
+  I: Integer;
+begin
+  { Plan 31-03 Task 1: the tolerant 12-field upgrades.txt parser over
+    the canonical fixture (threat T-31-08: skip comments/blanks/
+    malformed, fail-closed to an empty table on an unreadable file). }
+  FixturePath := WriteFixture('upgrades-golden.txt', GOLDEN_UPGRADES);
+  Rows := UpgParseUpgradesFile(FixturePath, @AlwaysProbe);
+  Check(Length(Rows) = 8,
+    'upg-parse-1: 9 fixture candidate lines yield 8 rows (comment, blank, malformed skipped)');
+
+  MalformedIn := False;
+  for I := 0 to High(Rows) do
+    if Rows[I].TargetBuild = 'this' then
+      MalformedIn := True;
+  Check(not MalformedIn,
+    'upg-parse-2: the 11-field malformed row is not in the parsed table');
+
+  Check(Rows[0].TargetBuild = '26200',
+    'upg-parse-3: comment and blank lines skipped (first parsed row is 26200)');
+
+  Rows := UpgParseUpgradesFile(FixturePath, @NeverProbe);
+  Check(Length(Rows) = 0,
+    'upg-parse-4: probe False -> empty table, no exception (fail-closed)');
+
+  Rows := UpgParseUpgradesFile(FixturePath, @AlwaysProbe);
+  Check((Rows[0].EkbMinRevision = '5074') and (Rows[0].FuMedia = '0')
+        and (Rows[0].BlockedReason = ''),
+    'upg-parse-5: field mapping exact (row 26200: min_revision 5074, fu_media 0, empty blocked_reason)');
 end;
 
 procedure TestDisplayMaps;
@@ -1278,6 +1346,7 @@ begin
   try
     TestDisplayMaps;
     TestEnablementPredicates;
+    TestUpgradesParser;
     TestToggleGates;
     TestOsGate;
     TestPathValid;

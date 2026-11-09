@@ -95,7 +95,11 @@ def main() -> int:
     except UnicodeDecodeError as exc:
         print(f"ERROR: strings unit is not valid UTF-8: {exc}", file=sys.stderr)
         return 2
-
+    # Line-ending agnostic: a CRLF worktree materialization leaves a stray \r
+    # after the array's final record, and EN_DE_RE's $ anchor then silently
+    # drops the last record (64 ids vs 63 records). The repo is CRLF on disk
+    # by .gitattributes - normalize before any pattern sees the text.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     # Extract the ordered id list from the TStringId enum.
     enum_m = re.search(r"TStringId\s*=\s*\((.*?)\);", text, re.DOTALL)
     if not enum_m:

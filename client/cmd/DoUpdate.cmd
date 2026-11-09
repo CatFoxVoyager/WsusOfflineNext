@@ -142,6 +142,14 @@ if /i "!WOU_ARG:~0,11!"=="/upgradeos:" (
   echo Info: Upgrade target build !WOU_UPGRADE_TARGET! accepted
   call :Log "Info: Upgrade target build !WOU_UPGRADE_TARGET! accepted"
 )
+rem *** IN-01: the bare token (no colon/value) is the spelling a user    ***
+rem *** might copy from the frozen token table - refuse it loudly with   ***
+rem *** the same literal instead of silent unknown-arg handling.         ***
+if /i "!WOU_ARG!"=="/upgradeos" (
+  echo ERROR: /upgradeos target must be a build number
+  call :Log "ERROR: /upgradeos target must be a build number"
+  exit /b 1
+)
 shift /1
 goto EvalParams
 

@@ -83,8 +83,11 @@ if [ "$(grep -c '^[0-9]' "$upgrades_txt")" -ne 12 ]; then
     echo "FAIL: client/UpdateTable/upgrades.txt row census is not 12."
     exit 1
 fi
-if ! awk -F'|' '/^[0-9]/ { if (NF != 12) bad = 1 } END { exit bad }' "$upgrades_txt"; then
-    echo "FAIL: client/UpdateTable/upgrades.txt carries a row without exactly 12 pipe fields."
+# IN-03: this pin carries its own row-presence floor (seen counter) so a
+# row-less file fails here too instead of passing vacuously - do not copy
+# the lone field-count awk shape (observation 6053).
+if ! awk -F'|' '/^[0-9]/ { seen++; if (NF != 12) bad = 1 } END { if (seen == 0) bad = 1; exit bad }' "$upgrades_txt"; then
+    echo "FAIL: client/UpdateTable/upgrades.txt has no data rows or carries a row without exactly 12 pipe fields."
     exit 1
 fi
 if ! awk -F'|' '$1 == "26300" { found = 1; if ($9 == "" && $10 == "") ok = 1 } END { if (found && ok) exit 0; exit 1 }' "$upgrades_txt"; then

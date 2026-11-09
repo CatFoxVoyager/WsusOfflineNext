@@ -11,7 +11,10 @@
 #   - compiles the console testrunner (Release-i386 only; the runner
 #     links the production units without the LCL forms)
 #   - runs it and fail-closes on ANY `not ok` TAP line, a non-zero
-#     UNIT-FAIL count, or a missing summary line
+#     UNIT-FAIL count, a missing summary line, or a TAP count below the
+#     upg-parse-/upg-case- floors (>=5 / >=19 - review WR-03: the phase
+#     record's floor claim is only real if a committed instrument
+#     enforces it)
 #   - prints UNIT-GATE-PASS at the end.
 
 set -o pipefail
@@ -58,6 +61,23 @@ if [ "$NOT_OK_COUNT" -ne 0 ]; then
     echo "--- testrunner output ($RUN_LOG) ---"
     cat "$RUN_LOG"
     fail "$NOT_OK_COUNT failed unit case(s)"
+fi
+
+# TAP count floors for the upgrades decision layer (review WR-03): a
+# deleted TestUpgradesParser/TestUpgradesVerdict call (or dropped cases)
+# would otherwise leave every other check green. Shipped reality is
+# 5 upg-parse- cases and 20 upg-case- cases; the floors sit below.
+UPG_PARSE_OK="$(grep -c '^ok [0-9]* - upg-parse-' "$RUN_LOG" || true)"
+UPG_CASE_OK="$(grep -c '^ok [0-9]* - upg-case-' "$RUN_LOG" || true)"
+if [ "$UPG_PARSE_OK" -lt 5 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "upg-parse- floor violated: $UPG_PARSE_OK < 5"
+fi
+if [ "$UPG_CASE_OK" -lt 19 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "upg-case- floor violated: $UPG_CASE_OK < 19"
 fi
 
 if [ -z "$UNIT_FAIL_LINE" ]; then

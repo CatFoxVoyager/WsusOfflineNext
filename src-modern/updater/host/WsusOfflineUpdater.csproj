@@ -16,9 +16,9 @@
          default SourceRevisionId suffix would break the hygiene battery's
          full-form assertion and drift from the published channel token. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <Version>6.0.2+2026.11</Version>
-    <FileVersion>6.0.2.0</FileVersion>
-    <AssemblyVersion>6.0.2.0</AssemblyVersion>
+    <Version>6.1.0+2026.11</Version>
+    <FileVersion>6.1.0.0</FileVersion>
+    <AssemblyVersion>6.1.0.0</AssemblyVersion>
     <ApplicationIcon>..\..\..\ico\wson.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 

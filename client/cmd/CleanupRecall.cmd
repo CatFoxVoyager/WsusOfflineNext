@@ -44,8 +44,17 @@ if errorlevel 1 (
 
 if exist %SystemRoot%\woubak-winlogon.reg (
   echo Restoring Winlogon registry hive...
-  %REG_PATH% DELETE "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /va /f >nul 2>&1
+  rem *** XP-compatible restore: /va and IMPORT do not exist on XP's reg.exe (Vista+),
+  rem *** so both used to fail silently and the autologon values (DefaultUserName=
+  rem *** WOUTempAdmin, written by Sysinternals Autologon.exe) survived the cleanup
+  rem *** while the account itself was deleted -> a password prompt at logon. Delete
+  rem *** the autologon values explicitly (XP-compatible /v deletes), then import the
+  rem *** pre-recall backup (Vista+; on XP the five deletes alone clear autologon).
+  for %%v in (DefaultUserName DefaultDomainName DefaultPassword AutoAdminLogon ForceAutoLogon) do %REG_PATH% DELETE "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v %%v /f >nul 2>&1
   %REG_PATH% IMPORT %SystemRoot%\woubak-winlogon.reg >nul 2>&1
+  rem *** On XP reg.exe has no IMPORT: silently import via regedit /s instead
+  rem *** (Vista+: redundant re-import of the same values, harmless).
+  if exist %SystemRoot%\System32egedit.exe %SystemRoot%\System32egedit.exe /s %SystemRoot%\woubak-winlogon.reg >nul 2>&1
   del %SystemRoot%\woubak-winlogon.reg
   echo %DATE% %TIME% - Info: Restored Winlogon registry hive>>%UPDATE_LOGFILE%
 )

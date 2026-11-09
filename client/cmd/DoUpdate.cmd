@@ -347,6 +347,11 @@ call :Log "Info: Disabled screensaver"
 
 rem *** Adjust power management settings ***
 if not exist %SystemRoot%\System32\powercfg.exe goto SkipPowerCfg
+rem *** The scheme machinery below is Vista+ only: powercfg -X / -getactivescheme /
+rem *** -duplicatescheme / -setacvalueindex do not exist on Windows XP (console
+rem *** noise: 8x 'Invalid Parameters' plus two missing-backup-file errors at the
+rem *** restore). Measured 2026-11-08: -X rc 0 on Win7, 'Invalid Parameters' on XP.
+if %OS_VER_MAJOR% LSS 6 goto SkipPowerCfg
 if exist %SystemRoot%\woubak-pwrscheme-act.txt goto SkipPowerCfg
 if exist %SystemRoot%\woubak-pwrscheme-temp.txt goto SkipPowerCfg
 echo Creating temporary power scheme...
@@ -381,6 +386,14 @@ for %%i in (monitor) do (
 call :Log "Info: Adjusted power management settings"
 :SkipPowerCfg
 
+rem *** Audit only must not modify the system: no certificate, service pack, servicing ***
+rem *** stack, Internet Explorer, Edge, .NET, WMF, C++ runtime or Defender definition ***
+rem *** installation. Go straight to the update search (it only reads).               ***
+if "%AUDIT_ONLY%"=="1" (
+  echo Audit only: skipping all installation steps...
+  call :Log "Info: Audit only - skipped all installation steps"
+  goto UpdateSystem
+)
 if "%JUST_OFFICE%"=="1" goto JustOffice
 rem *** Install Windows Service Pack ***
 goto SP%OS_NAME%
@@ -1030,6 +1043,39 @@ set RECALL_REQUIRED=1
 if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
 echo. >%SystemRoot%\Temp\wou_ie_tried.txt
 set IE_PRE_DIR=
+goto IEInstalled
+
+:IEwxp
+rem *** Internet Explorer 8 for Windows XP ***
+rem *** Authored 2026-11-08: the XP flow had no IE target, so the stock IE6 stayed and the ***
+rem *** IE8 security rollup of the static list could never apply. The installer is a      ***
+rem *** static download (IE8-WindowsXP-x86-<lang>.exe in the XP tree).                    ***
+if exist %SystemRoot%\Temp\wou_ie_tried.txt goto SkipIEInst
+set IE_FILENAME=..\wxp\glb\IE8-WindowsXP-x86-%OS_LANG%.exe
+dir /B %IE_FILENAME% >nul 2>&1
+if errorlevel 1 (
+  echo Warning: File %IE_FILENAME% not found.
+  call :Log "Warning: File %IE_FILENAME% not found"
+  set IE_FILENAME=
+  goto SkipIEInst
+)
+echo Installing Internet Explorer 8...
+call :Log "Info: Installing Internet Explorer 8 (%IE_FILENAME%)"
+"%IE_FILENAME%" /passive /norestart /update-no
+set ERR_LEVEL=!errorlevel!
+if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
+echo. >%SystemRoot%\Temp\wou_ie_tried.txt
+if "!ERR_LEVEL!"=="3010" (
+  set REBOOT_REQUIRED=1
+) else if "!ERR_LEVEL!"=="3011" (
+  set RECALL_REQUIRED=1
+) else if "!ERR_LEVEL!" NEQ "0" (
+  echo Warning: Internet Explorer 8 installation failed with error !ERR_LEVEL!
+  call :Log "Warning: Internet Explorer 8 installation failed with error !ERR_LEVEL!"
+  goto IEInstalled
+)
+rem *** The setup always needs a reboot before the browser is usable: request a recall. ***
+set RECALL_REQUIRED=1
 goto IEInstalled
 
 :IEw62
@@ -1959,6 +2005,15 @@ if "%SKIP_DYNAMIC%"=="/skipdynamic" (
   call :Log "Info: Skipped determination of missing updates on demand"
   goto ListInstalledIds
 )
+rem *** Windows XP: the offline catalog is signed with SHA2, which the XP crypto API cannot ***
+rem *** parse (scan error 0x8009200D), and no update table exists for it. Only the static  ***
+rem *** updates (static\StaticUpdateIds-wxp*.txt) are installed.                           ***
+if "%OS_NAME%"=="wxp" (
+  echo Skipping determination of missing updates ^(not available on Windows XP^)...
+  call :Log "Info: Dynamic update search is not available on Windows XP - installing the static updates only"
+  goto ListInstalledIds
+)
+if "%AUDIT_ONLY%"=="1" goto SkipWuPre
 if exist %SystemRoot%\Temp\wou_wupre_tried.txt goto SkipWuPre
 echo Checking Windows Update scan prerequisites...
 %CSCRIPT_PATH% //Nologo //B //E:vbs ListInstalledUpdateIds.vbs
@@ -2073,6 +2128,7 @@ rem *** next session's system-properties probe re-reads the real state.       **
 rem *** Already-present shapes do not end the run - nothing needs             ***
 rem *** activating; continuing surfaces the real flag state loudly.           ***
 if "%OS_NAME%" NEQ "w61" goto SkipSha2Pair
+if "%AUDIT_ONLY%"=="1" goto SkipSha2Pair
 if "%OS_SHA2_SUPPORT%"=="1" goto SkipSha2Pair
 if exist %SystemRoot%\Temp\wou_sha2_tried.txt goto SkipSha2Pair
 if /i "%OS_ARCH%"=="x64" (set SHA2_PRE_DIR=..\w61-x64\glb) else (set SHA2_PRE_DIR=..\w61\glb)
@@ -2119,6 +2175,11 @@ if "%SHA2_INSTALLED%"=="1" (
   echo Reboot required to activate the SHA2 code signing components...
   call :Log "Info: SHA2 code signing pair installed - reboot required to activate it"
   set REBOOT_REQUIRED=1
+  rem *** The run is NOT finished: only a recall request keeps the automatic recall ***
+  rem *** and its autologon alive across the reboot. A bare reboot request makes   ***
+  rem *** the end-of-run reporting treat the run as complete and tear the recall   ***
+  rem *** down, so nothing continues after the reboot.                             ***
+  set RECALL_REQUIRED=1
   goto Installed
 )
 set SHA2_PRE_DIR=
@@ -2126,130 +2187,84 @@ set SHA2_INSTALLED=
 :SkipSha2Pair
 
 :WuaBootw61
-rem *** Windows Update Agent SHA2 bootstrap for Windows 7 / Server 2008 R2   ***
-rem *** Authored 2026-11-07 (user-requested condition): with the OS code      ***
-rem *** signing pair present, the scan service inside an un-refreshed agent   ***
-rem *** still rejects the SHA2-signed offline catalog with a signature        ***
-rem *** error, and no standalone agent-only package reaches the catalog-      ***
-rem *** capable revision - the agent ships only inside the cumulative         ***
-rem *** monthly rollups. This section installs the final servicing stack      ***
-rem *** package (fallback: the 2021 standalone) plus the final cumulative     ***
-rem *** rollup from the arch-specific tree, then ends the run requiring a     ***
-rem *** reboot so the next run's agent clears the version ladder. Both        ***
-rem *** packages are the last of their kind, so the globs below are           ***
-rem *** permanently stable, and the cumulative rollup, cumulative back to     ***
-rem *** the base service pack, also patches the machine fully.                ***
+rem *** Windows Update Agent SHA2 bootstrap for Windows 7 / Server 2008 R2        ***
+rem *** Rewritten 2026-11-07 after measuring the real behavior on a Win7 VM.     ***
+rem *** With the OS code signing pair active, the scan service of an             ***
+rem *** un-refreshed agent still rejects the SHA2 signed offline catalog         ***
+rem *** (WindowsUpdate.log: failed to verify signature for offline cab,          ***
+rem *** error 0x800B0109). A newer agent ships inside the monthly security       ***
+rem *** only updates. The last one issued before the extended support program    ***
+rem *** is KB4534314 (January 2020, agent 7.6.7601.24542): it installs through   ***
+rem *** dism from a local copy (dism cannot read a mapped share path) and after  ***
+rem *** the reboot the offline scan lists the missing updates (measured: 88).    ***
+rem *** Do NOT use the later rollups for this. They belong to the extended       ***
+rem *** support program and on an unlicensed machine the servicing stack rolls   ***
+rem *** them back at the reboot (the extended support installer fails with       ***
+rem *** 0x80004002 in the servicing log), leaving the agent unchanged.           ***
+rem *** The run ends reboot required after the install; the next run reads the   ***
+rem *** refreshed agent version, clears the ladder above and skips this section. ***
 if "%OS_NAME%" NEQ "w61" goto SkipWuaBoot
+if "%AUDIT_ONLY%"=="1" goto SkipWuaBoot
 if "%WUA_SHA2_SUPPORT%"=="1" goto SkipWuaBoot
 if exist %SystemRoot%\Temp\wou_wuaboot_tried.txt goto SkipWuaBoot
 if /i "%OS_ARCH%"=="x64" (set WUABOOT_PRE_DIR=..\w61-x64\glb) else (set WUABOOT_PRE_DIR=..\w61\glb)
 echo Checking Windows Update Agent SHA2 bootstrap prerequisites...
+call :Log "Info: Windows Update Agent %WUA_VER_MAJOR%.%WUA_VER_MINOR%.%WUA_VER_BUILD%.%WUA_VER_REVIS% cannot read SHA2 signed catalogs - installing the agent refresh from the January 2020 security only update"
 set WUABOOT_DISM=%SystemRoot%\System32\Dism.exe
 if exist %SystemRoot%\Sysnative\Dism.exe set WUABOOT_DISM=%SystemRoot%\Sysnative\Dism.exe
-set WUABOOT_SSU=
-dir /B %WUABOOT_PRE_DIR%\*KB5022338-*.cab >nul 2>&1
-if errorlevel 1 (
-  dir /B %WUABOOT_PRE_DIR%\*KB5005112-*.msu >nul 2>&1
-  if errorlevel 1 (
-    echo Warning: Servicing stack file %WUABOOT_PRE_DIR%\*KB5022338-*.cab not found
-    call :Log "Warning: Servicing stack file %WUABOOT_PRE_DIR%\*KB5022338-*.cab not found"
-  ) else (
-    for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5005112-*.msu') do (
-      echo Installing %%i via %SystemRoot%\System32\wusa.exe...
-      %SystemRoot%\System32\wusa.exe "%WUABOOT_PRE_DIR%\%%i" /quiet /norestart
-      set ERR_LEVEL=!errorlevel!
-      if "!ERR_LEVEL!"=="3010" (
-        set REBOOT_REQUIRED=1
-        set WUABOOT_SSU=1
-      ) else if "!ERR_LEVEL!"=="3011" (
-        set RECALL_REQUIRED=1
-        set WUABOOT_SSU=1
-      ) else if "!ERR_LEVEL!"=="2359302" (
-        echo Info: Servicing stack update %%i already installed
-        call :Log "Info: Servicing stack update %%i already installed"
-        set WUABOOT_SSU=1
-      ) else if "!ERR_LEVEL!"=="2359301" (
-        echo Info: Servicing stack update %%i already installed
-        call :Log "Info: Servicing stack update %%i already installed"
-        set WUABOOT_SSU=1
-      ) else if "!ERR_LEVEL!"=="0" (
-        set WUABOOT_SSU=1
-      ) else if "!ERR_LEVEL!"=="-2145124329" (
-        echo Info: Servicing stack update %%i not applicable to this system
-        call :Log "Info: Servicing stack update %%i not applicable to this system"
-      ) else if "!ERR_LEVEL!" NEQ "0" (
-        echo Warning: Servicing stack update %%i failed with error !ERR_LEVEL!
-        call :Log "Warning: Servicing stack update %%i failed with error !ERR_LEVEL!"
-      )
-    )
-  )
-) else (
-  for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5022338-*.cab') do (
-    set WUABOOT_PKG=%%~fi
-    rem The servicing tool cannot read the mapped share path - hand it a local copy.
-    copy /Y "!WUABOOT_PKG!" "%TEMP%\wou_wuaboot_ssu.cab" >nul
-    echo Installing %%i via %SystemRoot%\System32\Dism.exe...
-    %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"%TEMP%\wou_wuaboot_ssu.cab" /IgnoreCheck
-    set ERR_LEVEL=!errorlevel!
-    del "%TEMP%\wou_wuaboot_ssu.cab" >nul 2>&1
-    if "!ERR_LEVEL!"=="3010" (
-      set REBOOT_REQUIRED=1
-      set WUABOOT_SSU=1
-    ) else if "!ERR_LEVEL!"=="3011" (
-      set RECALL_REQUIRED=1
-      set WUABOOT_SSU=1
-    ) else if "!ERR_LEVEL!"=="0" (
-      set WUABOOT_SSU=1
-    ) else if "!ERR_LEVEL!"=="-2146498530" (
-      echo Info: Servicing stack update %%i already installed or not applicable
-      call :Log "Info: Servicing stack update %%i already installed or not applicable"
-      set WUABOOT_SSU=1
-    ) else (
-      echo Warning: Servicing stack update %%i failed with error !ERR_LEVEL!
-      call :Log "Warning: Servicing stack update %%i failed with error !ERR_LEVEL!"
-    )
-  )
-)
-rem *** The session marker lands here: every path past the entry guards counts as attempted (including a failed or missing package), ***
-rem *** the next run retries once cleanup deletes it, and it precedes the cumulative phase so the end-of-run reporting path still carries it. ***
+rem *** The session marker lands on entry: every path past the entry guards counts ***
+rem *** as attempted, and the next run retries once :Cleanup has deleted it.       ***
 if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
 echo. >%SystemRoot%\Temp\wou_wuaboot_tried.txt
-if "%WUABOOT_SSU%"=="1" (
-  dir /B %WUABOOT_PRE_DIR%\*KB5022339-*.cab >nul 2>&1
-  if errorlevel 1 (
-    echo Warning: Cumulative update file %WUABOOT_PRE_DIR%\*KB5022339-*.cab not found
-    call :Log "Warning: Cumulative update file %WUABOOT_PRE_DIR%\*KB5022339-*.cab not found"
-  ) else (
-    for /F "delims=" %%i in ('dir /B %WUABOOT_PRE_DIR%\*KB5022339-*.cab') do (
-      set WUABOOT_PKG=%%~fi
-      rem The servicing tool cannot read the mapped share path - hand it a local copy.
-      copy /Y "!WUABOOT_PKG!" "%TEMP%\wou_wuaboot_lcu.cab" >nul
-      echo Installing %%i via %SystemRoot%\System32\Dism.exe...
-      %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"%TEMP%\wou_wuaboot_lcu.cab" /IgnoreCheck
+set WUABOOT_DONE=
+dir /B %WUABOOT_PRE_DIR%\*KB4534314-*.cab >nul 2>&1
+if errorlevel 1 (
+  echo Warning: Agent refresh file %WUABOOT_PRE_DIR%\*KB4534314-*.cab not found
+  call :Log "Warning: Agent refresh file %WUABOOT_PRE_DIR%\*KB4534314-*.cab not found"
+) else (
+  for %%i in (%WUABOOT_PRE_DIR%\*KB4534314-*.cab) do (
+    if exist "%TEMP%\wou_wuaboot_pkg.cab" del "%TEMP%\wou_wuaboot_pkg.cab"
+    copy /Y "%%~fi" "%TEMP%\wou_wuaboot_pkg.cab" >nul 2>&1
+    if not exist "%TEMP%\wou_wuaboot_pkg.cab" (
+      echo Warning: Could not copy agent refresh %%~nxi to the temp folder
+      call :Log "Warning: Could not copy agent refresh %%~nxi to the temp folder"
+    ) else (
+      echo Installing %%~nxi via %WUABOOT_DISM%...
+      %WUABOOT_DISM% /Online /Quiet /NoRestart /Add-Package /PackagePath:"%TEMP%\wou_wuaboot_pkg.cab" /IgnoreCheck
       set ERR_LEVEL=!errorlevel!
-      del "%TEMP%\wou_wuaboot_lcu.cab" >nul 2>&1
+      del "%TEMP%\wou_wuaboot_pkg.cab" >nul 2>&1
       if "!ERR_LEVEL!"=="0" (
+        call :Log "Info: Installed agent refresh %%~nxi"
         set REBOOT_REQUIRED=1
-        goto Installed
+        set WUABOOT_DONE=1
       ) else if "!ERR_LEVEL!"=="3010" (
+        call :Log "Info: Installed agent refresh %%~nxi"
         set REBOOT_REQUIRED=1
-        goto Installed
+        set WUABOOT_DONE=1
       ) else if "!ERR_LEVEL!"=="3011" (
+        call :Log "Info: Installed agent refresh %%~nxi"
         set RECALL_REQUIRED=1
-        goto Installed
+        set WUABOOT_DONE=1
       ) else if "!ERR_LEVEL!"=="-2146498530" (
-        echo Info: Cumulative update %%i already installed or not applicable
-        call :Log "Info: Cumulative update %%i already installed or not applicable"
+        echo Info: Agent refresh %%~nxi already installed or not applicable
+        call :Log "Info: Agent refresh %%~nxi already installed or not applicable"
       ) else (
-        echo Warning: Cumulative update %%i failed with error !ERR_LEVEL!
-        call :Log "Warning: Cumulative update %%i failed with error !ERR_LEVEL!"
+        echo Warning: Agent refresh %%~nxi failed with error !ERR_LEVEL!
+        call :Log "Warning: Agent refresh %%~nxi failed with error !ERR_LEVEL!"
       )
     )
   )
 )
+rem *** A landed agent refresh ends the run through the incumbent end-of-run ***
+rem *** reporting (reboot or recall handled there).                          ***
+if "%WUABOOT_DONE%"=="1" (
+  rem *** Same rule as the SHA2 pair: a recall request, not only a reboot request. ***
+  set RECALL_REQUIRED=1
+  goto Installed
+)
 set WUABOOT_PRE_DIR=
-set WUABOOT_PKG=
-set WUABOOT_SSU=
+set WUABOOT_DISM=
+set WUABOOT_DONE=
 :SkipWuaBoot
 if "%OS_SHA2_SUPPORT%" NEQ "1" (
   echo Warning: Support for SHA2 signed updates is missing. Updates might fail to install.
@@ -2262,7 +2277,8 @@ if "%WUA_SHA2_SUPPORT%" NEQ "1" (
 echo %TIME% - Listing ids of missing updates (please be patient, this will take a while)...
 copy /Y ..\wsus\wsusscn2.cab "%TEMP%" >nul
 if exist "%TEMP%\MissingUpdateIds.txt" del "%TEMP%\MissingUpdateIds.txt"
-%CSCRIPT_PATH% //Nologo //E:vbs ListMissingUpdateIds.vbs %LIST_MODE_IDS%
+rem *** %LIST_MODE_IDS% quoted: when empty the args would shift and OS_NAME would land in the mode slot
+%CSCRIPT_PATH% //Nologo //E:vbs ListMissingUpdateIds.vbs "%LIST_MODE_IDS%" %OS_NAME%
 if errorlevel 1 (
   if exist "%TEMP%\wsusscn2.cab" del "%TEMP%\wsusscn2.cab"
   goto ScanError
@@ -2290,6 +2306,21 @@ if errorlevel 1 goto ListError
 call :Log "Info: Listed update files"
 
 if "%AUDIT_ONLY%"=="1" goto GenerateAuditReport
+
+rem *** No-progress guard: inside the automatic recall, the SAME file list selected again after  ***
+rem *** a reboot means the previous pass changed nothing for the scan. Typical cause: an update  ***
+rem *** whose main payload is absent from the medium while its helper files install again and   ***
+rem *** again (measured: 101 reboot passes in 12 hours). Stop with a clear error instead of      ***
+rem *** recalling forever. The first pass (normal user) only records the list, so a stale file   ***
+rem *** left by an interrupted run never trips a fresh manual run.                               ***
+if not exist "%TEMP%\UpdatesToInstall.txt" goto SkipNoProgressGuard
+if "%USERNAME%" NEQ "WOUTempAdmin" goto SaveLastList
+if not exist %SystemRoot%\Temp\wou_lastlist.txt goto SaveLastList
+%SystemRoot%\System32\fc.exe "%TEMP%\UpdatesToInstall.txt" %SystemRoot%\Temp\wou_lastlist.txt >nul 2>&1
+if not errorlevel 1 goto NoProgress
+:SaveLastList
+copy /Y "%TEMP%\UpdatesToInstall.txt" %SystemRoot%\Temp\wou_lastlist.txt >nul 2>&1
+:SkipNoProgressGuard
 
 rem *** Try to extract a servicing stack update from the updates listed ***
 rem only for Windows 10 1809 (aka build 17763) or newer
@@ -2641,6 +2672,7 @@ if exist %SystemRoot%\Temp\wou_iepre_tried.txt del %SystemRoot%\Temp\wou_iepre_t
 if exist %SystemRoot%\Temp\wou_ie_tried.txt del %SystemRoot%\Temp\wou_ie_tried.txt
 if exist %SystemRoot%\Temp\wou_sha2_tried.txt del %SystemRoot%\Temp\wou_sha2_tried.txt
 if exist %SystemRoot%\Temp\wou_wuaboot_tried.txt del %SystemRoot%\Temp\wou_wuaboot_tried.txt
+if exist %SystemRoot%\Temp\wou_lastlist.txt del %SystemRoot%\Temp\wou_lastlist.txt
 if exist %SystemRoot%\Temp\wou_msedge_tried.txt del %SystemRoot%\Temp\wou_msedge_tried.txt
 if exist %SystemRoot%\Temp\wou_webview2_tried.txt del %SystemRoot%\Temp\wou_webview2_tried.txt
 if exist %SystemRoot%\Temp\wou_net35_tried.txt del %SystemRoot%\Temp\wou_net35_tried.txt
@@ -2782,6 +2814,14 @@ goto Error
 echo.
 echo ERROR: Service control utility %SC_PATH% not found.
 call :Log "Error: Service control utility %SC_PATH% not found"
+echo.
+goto Error
+
+:NoProgress
+echo.
+echo ERROR: The same updates were selected again after a reboot - installing them again cannot make progress.
+echo        Typical cause: the main file of an update is missing from the medium ^(see the "Update file ... not found" warnings in the log^).
+call :Log "Error: No progress - the same updates were selected again after a reboot (endless recall prevented)"
 echo.
 goto Error
 

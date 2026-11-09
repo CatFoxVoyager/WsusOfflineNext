@@ -10,6 +10,11 @@ if "%OS_RAM_GB%"=="" (
 if exist .\custom\SetUpdatesPerStage.cmd call .\custom\SetUpdatesPerStage.cmd
 if %UPDATES_PER_STAGE% LSS 40 set UPDATES_PER_STAGE=40
 
+rem Maximum number of automatic recalls before the run is declared an endless loop. It used to
+rem be set for w62/w63/w100 only, so on w61 and wxp the guard never fired (101 reboot passes
+rem measured on a Win7 VM). A default here arms it for every OS; the blocks below override it.
+set WOU_ENDLESS=6
+
 set WUA_VER_TARGET_MAJOR=0
 set WUA_VER_TARGET_MINOR=0
 set WUA_VER_TARGET_BUILD=0
@@ -86,6 +91,9 @@ goto SetOfficeName
 :Windows5.1
 rem *** Windows XP ***
 set OS_NAME=wxp
+rem Internet Explorer 8 is the last version for XP (any 8.x build clears the ladder)
+set IE_VER_TARGET_MAJOR=8
+set IE_VER_TARGET_MINOR=0
 goto SetOfficeName
 
 :Windows5.2

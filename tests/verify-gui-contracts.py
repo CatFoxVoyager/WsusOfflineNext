@@ -38,18 +38,33 @@ required_keys = [
     "instwmf", "updatedotnet5", "updatecpp",
     "instedge", "instwebview2",
     "verify", "autoreboot", "shutdown", "auditonly", "showlog",
+    "upgradeos",
 ]
 missing_keys = [t for t in required_keys if f"'{t}'" not in contracts]
 if missing_keys:
     print(f"[FAIL] Missing frozen INI keys in enginecontracts.pas: {missing_keys}")
     sys.exit(1)
+
+# Write-back absence check (PATH-03, DEC-10): upgradeos is the SECOND
+# never-written key (after upgradebuilds). Per-run consent travels by argv
+# only (/upgradeos:<build>); IniCopyAll must never persist it - the client
+# INI default stays Disabled (template upgradeos=Disabled).
+with open(os.path.join("src-native", "installer", "mainform.pas"), "r", encoding="utf-8") as f:
+    mainform_src = f.read()
+for line_no, line in enumerate(mainform_src.splitlines(), 1):
+    if "WriteString" in line and "upgradeos" in line:
+        print(f"[FAIL] mainform.pas:{line_no}: WriteString line names upgradeos - "
+              f"write-back contract violation (upgradeos is never written back by "
+              f"IniCopyAll; per-run consent travels by argv only, default Disabled).")
+        sys.exit(1)
 print("[PASS] Test 1: enginecontracts.pas frozen INI sections and keys intact.")
 
 # Test 2: argv contracts (the launcher forwards argv verbatim, so the
 # incumbent 'enu'/'deu' language contract and the frozen switch table persist)
 print("\n[Test 2/3] Verifying command-line argument handling contracts...")
-assert "ENG_SWITCH_COUNT = 24" in contracts, "Installer missing the frozen 24-token switch table"
-for token in ["/auditonly", "/updateoffice", "/autoreboot", "/instmsi"]:
+assert "ENG_SWITCH_COUNT = 25" in contracts, "Installer missing the frozen 25-token switch table"
+assert "ENG_INI_DEFAULT_COUNT = 25" in contracts, "Installer missing the frozen 25-row INI defaults table"
+for token in ["/auditonly", "/updateoffice", "/autoreboot", "/instmsi", "/upgradeos"]:
     assert f"'{token}'" in contracts, f"Installer missing frozen argv token {token}"
 with open(os.path.join("src-native", "installer", "strings_de_en.pas"), "r", encoding="utf-8") as f:
     strings_unit = f.read()

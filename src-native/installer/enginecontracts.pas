@@ -25,14 +25,16 @@ const
   { ===== Frozen argv switch table (client/cmd/DoUpdate.cmd:92) =====
     Order and spelling verbatim; the GUI never emits a token that is not
     in this table. }
-  ENG_SWITCH_COUNT = 24;
+  ENG_SWITCH_COUNT = 25;
   ENG_SWITCH_TOKENS: array[1..ENG_SWITCH_COUNT] of string = (
     '/upgradebuilds', '/updatercerts', '/instdotnet35', '/instdotnet4',
     '/instwmf', '/updatedotnet5', '/updatecpp', '/skipieinst',
     '/skipdefs', '/skipdynamic', '/all', '/excludestatics',
     '/seconly', '/verify', '/autoreboot', '/shutdown',
     '/showlog', '/showdismprogress', '/monitoron', '/instmsi',
-    '/auditonly', '/instedge', '/instwebview2', '/updateoffice');
+    '/auditonly', '/instedge', '/instwebview2', '/updateoffice',
+    { First value-carrying client switch: argv form /upgradeos:<build>, digits only (validated by client/cmd/DoUpdate.cmd); GUI emission is Phase 36; EngSwitchToken still returns only table tokens - the T-26-01 invariant stays untouched. }
+    '/upgradeos');
 
   { ===== INI sections (client/UpdateInstaller.ini template) ===== }
   ENG_INI_SECTION_INSTALLATION = 'Installation';
@@ -48,8 +50,8 @@ const
   ENG_INI_DISABLED = 'Disabled';
 
   { Every key and default from the client/UpdateInstaller.ini template:
-    Installation 15, Control 4, Messaging 4, Miscellaneous 1 (MSI: none). }
-  ENG_INI_DEFAULT_COUNT = 24;
+    Installation 16, Control 4, Messaging 4, Miscellaneous 1 (MSI: none). }
+  ENG_INI_DEFAULT_COUNT = 25;
   ENG_INI_DEFAULTS: array[1..ENG_INI_DEFAULT_COUNT, 1..3] of string = (
     (ENG_INI_SECTION_INSTALLATION, 'upgradebuilds',    ENG_INI_ENABLED),
     (ENG_INI_SECTION_INSTALLATION, 'updatercerts',     ENG_INI_ENABLED),
@@ -66,6 +68,7 @@ const
     (ENG_INI_SECTION_INSTALLATION, 'all',              ENG_INI_DISABLED),
     (ENG_INI_SECTION_INSTALLATION, 'excludestatics',   ENG_INI_DISABLED),
     (ENG_INI_SECTION_INSTALLATION, 'seconly',          ENG_INI_DISABLED),
+    (ENG_INI_SECTION_INSTALLATION, 'upgradeos',        ENG_INI_DISABLED),
     (ENG_INI_SECTION_CONTROL,      'verify',           ENG_INI_ENABLED),
     (ENG_INI_SECTION_CONTROL,      'autoreboot',       ENG_INI_DISABLED),
     (ENG_INI_SECTION_CONTROL,      'shutdown',         ENG_INI_DISABLED),

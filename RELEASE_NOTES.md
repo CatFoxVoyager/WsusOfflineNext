@@ -137,7 +137,7 @@ The English refresh preserves existing configuration keys, command arguments, an
 - Generated ISO images contain update data; they are not bootable Windows installation images.
 - Package availability, architecture, product entitlement, and Microsoft servicing eligibility determine what can be installed. Listed products do not imply complete update coverage or current vendor support.
 
-See the [coverage matrix](README.md#coverage) for product-specific qualifications.
+See the [known limitations](README.md#known-limitations) for product-specific qualifications.
 
 ### Validation
 

@@ -10,6 +10,9 @@ REM the engine's first value-carrying switch (/upgradeos:<build>, DEC-11):
 REM   Case 1: /upgradeos:26200  -> accepted, Info literal logged, run ends 0
 REM   Case 2: /upgradeos:26x00  -> refused loudly (non-digit), exit 1
 REM   Case 3: /upgradeos:       -> refused loudly (empty value), exit 1
+REM   Case 4: /upgradeos:26200:999 -> refused loudly (colon-truncated
+REM           remainder), exit 1 - a second colon segment must not be
+REM           silently dropped by the value split (review WR-02)
 REM The refusal happens during parse - before any install step. The sandbox
 REM never reaches an install step: without ..\bin\IfAdmin.exe the engine
 REM terminates deterministically right after the parse (accept case ends 0
@@ -75,7 +78,7 @@ set "PATH=%MOCK_CMD%;%PATH%"
 REM -----------------------------------------------------------------------
 REM Case 1: valid digits - accepted, Info literal logged, run ends 0
 REM -----------------------------------------------------------------------
-echo [Test 1/3] Case 1: /upgradeos:26200 accepted...
+echo [Test 1/4] Case 1: /upgradeos:26200 accepted...
 set "UPDATE_LOGFILE=%MOCK_TEMP%\argv_case1.log"
 call "%MOCK_CMD%\DoUpdate.cmd" /upgradeos:26200 /auditonly >nul 2>&1
 set "CASE1_EXIT=!errorlevel!"
@@ -99,7 +102,7 @@ echo [PASS] Case 1: target accepted, Info literal logged, exit 0.
 REM -----------------------------------------------------------------------
 REM Case 2: non-digit value - refused loudly, exit 1
 REM -----------------------------------------------------------------------
-echo [Test 2/3] Case 2: /upgradeos:26x00 refused...
+echo [Test 2/4] Case 2: /upgradeos:26x00 refused...
 set "UPDATE_LOGFILE=%MOCK_TEMP%\argv_case2.log"
 call "%MOCK_CMD%\DoUpdate.cmd" /upgradeos:26x00 /auditonly >nul 2>&1
 set "CASE2_EXIT=!errorlevel!"
@@ -123,7 +126,7 @@ echo [PASS] Case 2: non-digit value refused loudly (exit 1).
 REM -----------------------------------------------------------------------
 REM Case 3: empty value - refused loudly, exit 1
 REM -----------------------------------------------------------------------
-echo [Test 3/3] Case 3: /upgradeos: ^(empty^) refused...
+echo [Test 3/4] Case 3: /upgradeos: ^(empty^) refused...
 set "UPDATE_LOGFILE=%MOCK_TEMP%\argv_case3.log"
 call "%MOCK_CMD%\DoUpdate.cmd" /upgradeos: /auditonly >nul 2>&1
 set "CASE3_EXIT=!errorlevel!"
@@ -145,11 +148,38 @@ if not errorlevel 1 (
 echo [PASS] Case 3: empty value refused loudly (exit 1).
 
 REM -----------------------------------------------------------------------
+REM Case 4: colon-truncated value - refused loudly, exit 1
+REM (review WR-02: for /f "tokens=2 delims=:" silently drops everything
+REM after the next colon; the remainder past /upgradeos: must equal the
+REM tokenized value or the value is refused)
+REM -----------------------------------------------------------------------
+echo [Test 4/4] Case 4: /upgradeos:26200:999 refused...
+set "UPDATE_LOGFILE=%MOCK_TEMP%\argv_case4.log"
+call "%MOCK_CMD%\DoUpdate.cmd" /upgradeos:26200:999 /auditonly >nul 2>&1
+set "CASE4_EXIT=!errorlevel!"
+
+if "!CASE4_EXIT!" NEQ "1" (
+  echo FAIL: Case 4 expected exit code 1 ^(colon-truncation refusal^), got !CASE4_EXIT!.
+  goto Fail
+)
+findstr /C:"ERROR: /upgradeos target must be a build number" "%UPDATE_LOGFILE%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: Case 4 expected the refusal literal in the engine log.
+  goto Fail
+)
+findstr /C:"Info: Upgrade target build" "%UPDATE_LOGFILE%" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: Case 4 must NOT log an acceptance literal for a truncated value.
+  goto Fail
+)
+echo [PASS] Case 4: colon-truncated value refused loudly (exit 1).
+
+REM -----------------------------------------------------------------------
 REM All Passed
 REM -----------------------------------------------------------------------
 echo.
 echo =======================================================================
-echo UPGRADE-ARGV-PASS: All 3 /upgradeos acceptance cases passed.
+echo UPGRADE-ARGV-PASS: All 4 /upgradeos acceptance cases passed.
 echo =======================================================================
 call :Cleanup
 exit /b 0

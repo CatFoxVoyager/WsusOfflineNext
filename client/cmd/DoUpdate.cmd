@@ -128,6 +128,11 @@ if /i "!WOU_ARG:~0,11!"=="/upgradeos:" (
   set "WOU_TARGET_BAD="
   if not defined WOU_UPGRADE_TARGET_CAND set "WOU_TARGET_BAD=1"
   if defined WOU_UPGRADE_TARGET_CAND for /f "eol= delims=0123456789" %%z in ("!WOU_UPGRADE_TARGET_CAND!") do set "WOU_TARGET_BAD=1"
+  rem *** WR-02: the value split takes only token 2, so a second colon    ***
+  rem *** (e.g. /upgradeos:26200:999) is silently truncated and accepted.  ***
+  rem *** Guard: the whole remainder past "/upgradeos:" (11 chars) must    ***
+  rem *** equal the tokenized candidate, else something was dropped.       ***
+  if not defined WOU_TARGET_BAD if not "!WOU_ARG:~11!"=="!WOU_UPGRADE_TARGET_CAND!" set "WOU_TARGET_BAD=1"
   if defined WOU_TARGET_BAD (
     echo ERROR: /upgradeos target must be a build number
     call :Log "ERROR: /upgradeos target must be a build number"

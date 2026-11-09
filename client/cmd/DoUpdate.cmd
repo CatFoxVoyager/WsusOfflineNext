@@ -27,6 +27,9 @@ set DISM_MODE=
 set MONITOR_ON=
 set INSTALL_MSI=
 set WOU_UPGRADE_TARGET=
+set WOU_ARG=
+set WOU_UPGRADE_TARGET_CAND=
+set WOU_TARGET_BAD=
 
 if "%DIRCMD%" NEQ "" set DIRCMD=
 
@@ -150,6 +153,12 @@ if /i "!WOU_ARG!"=="/upgradeos" (
   call :Log "ERROR: /upgradeos target must be a build number"
   exit /b 1
 )
+rem *** IN-02: scrub the parse temporaries every iteration so they do    ***
+rem *** not ride into the child-process environment; the accepted        ***
+rem *** WOU_UPGRADE_TARGET stays (it feeds the recall path, DEC-11).     ***
+set WOU_ARG=
+set WOU_UPGRADE_TARGET_CAND=
+set WOU_TARGET_BAD=
 shift /1
 goto EvalParams
 

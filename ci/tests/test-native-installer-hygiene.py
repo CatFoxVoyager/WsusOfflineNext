@@ -8,7 +8,9 @@ updater (WsusOfflineUpdater.exe) - and asserts, per binary:
 
 1. VERSIONINFO completeness: every StringFileInfo field below is present and
    non-empty. Family "native" additionally pins the numeric FileVersion and
-   ProductVersion to 5.2.0 (the locked native version). Family "dotnet"
+   ProductVersion cores to the WSUSOFFLINE_VERSION core from
+   cmd/DownloadUpdates.cmd (the native .lpi VersionInfo is a bump-matrix
+   site - the pair tracks the app release). Family "dotnet"
    asserts the numeric FileVersion equals the StringTable FileVersion
    components and the StringTable ProductVersion carries the locked full
    form M.m.p+YYYY.MM (the bump-matrix token, no SourceRevisionId suffix).
@@ -40,6 +42,24 @@ import sys
 repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(repo_root)
 
+
+def expected_core_version():
+    """Core M.m.p the native pair must carry, read from the single source of
+    truth (cmd/DownloadUpdates.cmd WSUSOFFLINE_VERSION, the bump matrix's
+    own anchor). The native .lpi VersionInfo joined the bump matrix in the
+    6.x line - the numeric version tracks the app release; the historical
+    frozen (5, 2, 0) pin predated that absorption and could never pass on
+    any 6.x build."""
+    with open(os.path.join("cmd", "DownloadUpdates.cmd"), "r", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    m = re.search(r"WSUSOFFLINE_VERSION=(\d+)\.(\d+)\.(\d+)", text)
+    if not m:
+        raise SystemExit("[FAIL] cannot derive the expected core version from cmd/DownloadUpdates.cmd")
+    return tuple(int(part) for part in m.groups())
+
+
+EXPECTED_CORE = expected_core_version()
+
 # Environment adaptation (recorded in 26-03 SUMMARY): `python -I` ignores
 # PYTHONPATH but keeps its own global site-packages. The owner-approved
 # pefile lives in the Phase 23 analysis venv; resolve it by explicit path,
@@ -57,7 +77,7 @@ except ModuleNotFoundError:
 BINARIES = [
     # (path, expected requestedExecutionLevel, family)
     # family "native": the Lazarus GUI pair - full native assertion set
-    # (comctl v6, dpiAware True/PM_V2 + PerMonitorV2, locked 5.2.0 numeric
+    # (comctl v6, dpiAware True/PM_V2 + PerMonitorV2, source-of-truth numeric
     # pins, DIB-decodable MAINICON).
     # family "dotnet": the .NET single-file updater - the generic set
     # (resource directory, StringFileInfo, VS_FIXEDFILEINFO, manifest with
@@ -151,16 +171,18 @@ def check_binary(binary, expected_level, family):
     print(f"   VERSIONINFO: {len(REQUIRED_STRINGFILEINFO_FIELDS)} StringFileInfo fields non-empty")
     fv, pv = fixed_version(pe, binary)
     if family == "native":
-        if fv[:3] != (5, 2, 0):
-            fail(binary, f"numeric FileVersion {fv} != (5, 2, 0, build)")
-        # The StringTable ProductVersion carries the LOCKED full form
-        # "5.2.0+YYYY.MM" (the plan-mandated bump-matrix site); the IDE projects
-        # that string into the numeric ProductVersion's build slot, so the build
-        # component there is a function of the mandated string - the MAJOR.MINOR.
-        # REVISION components stay the gate.
-        if pv[:3] != (5, 2, 0):
-            fail(binary, f"numeric ProductVersion {pv} does not start with (5, 2, 0)")
-        print(f"   numeric FileVersion={fv} ProductVersion={pv} (build slot from the full-form string)")
+        # The native pair tracks the app version: the .lpi VersionInfo is a
+        # bump-matrix site, so the numeric core must equal the WSUSOFFLINE_VERSION
+        # core (single source of truth) - not a frozen constant.
+        if fv[:3] != EXPECTED_CORE:
+            fail(binary, f"numeric FileVersion {fv} != source-of-truth core {EXPECTED_CORE}")
+        # The StringTable ProductVersion carries the full bump-matrix form
+        # "M.m.p+YYYY.MM"; the IDE projects that string into the numeric
+        # ProductVersion's build slot, so the MAJOR.MINOR.REVISION components
+        # stay the gate.
+        if pv[:3] != EXPECTED_CORE:
+            fail(binary, f"numeric ProductVersion {pv} does not start with {EXPECTED_CORE}")
+        print(f"   numeric FileVersion={fv} ProductVersion={pv} (core {EXPECTED_CORE} from cmd/DownloadUpdates.cmd)")
     else:
         # dotnet: the numeric FileVersion must equal the StringTable
         # FileVersion components (the bump-matrix <FileVersion> token); the

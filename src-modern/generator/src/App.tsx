@@ -121,11 +121,17 @@ export default function App() {
   const [win10Builds, setWin10Builds] = useState<WinBuild[]>([
     { key: '20348_x64', label: 'Windows Server 2022', sublabel: 'LTSC 64-bit', version: 'Build 20348', arch: 'x64', enabled: true, status: 'supported' },
     { key: '19041_x64', label: 'Windows 10 (22H2/21H2)', sublabel: 'Client 64-bit (ESU)', version: 'Build 19041-19045', arch: 'x64', enabled: true, status: 'esu' },
+    { key: '18362_x64', label: 'Windows 10 (1903/1909)', sublabel: 'Client 64-bit (legacy static)', version: 'Build 18362-18363', arch: 'x64', enabled: true, status: 'eol' },
     { key: '17763_x64', label: 'Windows Server 2019 / 1809', sublabel: 'LTSC 64-bit', version: 'Build 17763', arch: 'x64', enabled: true, status: 'supported' },
+    { key: '17134_x64', label: 'Windows 10 (1803)', sublabel: 'Client 64-bit (legacy static)', version: 'Build 17134', arch: 'x64', enabled: true, status: 'eol' },
+    { key: '16299_x64', label: 'Windows 10 (1709)', sublabel: 'Client 64-bit (legacy static)', version: 'Build 16299', arch: 'x64', enabled: true, status: 'eol' },
     { key: '14393_x64', label: 'Windows Server 2016 / 1607', sublabel: 'LTSC 64-bit', version: 'Build 14393', arch: 'x64', enabled: true, status: 'supported' },
     { key: '10240_x64', label: 'Windows 10 Enterprise 2015', sublabel: 'LTSB 64-bit', version: 'Build 10240', arch: 'x64', enabled: true, status: 'eol' },
     { key: '19041_x86', label: 'Windows 10 (22H2/21H2) x86', sublabel: 'Client 32-bit (ESU)', version: 'Build 19041-19045', arch: 'x86', enabled: true, status: 'esu' },
+    { key: '18362_x86', label: 'Windows 10 (1903/1909) x86', sublabel: 'Client 32-bit (legacy static)', version: 'Build 18362-18363', arch: 'x86', enabled: true, status: 'eol' },
     { key: '17763_x86', label: 'Windows 10 (1809) x86', sublabel: 'Client 32-bit', version: 'Build 17763', arch: 'x86', enabled: true, status: 'eol' },
+    { key: '17134_x86', label: 'Windows 10 (1803) x86', sublabel: 'Client 32-bit (legacy static)', version: 'Build 17134', arch: 'x86', enabled: true, status: 'eol' },
+    { key: '16299_x86', label: 'Windows 10 (1709) x86', sublabel: 'Client 32-bit (legacy static)', version: 'Build 16299', arch: 'x86', enabled: true, status: 'eol' },
     { key: '14393_x86', label: 'Windows 10 (1607) x86', sublabel: 'Client 32-bit', version: 'Build 14393', arch: 'x86', enabled: true, status: 'eol' },
     { key: '10240_x86', label: 'Windows 10 (1507) x86', sublabel: 'Client 32-bit', version: 'Build 10240', arch: 'x86', enabled: true, status: 'eol' },
   ]);

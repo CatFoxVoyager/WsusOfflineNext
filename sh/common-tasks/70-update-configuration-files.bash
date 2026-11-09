@@ -340,53 +340,6 @@ function remove_obsolete_files ()
         ../client/static/StaticUpdateIds-wupre-w100-15063.txt
     )
 
-    # *** Windows 10 Version 1709 stuff ***
-    #
-    # Removed in the Community Editions 11.9.7-ESR and 12.4
-    file_list+=(
-        ../client/static/StaticUpdateIds-w100-16299.txt
-        ../client/static/StaticUpdateIds-w100-16299-x64.txt
-        ../client/static/StaticUpdateIds-w100-16299-x86.txt
-        ../client/static/StaticUpdateIds-wupre-w100-16299.txt
-        ../client/static/StaticUpdateIds-servicing-w100-16299.txt
-        ../client/static/StaticUpdateIds-w100-16299-dotnet.txt
-        ../client/static/StaticUpdateIds-w100-16299-dotnet4-528049.txt
-    )
-
-    # *** Windows 10 Version 1803 stuff ***
-    #
-    # Removed in the Community Editions 11.9.8-ESR and 12.5
-    file_list+=(
-        ../client/static/StaticUpdateIds-w100-17134.txt
-        ../client/static/StaticUpdateIds-w100-17134-x64.txt
-        ../client/static/StaticUpdateIds-w100-17134-x86.txt
-        ../client/static/StaticUpdateIds-wupre-w100-17134.txt
-        ../client/static/StaticUpdateIds-servicing-w100-17134.txt
-        ../client/static/StaticUpdateIds-w100-17134-dotnet.txt
-        ../client/static/StaticUpdateIds-w100-17134-dotnet4-528049.txt
-    )
-
-    # *** Windows 10 Version 1903/1909 stuff ***
-    #
-    # Removed in the Community Edition 12.7
-    file_list+=(
-        ../exclude/ExcludeList-w100-18362.txt
-        ../static/StaticDownloadLinks-w100-18362-x64-glb.txt
-        ../static/StaticDownloadLinks-w100-18362-x86-glb.txt
-        ../client/static/StaticUpdateIds-w100-18362.txt
-        ../client/static/StaticUpdateIds-w100-18362-x64.txt
-        ../client/static/StaticUpdateIds-w100-18362-x86.txt
-        ../client/static/StaticUpdateIds-wupre-w100-18362.txt
-        ../client/static/StaticUpdateIds-servicing-w100-18362.txt
-        ../client/static/StaticUpdateIds-w100-18362-dotnet.txt
-        ../client/static/StaticUpdateIds-w100-18363.txt
-        ../client/static/StaticUpdateIds-w100-18363-x64.txt
-        ../client/static/StaticUpdateIds-w100-18363-x86.txt
-        ../client/static/StaticUpdateIds-wupre-w100-18363.txt
-        ../client/static/StaticUpdateIds-servicing-w100-18363.txt
-        ../client/static/StaticUpdateIds-w100-18363-dotnet.txt
-    )
-
     # *** Refactoring of Windows 10 downloads ***
     #
     # All Windows 10 version-specific exclude lists were removed in the
@@ -744,8 +697,18 @@ function recursive_download ()
         do
             if [[ -n "${modified_filename}" ]]
             then
-                download_from_gitlab "${download_dir}"  \
-                                     "${base_url}/${modified_filename}"
+                # Fork-authoritative statics (w100 16299/17134/18362):
+                # never let the upstream SDD feed overwrite the
+                # fork-refreshed local copies.
+                case "${modified_filename}" in
+                    StaticDownloadLinks-w100-16299-* | StaticDownloadLinks-w100-17134-* | StaticDownloadLinks-w100-18362-*)
+                        log_info_message "Keeping fork-managed static file ${modified_filename} (SDD update skipped)"
+                        ;;
+                    *)
+                        download_from_gitlab "${download_dir}"  \
+                                             "${base_url}/${modified_filename}"
+                        ;;
+                esac
             fi
         done < "../static/sdd/${index_filename}"
 

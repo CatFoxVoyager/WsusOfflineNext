@@ -216,6 +216,9 @@ Dim arrKeys, k, keyStr, secName
 arrKeys = Array( _
     "10240_x86", "10240_x64", _
     "14393_x86", "14393_x64", _
+    "16299_x86", "16299_x64", _
+    "17134_x86", "17134_x64", _
+    "18362_x86", "18362_x64", _
     "17763_x86", "17763_x64", _
     "19041_x86", "19041_x64", _
     "20348_x64", _
@@ -231,6 +234,9 @@ Dim strKeysBlock, strLabelsBlock, strValuesBlock
 strKeysBlock = "w100_keys=(" & vbCrLf & _
                "    ""10240_x86""  ""10240_x64""" & vbCrLf & _
                "    ""14393_x86""  ""14393_x64""" & vbCrLf & _
+               "    ""16299_x86""  ""16299_x64""" & vbCrLf & _
+               "    ""17134_x86""  ""17134_x64""" & vbCrLf & _
+               "    ""18362_x86""  ""18362_x64""" & vbCrLf & _
                "    ""17763_x86""  ""17763_x64""" & vbCrLf & _
                "    ""19041_x86""  ""19041_x64""" & vbCrLf & _
                "                 ""20348_x64""" & vbCrLf & _
@@ -257,6 +263,9 @@ strLabelsBlock = strLabelsBlock & ")"
 strValuesBlock = "declare -A w100_values=(" & vbCrLf & _
                  "    [10240_x86]=""" & dictSections("w100-x86-10240")("dialog_value") & """  [10240_x64]=""" & dictSections("w100-x64-10240")("dialog_value") & """" & vbCrLf & _
                  "    [14393_x86]=""" & dictSections("w100-x86-14393")("dialog_value") & """   [14393_x64]=""" & dictSections("w100-x64-14393")("dialog_value") & """" & vbCrLf & _
+                 "    [16299_x86]=""" & dictSections("w100-x86-16299")("dialog_value") & """   [16299_x64]=""" & dictSections("w100-x64-16299")("dialog_value") & """" & vbCrLf & _
+                 "    [17134_x86]=""" & dictSections("w100-x86-17134")("dialog_value") & """   [17134_x64]=""" & dictSections("w100-x64-17134")("dialog_value") & """" & vbCrLf & _
+                 "    [18362_x86]=""" & dictSections("w100-x86-18362")("dialog_value") & """   [18362_x64]=""" & dictSections("w100-x64-18362")("dialog_value") & """" & vbCrLf & _
                  "    [17763_x86]=""" & dictSections("w100-x86-17763")("dialog_value") & """   [17763_x64]=""" & dictSections("w100-x64-17763")("dialog_value") & """" & vbCrLf & _
                  "    [19041_x86]=""" & dictSections("w100-x86-19041")("dialog_value") & """   [19041_x64]=""" & dictSections("w100-x64-19041")("dialog_value") & """" & vbCrLf & _
                  "                       [20348_x64]=""" & dictSections("w100-x64-20348")("dialog_value") & """" & vbCrLf & _

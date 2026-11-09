@@ -1,0 +1,2 @@
+http://download.windowsupdate.com/d/msdownload/update/software/secu/2020/10/windows10.0-kb4580328-x86_668a73da01972e8262b8a5c381b59c5dfc9c2d8f.msu
+http://download.windowsupdate.com/c/msdownload/update/software/secu/2020/07/windows10.0-kb4565553-x86_101e7e49f961c167004b225d4d1f2ccda2c01dd3.msu

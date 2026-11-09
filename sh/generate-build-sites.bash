@@ -111,8 +111,8 @@ END {
     # Site 2: sh/download-updates-tasks/60-main-updates.bash
     # -------------------------------------------------------------------
     f3 = tmp_dir "/block3.txt"
-    x86_list = "10240 14393 17763 19041"
-    x64_list = "10240 14393 17763 19041 20348 " w11_space_str
+    x86_list = "10240 14393 16299 17134 17763 18362 19041"
+    x64_list = "10240 14393 16299 17134 17763 18362 19041 20348 " w11_space_str
     printf "w100_x86_all_versions=( %s )\n", x86_list > f3
     printf "w100_x64_all_versions=( %s )\n", x64_list > f3
     close(f3)
@@ -124,6 +124,9 @@ END {
     printf "w100_keys=(\n" > f4
     printf "    \"10240_x86\"  \"10240_x64\"\n" > f4
     printf "    \"14393_x86\"  \"14393_x64\"\n" > f4
+    printf "    \"16299_x86\"  \"16299_x64\"\n" > f4
+    printf "    \"17134_x86\"  \"17134_x64\"\n" > f4
+    printf "    \"18362_x86\"  \"18362_x64\"\n" > f4
     printf "    \"17763_x86\"  \"17763_x64\"\n" > f4
     printf "    \"19041_x86\"  \"19041_x64\"\n" > f4
     printf "                 \"20348_x64\"\n" > f4
@@ -135,7 +138,7 @@ END {
     printf "                 \"26300_x64\"\n" > f4
     printf ")\n\n" > f4
 
-    keys_str = "10240_x86 10240_x64 14393_x86 14393_x64 17763_x86 17763_x64 19041_x86 19041_x64 20348_x64 22000_x64 22621_x64 22631_x64 26100_x64 26200_x64 26300_x64"
+    keys_str = "10240_x86 10240_x64 14393_x86 14393_x64 16299_x86 16299_x64 17134_x86 17134_x64 18362_x86 18362_x64 17763_x86 17763_x64 19041_x86 19041_x64 20348_x64 22000_x64 22621_x64 22631_x64 26100_x64 26200_x64 26300_x64"
     n_k = split(keys_str, arr_k, " ")
     printf "declare -A w100_labels=(\n" > f4
     for (i = 1; i <= n_k; i++) {
@@ -149,6 +152,9 @@ END {
     printf "declare -A w100_values=(\n" > f4
     printf "    [10240_x86]=\"%s\"  [10240_x64]=\"%s\"\n", data["w100-x86-10240", "dialog_value"], data["w100-x64-10240", "dialog_value"] > f4
     printf "    [14393_x86]=\"%s\"   [14393_x64]=\"%s\"\n", data["w100-x86-14393", "dialog_value"], data["w100-x64-14393", "dialog_value"] > f4
+    printf "    [16299_x86]=\"%s\"   [16299_x64]=\"%s\"\n", data["w100-x86-16299", "dialog_value"], data["w100-x64-16299", "dialog_value"] > f4
+    printf "    [17134_x86]=\"%s\"   [17134_x64]=\"%s\"\n", data["w100-x86-17134", "dialog_value"], data["w100-x64-17134", "dialog_value"] > f4
+    printf "    [18362_x86]=\"%s\"   [18362_x64]=\"%s\"\n", data["w100-x86-18362", "dialog_value"], data["w100-x64-18362", "dialog_value"] > f4
     printf "    [17763_x86]=\"%s\"   [17763_x64]=\"%s\"\n", data["w100-x86-17763", "dialog_value"], data["w100-x64-17763", "dialog_value"] > f4
     printf "    [19041_x86]=\"%s\"   [19041_x64]=\"%s\"\n", data["w100-x86-19041", "dialog_value"], data["w100-x64-19041", "dialog_value"] > f4
     printf "                       [20348_x64]=\"%s\"\n", data["w100-x64-20348", "dialog_value"] > f4

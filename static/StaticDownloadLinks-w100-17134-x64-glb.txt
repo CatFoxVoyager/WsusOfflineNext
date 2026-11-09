@@ -1,0 +1,2 @@
+http://download.windowsupdate.com/c/msdownload/update/software/secu/2021/05/windows10.0-kb5003174-x64_54fb6b8349dbaf6d5a9fff96c1cfe5f3663bf660.msu
+http://download.windowsupdate.com/d/msdownload/update/software/secu/2021/05/windows10.0-kb5003364-x64_2d27672753b341e3f25305640320fbaedf2ee30e.msu

@@ -487,41 +487,6 @@ if exist ..\client\static\StaticUpdateIds-w100-15063-x64.txt del ..\client\stati
 if exist ..\client\static\StaticUpdateIds-w100-15063-x86.txt del ..\client\static\StaticUpdateIds-w100-15063-x86.txt
 if exist ..\client\static\StaticUpdateIds-wupre-w100-15063.txt del ..\client\static\StaticUpdateIds-wupre-w100-15063.txt
 
-rem *** Windows 10 Version 1709 stuff ***
-if exist ..\client\static\StaticUpdateIds-w100-16299.txt del ..\client\static\StaticUpdateIds-w100-16299.txt
-if exist ..\client\static\StaticUpdateIds-w100-16299-x64.txt del ..\client\static\StaticUpdateIds-w100-16299-x64.txt
-if exist ..\client\static\StaticUpdateIds-w100-16299-x86.txt del ..\client\static\StaticUpdateIds-w100-16299-x86.txt
-if exist ..\client\static\StaticUpdateIds-wupre-w100-16299.txt del ..\client\static\StaticUpdateIds-wupre-w100-16299.txt
-if exist ..\client\static\StaticUpdateIds-servicing-w100-16299.txt del ..\client\static\StaticUpdateIds-servicing-w100-16299.txt
-if exist ..\client\static\StaticUpdateIds-w100-16299-dotnet.txt del ..\client\static\StaticUpdateIds-w100-16299-dotnet.txt
-if exist ..\client\static\StaticUpdateIds-w100-16299-dotnet4-528049.txt del ..\client\static\StaticUpdateIds-w100-16299-dotnet4-528049.txt
-
-rem *** Windows 10 Version 1803 stuff ***
-if exist ..\client\static\StaticUpdateIds-w100-17134.txt del ..\client\static\StaticUpdateIds-w100-17134.txt
-if exist ..\client\static\StaticUpdateIds-w100-17134-x64.txt del ..\client\static\StaticUpdateIds-w100-17134-x64.txt
-if exist ..\client\static\StaticUpdateIds-w100-17134-x86.txt del ..\client\static\StaticUpdateIds-w100-17134-x86.txt
-if exist ..\client\static\StaticUpdateIds-wupre-w100-17134.txt del ..\client\static\StaticUpdateIds-wupre-w100-17134.txt
-if exist ..\client\static\StaticUpdateIds-servicing-w100-17134.txt del ..\client\static\StaticUpdateIds-servicing-w100-17134.txt
-if exist ..\client\static\StaticUpdateIds-w100-17134-dotnet.txt del ..\client\static\StaticUpdateIds-w100-17134-dotnet.txt
-if exist ..\client\static\StaticUpdateIds-w100-17134-dotnet4-528049.txt del ..\client\static\StaticUpdateIds-w100-17134-dotnet4-528049.txt
-
-rem *** Windows 10 Version 1903/1909 stuff ***
-if exist ..\exclude\ExcludeList-w100-18362.txt del ..\exclude\ExcludeList-w100-18362.txt
-if exist ..\static\StaticDownloadLinks-w100-18362-x64-glb.txt del ..\static\StaticDownloadLinks-w100-18362-x64-glb.txt
-if exist ..\static\StaticDownloadLinks-w100-18362-x86-glb.txt del ..\static\StaticDownloadLinks-w100-18362-x86-glb.txt
-if exist ..\client\static\StaticUpdateIds-w100-18362.txt del ..\client\static\StaticUpdateIds-w100-18362.txt
-if exist ..\client\static\StaticUpdateIds-w100-18362-x64.txt del ..\client\static\StaticUpdateIds-w100-18362-x64.txt
-if exist ..\client\static\StaticUpdateIds-w100-18362-x86.txt del ..\client\static\StaticUpdateIds-w100-18362-x86.txt
-if exist ..\client\static\StaticUpdateIds-wupre-w100-18362.txt del ..\client\static\StaticUpdateIds-wupre-w100-18362.txt
-if exist ..\client\static\StaticUpdateIds-servicing-w100-18362.txt del ..\client\static\StaticUpdateIds-servicing-w100-18362.txt
-if exist ..\client\static\StaticUpdateIds-w100-18362-dotnet.txt del ..\client\static\StaticUpdateIds-w100-18362-dotnet.txt
-if exist ..\client\static\StaticUpdateIds-w100-18363.txt del ..\client\static\StaticUpdateIds-w100-18363.txt
-if exist ..\client\static\StaticUpdateIds-w100-18363-x64.txt del ..\client\static\StaticUpdateIds-w100-18363-x64.txt
-if exist ..\client\static\StaticUpdateIds-w100-18363-x86.txt del ..\client\static\StaticUpdateIds-w100-18363-x86.txt
-if exist ..\client\static\StaticUpdateIds-wupre-w100-18363.txt del ..\client\static\StaticUpdateIds-wupre-w100-18363.txt
-if exist ..\client\static\StaticUpdateIds-servicing-w100-18363.txt del ..\client\static\StaticUpdateIds-servicing-w100-18363.txt
-if exist ..\client\static\StaticUpdateIds-w100-18363-dotnet.txt del ..\client\static\StaticUpdateIds-w100-18363-dotnet.txt
-
 rem *** Office and invcif.exe stuff ***
 if exist ..\static\StaticDownloadLinks-inventory.txt del ..\static\StaticDownloadLinks-inventory.txt
 if exist ..\client\wsus\invcif.exe (
@@ -699,10 +664,17 @@ if not "%SDDCoreReturnValue%"=="0" (
 if exist ..\static\sdd\StaticDownloadFiles-modified.txt (
   for /f "delims=" %%f in (..\static\sdd\StaticDownloadFiles-modified.txt) do (
     if not "%%f"=="" (
-      call :SDDCore "https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/StaticDownloadFiles-modified/%%f" ..\static
-      if not "!SDDCoreReturnValue!"=="0" (
-        call :Log "Warning: Failed to download https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/StaticDownloadFiles-modified/%%f"
-        goto SkipSDDDownload
+      rem Fork-authoritative statics (w100 16299/17134/18362): never let the
+      rem upstream SDD feed overwrite the fork-refreshed local copies.
+      echo %%f | findstr /C:"StaticDownloadLinks-w100-16299-" /C:"StaticDownloadLinks-w100-17134-" /C:"StaticDownloadLinks-w100-18362-" >nul
+      if not errorlevel 1 (
+        call :Log "Info: Keeping fork-managed static file %%f (SDD update skipped)"
+      ) else (
+        call :SDDCore "https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/StaticDownloadFiles-modified/%%f" ..\static
+        if not "!SDDCoreReturnValue!"=="0" (
+          call :Log "Warning: Failed to download https://gitlab.com/wsusoffline/wsusoffline-sdd/-/raw/master/StaticDownloadFiles-modified/%%f"
+          goto SkipSDDDownload
+        )
       )
     )
   )
@@ -1421,7 +1393,7 @@ if "%TMP_PLATFORM:~-4%"=="-x64" (
 if "%TMP_PLATFORM%"=="w100" (
   echo Info: Windows 10 22H2 updates require an active Microsoft ESU license on target systems.
   call :Log "Info: Windows 10 22H2 updates require an active Microsoft ESU license on target systems."
-  set TMP_BUILDS_ALL_WIN10=10240 14393 17763 19041 20348
+  set TMP_BUILDS_ALL_WIN10=10240 14393 16299 17134 17763 18362 19041 20348
 REM -- BEGIN GENERATED BUILDS WIN11 --
   set TMP_BUILDS_ALL_WIN11=22000 22621 22631 26100 26200 26300
 REM -- END GENERATED BUILDS WIN11 --

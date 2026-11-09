@@ -1,0 +1,3 @@
+http://download.windowsupdate.com/c/msdownload/update/software/updt/2022/01/windows10.0-kb5010792-x86_44b020c7b7ba95fef5446095610afbb55ae76d6e.msu
+http://download.windowsupdate.com/c/msdownload/update/software/secu/2021/08/windows10.0-kb5005412-x86_98f99f0aee4af93a076e5beeb72bf979c4b41f64.msu
+http://b1.download.windowsupdate.com/d/upgr/2019/11/windows10.0-kb4517245-x86_8463271782b79ce8214772c62552b8961feb7ccb.cab

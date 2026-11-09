@@ -432,6 +432,9 @@ assert_eq "$upg_rows" "12" "upgrades.txt carries exactly 12 twelve-field data ro
 has_literal "upgrades.txt freezes the 12-field # Format: header" "$upg_file" \
     '# Format: target_build|arch|lang|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_min_revision|ekb_prereq_kb|fu_media|blocked_reason'
 
+has_literal "upgrades.txt consumer line names no false runtime reader (WR-01 pin)" "$upg_file" \
+    '# Decision data for the OS-upgrade path layer (upgradespredicates.pas); consumers wire in with Phases 32+ - no runtime reader yet'
+
 upg_28000="$(awk -F'|' '{sub(/\r$/, "")} $1=="28000" && $12=="new-devices-only" {c++} END{printf "%d", c+0}' "$upg_file")"
 assert_eq "$upg_28000" "1" "upgrades.txt 28000 row carries the new-devices-only blocked reason"
 

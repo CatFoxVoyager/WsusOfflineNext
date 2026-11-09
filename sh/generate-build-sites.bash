@@ -11,9 +11,9 @@
 #      installer's Enablement-Package data file, consumed at GUI runtime
 #      by src-native/installer/buildsupgrade.pas)
 #   5. client/UpdateTable/upgrades.txt (whole-file emission - the
-#      OS-upgrade decision data file, consumed at GUI runtime by
-#      src-native/installer/upgradespredicates.pas and
-#      client/cmd/DoUpdate.cmd (/auditonly))
+#      OS-upgrade decision data file; no runtime reader yet, consumers
+#      wire in with Phases 32+ - upgradespredicates.pas ships frozen,
+#      testrunner-only until then)
 #
 # Preserves CRLF line endings and Windows-1252 bytes.
 # =======================================================================
@@ -211,7 +211,7 @@ END {
     f7 = tmp_dir "/upgrades_txt_data.txt"
     printf "# client/UpdateTable/upgrades.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT\n" > f7
     printf "# Format: target_build|arch|lang|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_min_revision|ekb_prereq_kb|fu_media|blocked_reason\n" > f7
-    printf "# Consumed at GUI runtime by src-native/installer/upgradespredicates.pas and client/cmd/DoUpdate.cmd (/auditonly)\n" > f7
+    printf "# Decision data for the OS-upgrade path layer (upgradespredicates.pas); consumers wire in with Phases 32+ - no runtime reader yet\n" > f7
     for (i = 1; i <= n_rs; i++) {
         sec = arr_rs[i]
         if (data[sec, "fu_media"] == "1") {

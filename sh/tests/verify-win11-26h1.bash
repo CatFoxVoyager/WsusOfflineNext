@@ -57,6 +57,45 @@ if ! grep -q "BuIsBuildIneligible" "${repo_root}/src-native/installer/buildsupgr
     exit 1
 fi
 
+# Frozen 10-field builds.txt contract (plan 31-01): the # Format line
+# must stay verbatim - upgrade data lives only in upgrades.txt.
+if ! grep -qF '# Format: build|arch|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_prereq_kb|ekb_min_revision|is_enforced' "$builds_txt"; then
+    echo "FAIL: client/UpdateTable/builds.txt frozen 10-field # Format line missing or modified."
+    exit 1
+fi
+if [ "$(grep -c '^[0-9]' "$builds_txt")" -ne 12 ]; then
+    echo "FAIL: client/UpdateTable/builds.txt row census is not 12."
+    exit 1
+fi
+
+# Generated OS-upgrade decision data file (plan 31-01): format, census
+# and data truths pinned at the source.
+upgrades_txt="${repo_root}/client/UpdateTable/upgrades.txt"
+if [[ ! -f "$upgrades_txt" ]]; then
+    echo "FAIL: client/UpdateTable/upgrades.txt missing (generated decision-data file)."
+    exit 1
+fi
+if ! grep -qF '# Format: target_build|arch|lang|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_min_revision|ekb_prereq_kb|fu_media|blocked_reason' "$upgrades_txt"; then
+    echo "FAIL: client/UpdateTable/upgrades.txt frozen 12-field # Format line missing or modified."
+    exit 1
+fi
+if [ "$(grep -c '^[0-9]' "$upgrades_txt")" -ne 12 ]; then
+    echo "FAIL: client/UpdateTable/upgrades.txt row census is not 12."
+    exit 1
+fi
+if ! awk -F'|' '/^[0-9]/ { if (NF != 12) bad = 1 } END { exit bad }' "$upgrades_txt"; then
+    echo "FAIL: client/UpdateTable/upgrades.txt carries a row without exactly 12 pipe fields."
+    exit 1
+fi
+if ! awk -F'|' '$1 == "26300" { found = 1; if ($9 == "" && $10 == "") ok = 1 } END { if (found && ok) exit 0; exit 1 }' "$upgrades_txt"; then
+    echo "FAIL: client/UpdateTable/upgrades.txt 26300 row must exist with empty ekb_min_revision/ekb_prereq_kb (blocked baseline-unknown)."
+    exit 1
+fi
+if ! awk -F'|' '$1 == "28000" && $12 == "new-devices-only" { found = 1 } END { exit found ? 0 : 1 }' "$upgrades_txt"; then
+    echo "FAIL: client/UpdateTable/upgrades.txt 28000 row must carry blocked_reason new-devices-only."
+    exit 1
+fi
+
 echo "PASS: builds.ini and native builds-table contracts verified."
 
 # -----------------------------------------------------------------------

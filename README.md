@@ -20,7 +20,7 @@ Download Windows and Office updates on a connected computer, prepare reusable up
 
 ![English Generator interface showing Windows 11 build selection](doc/screenshots/generator-win11.png)
 
-*Generator browser preview. Repository dates and machine information shown in the screenshots are illustrative; they are not evidence of a completed download or installation.*
+*Generator 6.1.0 running on Windows 11. Repository dates and machine information shown are the host's real state; they are not evidence of a completed download or installation.*
 
 </div>
 
@@ -33,6 +33,7 @@ The familiar **Generator → client media → Installer** workflow continues, wi
 
 | Improvement | What it brings |
 | :--- | :--- |
+| **Offline runtime bootstrap (6.1.0)** | The client launcher probes the .NET 8 Desktop Runtime and silently installs it (and WebView2) from the offline tree inside its single UAC prompt — old Windows 10 machines reach the modern interface with zero manual steps, failing safe to the legacy installer. |
 | **AutoIt-free distribution (6.0.0)** | Zero interpreter-stub binaries: launchers are plain `.cmd` scripts, the generator is a .NET 8 single-file host, and the client installer GUI is a native Free Pascal/Lazarus Win32 application — validated live on Windows 7 SP1 x86 and shipping clean on VirusTotal (0-malicious on the native pair). |
 | **Modern desktop apps** | English interfaces, compact product tables, bulk selection, and integrated timestamped consoles. React and TypeScript run inside .NET 8 / WebView2 hosts. |
 | **Recent Windows servicing** | A shared build registry, enablement-package eligibility checks, and checkpoint-first ordering for cumulative updates on the 26100 servicing branch. |
@@ -45,7 +46,13 @@ The application version is **6.1.0+2026.11**. Read the [release notes](RELEASE_N
 
 ## Screenshots
 
-These captures show the actual English frontend at **1280 × 840**, rendered as browser previews. Consoles are idle; no download, installation, or restart was performed to produce them.
+The Generator capture is the real .NET 8 / WebView2 application; the legacy capture is the native Win32 installer running live on Windows XP. The remaining interface captures are browser previews at **1280 × 840**. Consoles are idle; no download, installation, or restart was performed to produce them.
+
+### The legacy installer on Windows XP
+
+The native Win32 installer on a real XP SP3 desktop, version-stamped 6.1.0 in the title bar. Offers that cannot apply on pre-Win10 systems (Edge, WebView2, Office) are gated off in the interface — exactly as shipped.
+
+![English native installer running on Windows XP SP3 with pre-Win10 offers gated off](doc/screenshots/installer-legacy-xp.png)
 
 ### Prepare Office media
 

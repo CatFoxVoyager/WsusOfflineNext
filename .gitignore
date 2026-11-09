@@ -93,6 +93,7 @@ client/bin/Autologon*.exe
 client/bin/unzip.exe
 Windows10Versions.ini
 sh/windows-10-versions.ini
+sh/os-upgrades.ini
 
 # Logs & temporary files
 log/*.log

@@ -919,6 +919,26 @@ namespace WSUSOffline.Generator
             string win10Ini = Path.Combine(root, "Windows10Versions.ini");
             if (File.Exists(win10Ini))
             {
+                // Previously-known [OS Upgrades] keys, collected BEFORE
+                // the rewrite below destroys the prior section - they
+                // are what the single-target radio collapse flips to
+                // Disabled.
+                var knownUpgradeKeys = new List<string>();
+                bool inUpgSection = false;
+                foreach (string prior in File.ReadAllLines(win10Ini))
+                {
+                    string t = prior.Trim();
+                    if (t.StartsWith("[") && t.EndsWith("]"))
+                    {
+                        inUpgSection = t.Equals("[OS Upgrades]", StringComparison.OrdinalIgnoreCase);
+                        continue;
+                    }
+                    if (inUpgSection && t.Contains("="))
+                    {
+                        knownUpgradeKeys.Add(t.Split('=', 2)[0].Trim());
+                    }
+                }
+
                 var lines = new List<string>();
                 lines.Add("[Windows 10]");
                 if (payload.TryGetProperty("win10", out var w10))
@@ -936,6 +956,13 @@ namespace WSUSOffline.Generator
                         lines.Add($"{prop.Name}={(prop.Value.GetBoolean() ? "Enabled" : "Disabled")}");
                     }
                 }
+
+                // [OS Upgrades] single-target selection (DEC-07). The
+                // section lives in Windows10Versions.ini (sectioned
+                // readers); the bash twin is a SEPARATE flat file -
+                // never appended to windows-10-versions.ini, the flat
+                // build reader would conflate the grammars (Pitfall 4).
+                WriteOsUpgradesSection(lines, payload, knownUpgradeKeys);
                 File.WriteAllLines(win10Ini, lines);
 
                 var bashLines = new List<string>();
@@ -956,6 +983,20 @@ namespace WSUSOffline.Generator
                 if (bashLines.Count > 0)
                 {
                     File.WriteAllLines(Path.Combine(root, "sh", "windows-10-versions.ini"), bashLines);
+                }
+
+                // Flat bash twin: <build>_<arch>=on when a target is
+                // selected, nothing when none - a cleared selection
+                // must not leave a stale twin behind.
+                string? upgradeSelection = GetUpgradePayloadSelection(payload);
+                string upgradeFlat = Path.Combine(root, "sh", "os-upgrades.ini");
+                if (!string.IsNullOrEmpty(upgradeSelection))
+                {
+                    File.WriteAllLines(upgradeFlat, new[] { upgradeSelection + "=on" });
+                }
+                else if (File.Exists(upgradeFlat))
+                {
+                    File.Delete(upgradeFlat);
                 }
             }
 
@@ -988,6 +1029,129 @@ namespace WSUSOffline.Generator
                     }
                 }
                 File.WriteAllLines(genIni, lines);
+            }
+        }
+
+        /// <summary>
+        /// [OS Upgrades] selection reader (DEC-07 parse side). Scans the
+        /// [OS Upgrades] section of Windows10Versions.ini and returns the
+        /// key whose value is OrdinalIgnoreCase-equal to "Enabled"
+        /// (grammar "&lt;build&gt;_&lt;arch&gt;"), or null when the file,
+        /// the section or any enabled key is absent - absence must default
+        /// to no-upgrade-selected, the file is gitignored runtime state
+        /// (research Pitfall 7). Frozen for Phase 36's GUI wiring.
+        /// </summary>
+        private static string? ReadOsUpgradesSelection(string root)
+        {
+            string win10Ini = Path.Combine(root, "Windows10Versions.ini");
+            if (!File.Exists(win10Ini))
+            {
+                return null;
+            }
+            bool inSection = false;
+            foreach (string line in File.ReadAllLines(win10Ini))
+            {
+                string trimmed = line.Trim();
+                if (trimmed.StartsWith("[") && trimmed.EndsWith("]"))
+                {
+                    inSection = trimmed.Equals("[OS Upgrades]", StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+                if (inSection && trimmed.Contains("="))
+                {
+                    var parts = trimmed.Split('=', 2);
+                    if (parts.Length == 2 && parts[1].Trim().Equals("Enabled", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return parts[0].Trim();
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Payload selection extractor (DEC-07): the property "upgrade"
+        /// carries a "&lt;build&gt;_&lt;arch&gt;" string or empty. The value is
+        /// grammar-validated before any use - a malformed or
+        /// injection-shaped value (newlines, '=', '[') is treated as no
+        /// selection, never forwarded (GUI payload crosses the host INI
+        /// writer trust boundary). The pipeline switch form for Phases
+        /// 33/36 is /includeupgrade:&lt;build&gt; (DEC-08 - spelled here,
+        /// NOT implemented; no consumer exists yet).
+        /// </summary>
+        private static string? GetUpgradePayloadSelection(JsonElement payload)
+        {
+            if (!payload.TryGetProperty("upgrade", out var upg) || upg.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+            string value = (upg.GetString() ?? "").Trim();
+            if (!IsUpgradeKeyShape(value))
+            {
+                return null;
+            }
+            return value;
+        }
+
+        /// <summary>
+        /// "&lt;build&gt;_&lt;arch&gt;" key shape: one underscore, digits before it,
+        /// alphanumeric arch token after it (x64/x86/arm64 all carry
+        /// digits) - enough to reject separators and line injections
+        /// while staying arch-vocabulary agnostic.
+        /// </summary>
+        private static bool IsUpgradeKeyShape(string value)
+        {
+            int us = value.IndexOf('_');
+            if (us <= 0 || us != value.LastIndexOf('_') || us == value.Length - 1)
+            {
+                return false;
+            }
+            for (int i = 0; i < us; i++)
+            {
+                if (!char.IsDigit(value[i])) return false;
+            }
+            for (int i = us + 1; i < value.Length; i++)
+            {
+                if (!char.IsLetterOrDigit(value[i])) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// [OS Upgrades] section writer (DEC-07 emit side): appends the
+        /// section with the selected target as the ONLY Enabled key -
+        /// every other previously-known upgrade key collapses to Disabled
+        /// (single-target radio semantics, one full-FU target per medium,
+        /// enforced at write time). The plan's signature gained the
+        /// knownUpgradeKeys parameter the radio collapse needs. With no
+        /// selection and no known keys the section is omitted entirely -
+        /// absence defaults to no-upgrade-selected (Pitfall 7).
+        /// </summary>
+        private static void WriteOsUpgradesSection(List<string> lines, JsonElement payload, IReadOnlyList<string> knownUpgradeKeys)
+        {
+            string? selected = GetUpgradePayloadSelection(payload);
+            var keys = new List<string>(knownUpgradeKeys);
+            bool alreadyKnown = false;
+            foreach (string known in keys)
+            {
+                if (string.Equals(known, selected, StringComparison.OrdinalIgnoreCase))
+                {
+                    alreadyKnown = true;
+                    break;
+                }
+            }
+            if (!string.IsNullOrEmpty(selected) && !alreadyKnown)
+            {
+                keys.Add(selected);
+            }
+            if (keys.Count == 0)
+            {
+                return;
+            }
+            lines.Add("[OS Upgrades]");
+            foreach (string key in keys)
+            {
+                lines.Add($"{key}={(string.Equals(key, selected, StringComparison.OrdinalIgnoreCase) ? "Enabled" : "Disabled")}");
             }
         }
 

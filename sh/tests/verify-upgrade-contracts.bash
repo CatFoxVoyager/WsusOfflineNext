@@ -395,12 +395,18 @@ printf '[A] verdict evaluator parity: %s checks green (3 parser facts + 20 matri
 echo "--- Section B: generated contracts (--check twins + data census) ---"
 SECTION_PASS=0
 
-bash sh/generate-build-sites.bash --check > /dev/null
+if ! bash_twin_out="$(bash sh/generate-build-sites.bash --check 2>&1)"; then
+    printf 'FAIL: bash generation twin --check reported drift\n%s\n' "$bash_twin_out"
+    exit 1
+fi
 SECTION_PASS=$((SECTION_PASS + 1))
 echo "[B] bash generation twin --check exit 0 (all sites in sync)"
 
 if command -v cscript > /dev/null 2>&1; then
-    cscript //Nologo cmd/GenerateBuildSites.vbs --check > /dev/null
+    if ! vbs_twin_out="$(cscript //Nologo cmd/GenerateBuildSites.vbs --check 2>&1)"; then
+        printf 'FAIL: VBS generation twin --check reported drift\n%s\n' "$vbs_twin_out"
+        exit 1
+    fi
     SECTION_PASS=$((SECTION_PASS + 1))
     echo "[B] VBS generation twin --check exit 0 (all sites in sync)"
 else

@@ -10,6 +10,10 @@
 #   4. client/UpdateTable/builds.txt (whole-file emission - the native
 #      installer's Enablement-Package data file, consumed at GUI runtime
 #      by src-native/installer/buildsupgrade.pas)
+#   5. client/UpdateTable/upgrades.txt (whole-file emission - the
+#      OS-upgrade decision data file, consumed at GUI runtime by
+#      src-native/installer/upgradespredicates.pas and
+#      client/cmd/DoUpdate.cmd (/auditonly))
 #
 # Preserves CRLF line endings and Windows-1252 bytes.
 # =======================================================================
@@ -197,6 +201,41 @@ END {
     close(f6)
 
     # -------------------------------------------------------------------
+    # client/UpdateTable/upgrades.txt - the OS-upgrade decision data
+    # file (plan 31-01). One row per census section, 12 pipe fields,
+    # hash-comment header, CRLF. lang carries the pipeline language
+    # argument (today only glb is carried). The EKB hop columns carry
+    # the raw builds.ini values: an incomplete EKB triple (e.g. 26300)
+    # stays empty here and answers blocked baseline-unknown downstream.
+    # -------------------------------------------------------------------
+    f7 = tmp_dir "/upgrades_txt_data.txt"
+    printf "# client/UpdateTable/upgrades.txt - GENERATED from static/builds.ini by generate-build-sites (bash+vbs twins); DO NOT EDIT\n" > f7
+    printf "# Format: target_build|arch|lang|os_family|servicing_branch|status|ekb_source_build|ekb_kb|ekb_min_revision|ekb_prereq_kb|fu_media|blocked_reason\n" > f7
+    printf "# Consumed at GUI runtime by src-native/installer/upgradespredicates.pas and client/cmd/DoUpdate.cmd (/auditonly)\n" > f7
+    for (i = 1; i <= n_rs; i++) {
+        sec = arr_rs[i]
+        if (data[sec, "fu_media"] == "1") {
+            fu_media_col = "1"
+        } else {
+            fu_media_col = "0"
+        }
+        if (data[sec, "blocked_reason"] != "") {
+            blocked_reason_col = data[sec, "blocked_reason"]
+        } else if (data[sec, "status"] == "ineligible") {
+            blocked_reason_col = "ineligible"
+        } else {
+            blocked_reason_col = ""
+        }
+        printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n", \
+            data[sec, "build"], data[sec, "arch"], "glb", \
+            data[sec, "os_family"], data[sec, "servicing_branch"], \
+            data[sec, "status"], data[sec, "ekb_source_build"], \
+            data[sec, "ekb_kb"], data[sec, "ekb_min_revision"], \
+            data[sec, "ekb_prereq_kb"], fu_media_col, blocked_reason_col > f7
+    }
+    close(f7)
+
+    # -------------------------------------------------------------------
     # Synchronize client/static/StaticUpdateIds-BuildUpgrades.txt
     # -------------------------------------------------------------------
     f_upg = tmp_dir "/static_upgrades.txt"
@@ -353,6 +392,24 @@ if [ "$check_only" = false ]; then
     cp -f "$tmp_builds_txt" "$builds_txt"
 fi
 
+# Synchronize client/UpdateTable/upgrades.txt - whole-file emission,
+# same mechanics as builds.txt above (plan 31-01)
+upgrades_txt="${repo_root}/client/UpdateTable/upgrades.txt"
+tmp_upgrades_txt="$tmp_dir/upgrades_txt_crlf.txt"
+sed 's/\r*$//' "$tmp_dir/upgrades_txt_data.txt" | sed 's/$/\r/' > "$tmp_upgrades_txt"
+
+if [ ! -f "$upgrades_txt" ] || ! cmp -s "$upgrades_txt" "$tmp_upgrades_txt"; then
+    drift_detected=true
+    if [ "$check_only" = true ]; then
+        echo "ERROR: File client/UpdateTable/upgrades.txt is out of sync with static/builds.ini."
+    fi
+fi
+
+if [ "$check_only" = false ]; then
+    mkdir -p "$(dirname "$upgrades_txt")"
+    cp -f "$tmp_upgrades_txt" "$upgrades_txt"
+fi
+
 # Synchronize client/static/StaticUpdateIds-BuildUpgrades.txt
 static_upgrades_file="${repo_root}/client/static/StaticUpdateIds-BuildUpgrades.txt"
 tmp_upgrades_crlf="$tmp_dir/static_upgrades_crlf.txt"
@@ -389,10 +446,10 @@ if [ "$check_only" = true ]; then
     if [ "$drift_detected" = true ]; then
         exit 1
     else
-        echo "All 3 build sites are in sync with static/builds.ini."
+        echo "All 3 build sites plus the builds.txt and upgrades.txt data files are in sync with static/builds.ini."
         exit 0
     fi
 else
-    echo "Successfully updated 3 build sites from static/builds.ini."
+    echo "Successfully updated 3 build sites plus the builds.txt and upgrades.txt data files from static/builds.ini."
     exit 0
 fi

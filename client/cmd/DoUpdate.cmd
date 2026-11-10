@@ -907,13 +907,28 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
 set OS_SEARCH_DIR=
 set WOU_BUILDUPGRADE_FOUNDEPKG=
 set WOU_BUILDUPGRADE_FOUNDEPKG=
-rem Chosen-target named refusals (DEC-32-03/07): fire BEFORE any install work and before
+rem Chosen-target named refusals (DEC-32-03/06/07): fire BEFORE any install work and before
 rem the empty-row silent skip - inert when no target is defined (the unchosen lane keeps
-rem today's silent-skip byte-for-byte)
-if defined WOU_UPGRADE_TARGET if "%WOU_BUILDUPGRADE_NEWBUILD%"=="" if not defined WOU_TARGET_SEEN (
-  echo Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! has no upgrade path from build %OS_VER_BUILD%
-  call :Log "Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! has no upgrade path from build %OS_VER_BUILD%"
-  goto SkipBuildUpgrade
+rem today's silent-skip byte-for-byte). A refused baseline queues nothing - never
+rem CU-then-EKB blind.
+if defined WOU_UPGRADE_TARGET if "%WOU_BUILDUPGRADE_NEWBUILD%"=="" (
+  if not defined WOU_TARGET_SEEN (
+    echo Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! has no upgrade path from build %OS_VER_BUILD%
+    call :Log "Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! has no upgrade path from build %OS_VER_BUILD%"
+    goto SkipBuildUpgrade
+  )
+  if "!WOU_TARGET_FOUND_EPKG!"=="0" (
+    echo Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! blocked: enablement package !WOU_TARGET_EPKG! missing from medium
+    call :Log "Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! blocked: enablement package !WOU_TARGET_EPKG! missing from medium"
+    goto SkipBuildUpgrade
+  )
+  if %OS_VER_REVIS% LSS !WOU_TARGET_MINREV! if "!WOU_TARGET_FOUND_PREUPD!"=="0" (
+    echo Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! blocked: baseline revision %OS_VER_REVIS% below required !WOU_TARGET_MINREV! and prerequisite CU !WOU_TARGET_PRE! missing from medium
+    call :Log "Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! blocked: baseline revision %OS_VER_REVIS% below required !WOU_TARGET_MINREV! and prerequisite CU !WOU_TARGET_PRE! missing from medium"
+    goto SkipBuildUpgrade
+  )
+  rem else fall through: the prerequisite CU is present - the existing prepare leg
+  rem installs it first (the normal PrepareBuildUpgrade path, unchanged)
 )
 if "%WOU_BUILDUPGRADE_OLDBUILD%"=="" goto SkipBuildUpgrade
 if "%WOU_BUILDUPGRADE_MINREVIS%"=="" goto SkipBuildUpgrade
@@ -930,28 +945,46 @@ if exist %SystemRoot%\Temp\wou_buildupgrade_prep_tried.txt del %SystemRoot%\Temp
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt del %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt
 if exist %SystemRoot%\Temp\wou_buildupgrade_tried.txt del %SystemRoot%\Temp\wou_buildupgrade_tried.txt
 
+rem The baseline shortcut is leg-aware (DEC-32-06): a perform record survives into
+rem the Perform leg so the build-advancement guard can see it; any other record
+rem (prepare or legacy) is wiped like before.
 if %OS_VER_REVIS% GEQ %WOU_BUILDUPGRADE_MINREVIS% (
-  if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
-  if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
+  set "WOU_UPG_ATTEMPT_LEG="
+  if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt for /f "usebackq tokens=4 delims=," %%l in ("%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt") do set "WOU_UPG_ATTEMPT_LEG=%%l"
+  if not "!WOU_UPG_ATTEMPT_LEG!"=="perform" (
+    if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
+    if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
+  )
   goto PerformBuildUpgrade
 )
 
 rem Prerequisite installation attempt tracking and loop guard
 set WOU_UPG_ATTEMPT_COUNT=0
 set WOU_UPG_PREV_REVIS=
+set WOU_UPG_PREV_BUILD=
+set WOU_UPG_PREV_LEG=
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt (
-  for /f "usebackq tokens=1,2 delims=," %%i in ("%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt") do (
+  for /f "usebackq tokens=1-4 delims=," %%i in ("%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt") do (
     set WOU_UPG_ATTEMPT_COUNT=%%i
     set WOU_UPG_PREV_REVIS=%%j
+    set WOU_UPG_PREV_BUILD=%%k
+    set WOU_UPG_PREV_LEG=%%l
   )
 ) else if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt (
-  for /f "usebackq tokens=1,2 delims=," %%i in ("%SystemRoot%\Temp\wou_buildupgrade_attempts.txt") do (
+  for /f "usebackq tokens=1-4 delims=," %%i in ("%SystemRoot%\Temp\wou_buildupgrade_attempts.txt") do (
     set WOU_UPG_ATTEMPT_COUNT=%%i
     set WOU_UPG_PREV_REVIS=%%j
+    set WOU_UPG_PREV_BUILD=%%k
+    set WOU_UPG_PREV_LEG=%%l
   )
 )
 
-if "!WOU_UPG_PREV_REVIS!"=="%OS_VER_REVIS%" (
+rem Per-leg fresh counter (DEC-32-06): a leg change resets the counter; within the
+rem prepare leg the revision keying is unchanged. Legacy 2-field records carry no
+rem leg token and start a fresh counter (the build-stall check stays inert for them).
+if not "!WOU_UPG_PREV_LEG!"=="prepare" (
+  set WOU_UPG_ATTEMPT_COUNT=1
+) else if "!WOU_UPG_PREV_REVIS!"=="%OS_VER_REVIS%" (
   set /a WOU_UPG_ATTEMPT_COUNT+=1
 ) else (
   set WOU_UPG_ATTEMPT_COUNT=1
@@ -965,7 +998,7 @@ if !WOU_UPG_ATTEMPT_COUNT! GTR 2 (
   if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
   goto SkipBuildUpgrade
 )
-echo !WOU_UPG_ATTEMPT_COUNT!,%OS_VER_REVIS%>%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
+echo !WOU_UPG_ATTEMPT_COUNT!,%OS_VER_REVIS%,%OS_VER_BUILD%,prepare>%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
 
 :PrepareBuildUpgrade
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_prep_tried.txt goto SkipBuildUpgrade
@@ -990,6 +1023,40 @@ goto BuildUpgradeComplete
 :PerformBuildUpgrade
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt goto SkipBuildUpgrade
 if exist %SystemRoot%\Temp\wou_buildupgrade_tried.txt goto SkipBuildUpgrade
+rem Build-advancement keying on the SAME attempts file (DEC-32-06): the perform leg
+rem stalls out after GTR 2 attempts on a stagnant build; a DIFFERENT recorded build
+rem means the EKB advanced the OS - clear the record and proceed normally.
+set WOU_PERFORM_COUNT=1
+set WOU_UPG_PERFORM_PREV_BUILD=
+set WOU_UPG_PERFORM_PREV_LEG=
+if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt (
+  for /f "usebackq tokens=1,3,4 delims=," %%i in ("%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt") do (
+    set WOU_PERFORM_COUNT=%%i
+    set WOU_UPG_PERFORM_PREV_BUILD=%%j
+    set WOU_UPG_PERFORM_PREV_LEG=%%k
+  )
+)
+if defined WOU_UPGRADE_TARGET if "!WOU_UPG_PERFORM_PREV_LEG!"=="perform" (
+  if not "!WOU_UPG_PERFORM_PREV_BUILD!"=="%OS_VER_BUILD%" (
+    rem the EKB advanced the OS build - clear the stale record and proceed normally
+    set WOU_PERFORM_COUNT=1
+    if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
+    if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
+  ) else (
+    set /a WOU_PERFORM_COUNT+=1
+    if !WOU_PERFORM_COUNT! GTR 2 (
+      echo Warning: EKB apply did not advance the OS build ^(still %OS_VER_BUILD%^) - halting to prevent infinite reboot loop
+      call :Log "Warning: EKB apply did not advance the OS build (still %OS_VER_BUILD%) - halting to prevent infinite reboot loop"
+      if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
+      if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
+      if exist %WOU_TEMP_DIR%\wou_buildupgrade_prep_tried.txt del %WOU_TEMP_DIR%\wou_buildupgrade_prep_tried.txt
+      if exist %SystemRoot%\Temp\wou_buildupgrade_prep_tried.txt del %SystemRoot%\Temp\wou_buildupgrade_prep_tried.txt
+      if exist %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt del %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt
+      if exist %SystemRoot%\Temp\wou_buildupgrade_tried.txt del %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt
+      goto SkipBuildUpgrade
+    )
+  )
+)
 echo. >%WOU_TEMP_DIR%\wou_buildupgrade_tried.txt
 echo Performing feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD%...
 call :Log "Info: Performing feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD%"
@@ -1005,6 +1072,9 @@ if "%ERR_LEVEL%"=="3010" (
 ) else if "%ERR_LEVEL%" NEQ "0" (
   goto InstError
 )
+rem persist the perform record for the build-advancement guard on the next resume
+rem (DEC-32-06) - written after the install handshake, before the reboot path
+echo !WOU_PERFORM_COUNT!,%OS_VER_REVIS%,%OS_VER_BUILD%,perform>%WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
 goto BuildUpgradeComplete
 :BuildUpgradeComplete
 rem FIXME 12.5 (b69)

@@ -12,8 +12,11 @@
 #   State 5: Convergence run (build 26200.5074) -> upgrade skipped -> 0
 #   State 6: Infinite loop guard -> revision stagnant -> halts safely -> 0
 #   State 7: Target-scoped match (/upgradeos:26200) -> only 26200 wins, 26999 never
+#   State 8: Chosen target, EKB payload absent -> missing-enablement refusal -> 0
+#   State 9: Baseline below min revision + prereq CU absent -> loud refusal -> 0
 #   State 10: Chosen target with no upgrade path -> loud refusal -> 0
 #   State 11: Observed convergence (build == target) -> report + purge -> 0
+#   State 12: Perform-stall guard (stagnant build) -> halts safely -> 0
 # =======================================================================
 
 set -e
@@ -58,7 +61,8 @@ CYCLE_EXIT_CODE=0
 
 # Build upgrade state machine evaluator (parity with client/cmd/DoUpdate.cmd
 # including target scoping: WOU_ROW_ALLOWED guard, chosen-row capture, the
-# observed-convergence report, and the no-upgrade-path refusal)
+# observed-convergence report, all chosen-lane refusals, and the extended
+# count,revision,build,leg attempts format with the build-keyed perform stall)
 run_build_upgrade_evaluator() {
     local os_build="$1"
     local os_revis="$2"
@@ -147,14 +151,35 @@ run_build_upgrade_evaluator() {
     fi
 
     # Chosen-target named refusals: fire BEFORE the empty-row silent skip - inert
-    # when no target is defined (parity: refusal block before the empty-row gotos)
-    if [[ -n "$chosen_target" && -z "$matched_newbuild" && -z "$target_seen" ]]; then
-        echo "Warning: Chosen upgrade target ${chosen_target} has no upgrade path from build ${os_build}"
-        rm -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
-        rm -f "${mock_sys_temp}/wou_buildupgrade_tried.txt"
-        rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
-        CYCLE_EXIT_CODE=0
-        return 0
+    # when no target is defined (parity: refusal block before the empty-row gotos).
+    # A refused baseline queues nothing - never CU-then-EKB blind.
+    if [[ -n "$chosen_target" && -z "$matched_newbuild" ]]; then
+        if [[ -z "$target_seen" ]]; then
+            echo "Warning: Chosen upgrade target ${chosen_target} has no upgrade path from build ${os_build}"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_tried.txt"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+            CYCLE_EXIT_CODE=0
+            return 0
+        fi
+        if [[ "$target_found_epkg" == "0" ]]; then
+            echo "Warning: Chosen upgrade target ${chosen_target} blocked: enablement package ${target_epkg} missing from medium"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_tried.txt"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+            CYCLE_EXIT_CODE=0
+            return 0
+        fi
+        if (( os_revis < target_minrev )) && [[ "$target_found_preupd" == "0" ]]; then
+            echo "Warning: Chosen upgrade target ${chosen_target} blocked: baseline revision ${os_revis} below required ${target_minrev} and prerequisite CU ${target_pre} missing from medium"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_tried.txt"
+            rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+            CYCLE_EXIT_CODE=0
+            return 0
+        fi
+        # else fall through: the prerequisite CU is present - the existing prepare
+        # leg installs it first (the normal prepare path, unchanged)
     fi
 
     # Convergence / Skip: If no upgrade applies, clean all markers and exit 0
@@ -172,10 +197,52 @@ run_build_upgrade_evaluator() {
 
     # Threshold met: Proceed to PerformBuildUpgrade
     if (( os_revis >= matched_minrevis )); then
-        rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+        # Leg-aware shortcut (parity: DEC-32-06) - a perform record survives into
+        # the Perform leg so the build-advancement guard can see it
+        local shortcut_leg=""
+        if [[ -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
+            shortcut_leg="$(head -n 1 "${mock_sys_temp}/wou_buildupgrade_attempts.txt" | tr -d '\r\n' | cut -d',' -f4)"
+        fi
+        if [[ "$shortcut_leg" != "perform" ]]; then
+            rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+        fi
+
+        # Build-advancement keying on the SAME attempts file (parity:
+        # :PerformBuildUpgrade entry, DEC-32-06) - stalls out after GTR 2 attempts
+        # on a stagnant build; a DIFFERENT recorded build clears the record
+        local perform_count=1
+        local perform_prev_build=""
+        local perform_prev_leg=""
+        if [[ -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
+            local perform_line
+            perform_line="$(head -n 1 "${mock_sys_temp}/wou_buildupgrade_attempts.txt" | tr -d '\r\n')"
+            perform_count="$(echo "$perform_line" | cut -d',' -f1)"
+            perform_prev_build="$(echo "$perform_line" | cut -d',' -f3)"
+            perform_prev_leg="$(echo "$perform_line" | cut -d',' -f4)"
+        fi
+        if [[ -n "$chosen_target" && "$perform_prev_leg" == "perform" ]]; then
+            if [[ "$perform_prev_build" != "$os_build" ]]; then
+                perform_count=1
+                rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+            else
+                perform_count=$((perform_count + 1))
+                if (( perform_count > 2 )); then
+                    echo "Warning: EKB apply did not advance the OS build (still ${os_build}) - halting to prevent infinite reboot loop"
+                    rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+                    rm -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
+                    rm -f "${mock_sys_temp}/wou_buildupgrade_tried.txt"
+                    CYCLE_EXIT_CODE=0
+                    return 0
+                fi
+            fi
+        fi
+
         touch "${mock_sys_temp}/wou_buildupgrade_tried.txt"
         echo "Performing feature upgrade from build ${matched_oldbuild} to ${matched_newbuild}..."
         echo "$matched_epkgid" >> "${mock_temp}/MissingUpdateIds.txt"
+        # persist the perform record for the build-advancement guard on the next
+        # resume (parity: END of Perform block, before the reboot path)
+        printf '%s,%s,%s,%s\n' "$perform_count" "$os_revis" "$os_build" "perform" > "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
         CYCLE_EXIT_CODE=3011
         return 195 2>/dev/null || return 1
     fi
@@ -183,14 +250,21 @@ run_build_upgrade_evaluator() {
     # Threshold NOT met: Prerequisite attempt tracking & loop guard
     local attempt_count=0
     local prev_revis=""
+    local prev_leg=""
     if [[ -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
         local raw_line
         raw_line="$(head -n 1 "${mock_sys_temp}/wou_buildupgrade_attempts.txt" | tr -d '\r\n')"
         attempt_count="$(echo "$raw_line" | cut -d',' -f1)"
         prev_revis="$(echo "$raw_line" | cut -d',' -f2)"
+        prev_leg="$(echo "$raw_line" | cut -d',' -f4)"
     fi
 
-    if [[ "$prev_revis" == "$os_revis" ]]; then
+    # Per-leg fresh counter (parity: DEC-32-06) - a leg change resets the counter;
+    # within the prepare leg the revision keying is unchanged. Legacy 2-field
+    # records carry no leg token and start a fresh counter.
+    if [[ "$prev_leg" != "prepare" ]]; then
+        attempt_count=1
+    elif [[ "$prev_revis" == "$os_revis" ]]; then
         attempt_count=$((attempt_count + 1))
     else
         attempt_count=1
@@ -206,7 +280,7 @@ run_build_upgrade_evaluator() {
         return 0
     fi
 
-    printf '%s,%s\n' "$attempt_count" "$os_revis" > "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+    printf '%s,%s,%s,%s\n' "$attempt_count" "$os_revis" "$os_build" "prepare" > "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
     touch "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
     echo "Preparing feature upgrade from build ${matched_oldbuild} to ${matched_newbuild}..."
     echo "$matched_preupd" > "${mock_temp}/MissingUpdateIds.txt"
@@ -277,8 +351,11 @@ if ! grep -q "kb5054156" "${mock_temp}/MissingUpdateIds.txt" 2>/dev/null; then
     echo "FAIL: State 3 expected kb5054156 queued in MissingUpdateIds.txt." >&2
     exit 1
 fi
-if [[ -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
-    echo "FAIL: State 3 expected wou_buildupgrade_attempts.txt to be cleared on threshold met." >&2
+# (32-03) The perform leg now persists a build-keyed record for the next resume
+# (DEC-32-06): the leg-aware shortcut deleted the prepare record and the Perform
+# leg wrote the perform record - assert the record, not absence.
+if ! grep -q "1,5074,26100,perform" "${mock_sys_temp}/wou_buildupgrade_attempts.txt" 2>/dev/null; then
+    echo "FAIL: State 3 expected the perform record 1,5074,26100,perform after the Perform leg." >&2
     exit 1
 fi
 echo "[PASS] State 3: Perform run triggered PerformBuildUpgrade (exit 3011, eKB kb5054156 queued)."
@@ -430,11 +507,79 @@ if ! grep -q "kb5064081" "${mock_temp}/MissingUpdateIds.txt" 2>/dev/null; then
     echo "FAIL: State 7 expected kb5064081 queued in MissingUpdateIds.txt." >&2
     exit 1
 fi
-if ! grep -q "1,1000" "${mock_sys_temp}/wou_buildupgrade_attempts.txt" 2>/dev/null; then
-    echo "FAIL: State 7 expected attempt counter 1,1000 in attempts tracker." >&2
+if ! grep -q "1,1000,26100,prepare" "${mock_sys_temp}/wou_buildupgrade_attempts.txt" 2>/dev/null; then
+    echo "FAIL: State 7 expected the attempts record 1,1000,26100,prepare." >&2
     exit 1
 fi
 echo "[PASS] State 7: target-scoped selection held (only 26200 won; 26999 never won)."
+
+# -----------------------------------------------------------------------
+# State 8: Chosen Target With The EKB Payload Absent (missing-enablement refusal)
+# -----------------------------------------------------------------------
+echo "[Test 8/12] State 8: Chosen target with the EKB payload absent - missing-enablement refusal..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+mv "${mock_glb}/windows11.0-kb5054156-x64.cab" "${tmp_dir}/state8_stash_epkg.cab"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 1000 26200 > "${tmp_dir}/state8.out" 2>&1
+set -e
+state8_exit="$CYCLE_EXIT_CODE"
+mv "${tmp_dir}/state8_stash_epkg.cab" "${mock_glb}/windows11.0-kb5054156-x64.cab"
+
+if (( state8_exit != 0 )); then
+    echo "FAIL: State 8 expected exit code 0 [refusal, no reboot], got ${state8_exit}." >&2
+    cat "${tmp_dir}/state8.out" >&2
+    exit 1
+fi
+if ! grep -qF "Warning: Chosen upgrade target 26200 blocked: enablement package kb5054156 missing from medium" "${tmp_dir}/state8.out"; then
+    echo "FAIL: State 8 expected the missing-enablement refusal literal verbatim." >&2
+    cat "${tmp_dir}/state8.out" >&2
+    exit 1
+fi
+if [[ -f "${mock_temp}/MissingUpdateIds.txt" ]]; then
+    echo "FAIL: State 8 expected nothing queued in MissingUpdateIds.txt." >&2
+    exit 1
+fi
+if [[ -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt" || -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
+    echo "FAIL: State 8 expected markers purged after the refusal." >&2
+    exit 1
+fi
+echo "[PASS] State 8: missing-enablement refusal fired verbatim (exit 0, nothing queued)."
+
+# -----------------------------------------------------------------------
+# State 9: Baseline Below Min Revision And Prereq CU Absent
+# -----------------------------------------------------------------------
+echo "[Test 9/12] State 9: Baseline revision below required and prereq CU absent - baseline+prereq refusal..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+mv "${mock_glb}/windows11.0-kb5064081-x64.cab" "${tmp_dir}/state9_stash_pre.cab"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 1000 26200 > "${tmp_dir}/state9.out" 2>&1
+set -e
+state9_exit="$CYCLE_EXIT_CODE"
+mv "${tmp_dir}/state9_stash_pre.cab" "${mock_glb}/windows11.0-kb5064081-x64.cab"
+
+if (( state9_exit != 0 )); then
+    echo "FAIL: State 9 expected exit code 0 [refusal, no reboot], got ${state9_exit}." >&2
+    cat "${tmp_dir}/state9.out" >&2
+    exit 1
+fi
+if ! grep -qF "Warning: Chosen upgrade target 26200 blocked: baseline revision 1000 below required 5074 and prerequisite CU kb5064081 missing from medium" "${tmp_dir}/state9.out"; then
+    echo "FAIL: State 9 expected the baseline+prereq refusal literal verbatim." >&2
+    cat "${tmp_dir}/state9.out" >&2
+    exit 1
+fi
+if [[ -f "${mock_temp}/MissingUpdateIds.txt" ]]; then
+    echo "FAIL: State 9 expected nothing queued in MissingUpdateIds.txt." >&2
+    exit 1
+fi
+if [[ -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt" || -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
+    echo "FAIL: State 9 expected markers purged after the refusal." >&2
+    exit 1
+fi
+echo "[PASS] State 9: baseline+prereq refusal fired verbatim naming revision and CU (exit 0)."
 
 # -----------------------------------------------------------------------
 # State 10: Chosen Target With No Upgrade Path
@@ -501,10 +646,64 @@ fi
 echo "[PASS] State 11: observed convergence reported and all markers purged (exit 0)."
 
 # -----------------------------------------------------------------------
+# State 12: Perform-Leg Stall Guard (build stagnant across perform attempts)
+# -----------------------------------------------------------------------
+echo "[Test 12/12] State 12: Perform-stall guard (EKB apply does not advance the OS build)..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+# Seed a perform record for build 26100: the first stagnant attempt is already recorded
+printf '1,5074,26100,perform\n' > "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+
+# Run 1 at the same stagnant build -> counter advances to 2, perform leg proceeds
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 5074 26200 > "${tmp_dir}/state12_run1.out" 2>&1
+set -e
+state12a_exit="$CYCLE_EXIT_CODE"
+
+if (( state12a_exit != 3011 )); then
+    echo "FAIL: State 12 run 1 expected exit code 3011 (stall not yet reached), got ${state12a_exit}." >&2
+    cat "${tmp_dir}/state12_run1.out" >&2
+    exit 1
+fi
+if ! grep -q "2,5074,26100,perform" "${mock_sys_temp}/wou_buildupgrade_attempts.txt" 2>/dev/null; then
+    echo "FAIL: State 12 run 1 expected the record to advance to 2,5074,26100,perform." >&2
+    exit 1
+fi
+
+# Run 2 at the same stagnant build -> counter 3 exceeds GTR 2 -> halt, purge, exit 0
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 5074 26200 > "${tmp_dir}/state12_run2.out" 2>&1
+set -e
+state12b_exit="$CYCLE_EXIT_CODE"
+
+if (( state12b_exit != 0 )); then
+    echo "FAIL: State 12 run 2 expected exit code 0 [halted loop], got ${state12b_exit}." >&2
+    cat "${tmp_dir}/state12_run2.out" >&2
+    exit 1
+fi
+if ! grep -qF "Warning: EKB apply did not advance the OS build (still 26100) - halting to prevent infinite reboot loop" "${tmp_dir}/state12_run2.out"; then
+    echo "FAIL: State 12 run 2 expected the perform-stall literal verbatim." >&2
+    cat "${tmp_dir}/state12_run2.out" >&2
+    exit 1
+fi
+if [[ -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" || -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt" || -f "${mock_sys_temp}/wou_buildupgrade_tried.txt" ]]; then
+    echo "FAIL: State 12 run 2 expected all attempts and markers purged on the stall halt." >&2
+    exit 1
+fi
+if [[ -f "${mock_temp}/MissingUpdateIds.txt" ]]; then
+    echo "FAIL: State 12 run 2 should not have queued missing update IDs on the stall halt." >&2
+    exit 1
+fi
+echo "[PASS] State 12: perform stall halted verbatim and purged (third stagnant attempt, exit 0)."
+
+# -----------------------------------------------------------------------
 # All Passed
 # -----------------------------------------------------------------------
 echo ""
 echo "======================================================================="
-echo "SUCCESS: All 9 implemented reboot cycle regression states passed (12 planned)."
+echo "SUCCESS: All 12 reboot cycle regression states passed successfully."
 echo "======================================================================="
 exit 0

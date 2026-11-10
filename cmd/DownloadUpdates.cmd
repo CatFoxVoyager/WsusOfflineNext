@@ -1661,6 +1661,34 @@ del "%TEMP%\BundledUpdateRevisionAndFileIds.txt"
 del "%TEMP%\UpdateCabExeIdsAndLocations.txt"
 del "%TEMP%\existing-bundle-revision-ids.txt"
 
+rem *** OS Upgrades chosen-target selection (DEC-32-04, DEC-32-08) ***
+rem Reads ONLY the flat twin sh/os-upgrades.ini - never the sectioned
+rem Windows10Versions.ini (the flat reader would conflate the grammars).
+rem Grammar per line: ^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$ ; ANY
+rem violating line voids the ENTIRE selection (T-32-01, T-26-03 rule) -
+rem invalid means NO selection, never a partial one. Absent file, bad
+rem grammar or empty result all leave TMP_UPG_TARGETS undefined, which
+rem keeps the shield feed byte-identical to the unfiltered statu quo
+rem (owner-locked non-regression). NOTE: the findstr $ anchor matches
+rem CRLF lines as emitted by the canonical .NET writer on Windows hosts;
+rem an LF-only hand-edited file voids to no-selection (fail-closed).
+set TMP_UPG_TARGETS=
+set TMP_UPG_SEL_BAD=
+if exist ..\sh\os-upgrades.ini (
+  findstr /R /V /C:"^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$" /C:"^$" "..\sh\os-upgrades.ini" >nul 2>&1
+  if not errorlevel 1 set TMP_UPG_SEL_BAD=1
+  if not defined TMP_UPG_SEL_BAD (
+    for /F "delims=_ tokens=1" %%i in (..\sh\os-upgrades.ini) do (
+      if "!TMP_UPG_TARGETS!"=="" (
+        set TMP_UPG_TARGETS=%%i
+      ) else (
+        echo "!TMP_UPG_TARGETS!" | find "%%i" >nul 2>&1
+        if errorlevel 1 set TMP_UPG_TARGETS=!TMP_UPG_TARGETS! %%i
+      )
+    )
+  )
+)
+
 rem *** Step 5: Apply ExcludeList-superseded-exclude(-seconly).txt [target: ExcludeList-superseded(-seconly).txt] ***
 
 if exist ..\exclude\ExcludeList-superseded-exclude.txt copy /Y ..\exclude\ExcludeList-superseded-exclude.txt "%TEMP%\ExcludeList-superseded-exclude.txt" >nul
@@ -1675,13 +1703,37 @@ for %%i in (upd1 upd2) do (
     echo windows8.1-%%j>>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
   )
 )
-for /F "tokens=3 delims=," %%c in (..\client\static\StaticUpdateIds-BuildUpgrades.txt) do (
-  echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude.txt"
-  echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
+rem Chosen-target filter on the shield feed (DEC-32-05): with a valid
+rem selection, only hop rows whose newbuild (field 4, %%d) is a chosen
+rem target keep their prereq-KB exemption; with NO selection the feed is
+rem byte-identical to the unfiltered statu quo. %%c stays the prereq-KB
+rem field - the echo lines below are byte-identical. The x prefix gives
+rem every space-list entry a preceding space so find " %%d" also matches
+rem the first target. Filter at consumption only - the committed hop
+rem files are never rewritten (T-32-02).
+for /F "tokens=3,4 delims=," %%c in (..\client\static\StaticUpdateIds-BuildUpgrades.txt) do (
+  set TMP_UPG_EMIT=0
+  if not defined TMP_UPG_TARGETS set TMP_UPG_EMIT=1
+  if defined TMP_UPG_TARGETS (
+    echo x !TMP_UPG_TARGETS! | find " %%d" >nul 2>&1
+    if not errorlevel 1 set TMP_UPG_EMIT=1
+  )
+  if "!TMP_UPG_EMIT!"=="1" (
+    echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude.txt"
+    echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
+  )
 )
-for /F "tokens=3 delims=," %%c in (..\client\static\StaticUpdateIds-BuildUpgradesForced.txt) do (
-  echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude.txt"
-  echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
+for /F "tokens=3,4 delims=," %%c in (..\client\static\StaticUpdateIds-BuildUpgradesForced.txt) do (
+  set TMP_UPG_EMIT=0
+  if not defined TMP_UPG_TARGETS set TMP_UPG_EMIT=1
+  if defined TMP_UPG_TARGETS (
+    echo x !TMP_UPG_TARGETS! | find " %%d" >nul 2>&1
+    if not errorlevel 1 set TMP_UPG_EMIT=1
+  )
+  if "!TMP_UPG_EMIT!"=="1" (
+    echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude.txt"
+    echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
+  )
 )
 
 if exist ..\exclude\ExcludeList-superseded-exclude-seconly.txt (

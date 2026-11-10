@@ -919,24 +919,44 @@ namespace WSUSOffline.Generator
             string win10Ini = Path.Combine(root, "Windows10Versions.ini");
             if (File.Exists(win10Ini))
             {
-                // Previously-known [OS Upgrades] keys, collected BEFORE
-                // the rewrite below destroys the prior section - they are
-                // what the emit-side collapse flips to Disabled when they
-                // are not part of the current selection (multi-EKB grammar
-                // (DEC-32-02)).
+                // Previously-known [OS Upgrades] state, collected BEFORE
+                // the rewrite below destroys the prior section: the key
+                // NAMES are what the emit-side collapse flips to Disabled
+                // when they are not part of the current selection
+                // (multi-EKB grammar (DEC-32-02)); the verbatim section
+                // lines and the prior Enabled keys feed the legacy-save
+                // mirror-sync below (a payload without the "upgrade"
+                // property preserves the section and re-derives the twin
+                // from it instead of collapsing it).
                 var knownUpgradeKeys = new List<string>();
+                var priorUpgradeSectionLines = new List<string>();
+                var priorEnabledUpgradeKeys = new List<string>();
                 bool inUpgSection = false;
                 foreach (string prior in File.ReadAllLines(win10Ini))
                 {
                     string t = prior.Trim();
                     if (t.StartsWith("[") && t.EndsWith("]"))
                     {
-                        inUpgSection = t.Equals("[OS Upgrades]", StringComparison.OrdinalIgnoreCase);
+                        bool isUpgSection = t.Equals("[OS Upgrades]", StringComparison.OrdinalIgnoreCase);
+                        if (isUpgSection)
+                        {
+                            priorUpgradeSectionLines.Add(prior);
+                        }
+                        inUpgSection = isUpgSection;
                         continue;
                     }
-                    if (inUpgSection && t.Contains("="))
+                    if (inUpgSection)
                     {
-                        knownUpgradeKeys.Add(t.Split('=', 2)[0].Trim());
+                        priorUpgradeSectionLines.Add(prior);
+                        if (t.Contains("="))
+                        {
+                            var priorParts = t.Split('=', 2);
+                            knownUpgradeKeys.Add(priorParts[0].Trim());
+                            if (priorParts[1].Trim().Equals("Enabled", StringComparison.OrdinalIgnoreCase))
+                            {
+                                priorEnabledUpgradeKeys.Add(priorParts[0].Trim());
+                            }
+                        }
                     }
                 }
 
@@ -963,7 +983,29 @@ namespace WSUSOffline.Generator
                 // (sectioned readers); the bash twin is a SEPARATE flat
                 // file - never appended to windows-10-versions.ini, the
                 // flat build reader would conflate the grammars (Pitfall 4).
-                WriteOsUpgradesSection(lines, payload, knownUpgradeKeys);
+                //
+                // Branch contract (probed ONCE here, shared with the twin
+                // write below): the GUI has no upgrade picker until Phase
+                // 36, so a payload WITHOUT the "upgrade" property is a
+                // legacy save that expresses NO opinion about the
+                // selection - the prior section is carried over verbatim
+                // (keys AND Enabled values; recomputing it here would
+                // collapse every prior key to Disabled, and the next
+                // legacy save would then find no Enabled keys and
+                // silently destroy a hand-seeded selection two saves
+                // apart). Only an EXPLICIT "upgrade" property (Phase-36
+                // picker era) rewrites the section: every selected key
+                // Enabled, prior keys not chosen collapse to Disabled,
+                // present-but-empty = explicit cleared save.
+                List<string> upgradeSelection = GetUpgradePayloadSelection(payload, out bool upgradePayloadPresent);
+                if (upgradePayloadPresent)
+                {
+                    WriteOsUpgradesSection(lines, payload, knownUpgradeKeys);
+                }
+                else
+                {
+                    lines.AddRange(priorUpgradeSectionLines);
+                }
                 File.WriteAllLines(win10Ini, lines);
 
                 var bashLines = new List<string>();
@@ -986,16 +1028,29 @@ namespace WSUSOffline.Generator
                     File.WriteAllLines(Path.Combine(root, "sh", "windows-10-versions.ini"), bashLines);
                 }
 
-                // Flat bash twin: one "<build>_<arch>=on" line per chosen
-                // EKB target (multi-EKB grammar (DEC-32-02)), nothing when
-                // none - a cleared selection must not leave a stale twin
-                // behind.
-                List<string> upgradeSelection = GetUpgradePayloadSelection(payload);
-                string upgradeFlat = Path.Combine(root, "sh", "os-upgrades.ini");
-                if (upgradeSelection.Count > 0)
+                // Flat bash twin (DEC-32-08: the pipelines read ONLY this
+                // file): one "<build>_<arch>=on" line per chosen EKB
+                // target (multi-EKB grammar (DEC-32-02)). Which key list
+                // feeds it is the same absent/present branch as the
+                // section above:
+                //   - "upgrade" PRESENT, non-empty -> the selection
+                //     (Phase-36 picker era, unchanged);
+                //   - "upgrade" PRESENT but empty/voided -> nothing - a
+                //     cleared save must not leave a stale twin behind;
+                //   - "upgrade" ABSENT (legacy save, no picker until
+                //     Phase 36) -> the prior Enabled keys, mirroring the
+                //     section carried over verbatim above; no Enabled
+                //     key = no twin (delete if one exists).
+                List<string> twinKeys = upgradeSelection;
+                if (twinKeys.Count == 0 && !upgradePayloadPresent)
                 {
-                    var upgradeFlatLines = new List<string>(upgradeSelection.Count);
-                    foreach (string upgradeKey in upgradeSelection)
+                    twinKeys = priorEnabledUpgradeKeys;
+                }
+                string upgradeFlat = Path.Combine(root, "sh", "os-upgrades.ini");
+                if (twinKeys.Count > 0)
+                {
+                    var upgradeFlatLines = new List<string>(twinKeys.Count);
+                    foreach (string upgradeKey in twinKeys)
                     {
                         upgradeFlatLines.Add(upgradeKey + "=on");
                     }
@@ -1089,15 +1144,28 @@ namespace WSUSOffline.Generator
         /// empty property = empty list = no selection. Duplicate keys
         /// collapse to one target. The pipeline switch form for Phases
         /// 33/36 is /includeupgrade:&lt;build&gt; (DEC-08 - spelled here,
-        /// NOT implemented; no consumer exists yet).
+        /// NOT implemented; no consumer exists yet). payloadPresent
+        /// separates ABSENT (legacy save: the caller mirrors the
+        /// preserved prior section) from present-but-empty (explicit
+        /// cleared save: the caller deletes the twin) - the two must
+        /// never share a branch.
         /// </summary>
         private static List<string> GetUpgradePayloadSelection(JsonElement payload)
         {
+            // Single-arg form: presence is irrelevant to the internal
+            // selection derivation (WriteOsUpgradesSection's collapse).
+            return GetUpgradePayloadSelection(payload, out _);
+        }
+
+        private static List<string> GetUpgradePayloadSelection(JsonElement payload, out bool payloadPresent)
+        {
             var selected = new List<string>();
+            payloadPresent = false;
             if (!payload.TryGetProperty("upgrade", out var upg))
             {
                 return selected;
             }
+            payloadPresent = true;
             if (upg.ValueKind == JsonValueKind.String)
             {
                 string value = (upg.GetString() ?? "").Trim();
@@ -1172,7 +1240,10 @@ namespace WSUSOffline.Generator
         /// voids the whole selection (GetUpgradePayloadSelection), so the
         /// section can never carry a partial selection. With no selection
         /// and no known keys the section is omitted entirely - absence
-        /// defaults to no-upgrade-selected (Pitfall 7).
+        /// defaults to no-upgrade-selected (Pitfall 7). The caller only
+        /// invokes this writer for an EXPLICIT "upgrade" payload property -
+        /// a legacy save without one carries the prior section over
+        /// verbatim instead (SaveIniFiles).
         /// </summary>
         private static void WriteOsUpgradesSection(List<string> lines, JsonElement payload, IReadOnlyList<string> knownUpgradeKeys)
         {

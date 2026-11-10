@@ -160,7 +160,7 @@ if %PIPELINE_TARGETS_COUNT% LSS 6 (
   echo FAIL: DownloadUpdates.cmd carries only %PIPELINE_TARGETS_COUNT% TMP_UPG_TARGETS sites ^(reader + both loop guards expect 6 or more^)
   goto Fail
 )
-echo [PASS] DownloadUpdates.cmd: TMP_UPG_TARGETS site count = %PIPELINE_TARGETS_COUNT% (>= 6)
+echo [PASS] DownloadUpdates.cmd: TMP_UPG_TARGETS site count = %PIPELINE_TARGETS_COUNT% (expected 6 or more)
 
 findstr /C:"TMP_UPG_SEL_BAD" "%PIPELINE_CMD%" >nul 2>&1
 if errorlevel 1 (

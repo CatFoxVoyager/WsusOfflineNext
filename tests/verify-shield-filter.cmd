@@ -164,6 +164,27 @@ if errorlevel 1 (
 )
 echo PASS: case 6 - CRLF fixture parses to the case-2 feed.
 
+echo --- Cross-tier link: bash shield-filter twin - both must be green ---
+rem Resolve a bash interpreter: bare PATH first, Git for Windows fallback
+rem (31-04 contract-twin invocation idiom). The CMD sentinel below is
+rem only emitted when the bash twin exits 0 - the cross-tier link is
+rem silent when green.
+set "BASH_EXE=bash"
+where bash >nul 2>&1
+if errorlevel 1 (
+  if exist "%ProgramFiles%\Git\bin\bash.exe" (
+    set "BASH_EXE=%ProgramFiles%\Git\bin\bash.exe"
+  )
+)
+set "BASH_TWIN=%REPO_ROOT:\=/%\sh\tests\verify-shield-filter.bash"
+echo [RUN ] invoking the bash shield-filter twin via "%BASH_EXE%" ...
+"%BASH_EXE%" "%BASH_TWIN%"
+if errorlevel 1 (
+  echo FAIL: the bash shield-filter twin did not exit 0 - cross-tier parity broken
+  goto Fail
+)
+echo [PASS] bash shield-filter twin exit 0
+
 echo.
 echo =======================================================================
 echo SHIELD-FILTER-CMD-PASS: all 6 shield-filter cases green.

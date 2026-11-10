@@ -221,11 +221,17 @@ function rebuild_superseded_updates ()
 {
     local -a excludelist_overrides=()
     local -a excludelist_overrides_seconly=()
+    local -a upg_targets=()
     local current_file=""
     local field_1=""
     local field_2=""
+    local field_4=""
     local kb_number=""
     local skip_rest=""
+    local upg_emit=0
+    local upg_selection=""
+    local upg_selection_file=""
+    local upg_target=""
 
     # Delete existing files, just to be sure
     rm -f "../exclude/ExcludeList-Linux-superseded.txt"
@@ -480,6 +486,24 @@ function rebuild_superseded_updates ()
           printf '%s\n' "windows8.1-${kb_number}"
       done > "${temp_dir}/w63-kb-numbers.txt"
 
+    # Read the chosen EKB upgrade targets (Phase 32, DEC-32-05)
+    #
+    # The selection lives in the flat twin os-upgrades.ini, resolved as
+    # a bare sibling filename (tasks are sourced with cwd = sh/, the
+    # same convention as the w100_versions_file reader). The library
+    # reader returns one "<build>_<arch>" key per line: an absent or
+    # invalid file yields no output at all, and the walk below keeps
+    # the statu-quo feed for both cases. Only the build-number part
+    # (everything before the underscore) is needed here - the same
+    # build-part membership the CMD reader freezes.
+    upg_selection_file="os-upgrades.ini"
+    upg_targets=()
+
+    while IFS= read -r upg_selection
+    do
+        upg_targets+=( "${upg_selection%%_*}" )
+    done < <(read_upgrade_selection "${upg_selection_file}")
+
     # Create a list of Windows 10 build upgrades
     #
     # This was introduced in Community Edition 12.6.1 (b1) and corrected
@@ -489,9 +513,31 @@ function rebuild_superseded_updates ()
     cat_existing_files                                            \
         ../client/static/StaticUpdateIds-BuildUpgrades.txt        \
         ../client/static/StaticUpdateIds-BuildUpgradesForced.txt  \
-    | while IFS=$',\r\n' read -r field_1 field_2 kb_number skip_rest
+    | while IFS=$',\r\n' read -r field_1 field_2 kb_number field_4 skip_rest
     do
-        if [[ -n "${kb_number}" ]]
+        # Chosen-target restriction (DEC-32-05): with no selection,
+        # every hop row keeps feeding the supersession shield (statu
+        # quo, byte-identical feed); with a selection, only rows whose
+        # field 4 - the new build of the hop - is one of the chosen
+        # build parts feed it. The membership test compares whole
+        # tokens, so a chosen build never matches a different build
+        # that merely shares a numeric prefix.
+        upg_emit=0
+
+        if (( "${#upg_targets[@]}" == 0 ))
+        then
+            upg_emit=1
+        else
+            for upg_target in "${upg_targets[@]}"
+            do
+                if [[ "${field_4}" == "${upg_target}" ]]
+                then
+                    upg_emit=1
+                fi
+            done
+        fi
+
+        if [[ -n "${kb_number}" ]] && (( "${upg_emit}" == 1 ))
         then
             printf '%s\n' "windows10.0-${kb_number}"
         fi

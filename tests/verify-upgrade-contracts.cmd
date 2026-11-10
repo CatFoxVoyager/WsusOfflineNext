@@ -11,8 +11,13 @@ REM      25/25 counts, the /upgradeos token, the INI template default,
 REM      the engine refusal + acceptance literals + the WOU_UPGRADE_TARGET
 REM      carriage, the mainform write-back absence comment, the host
 REM      [OS Upgrades] section literals, the gitignored bash twin file.
-REM   2. Battery invocation: the /upgradeos argv acceptance battery and
-REM      the bash contract twin (cross-tier parity) must both exit 0.
+REM   2. Battery invocation: the /upgradeos argv acceptance battery,
+REM      the Phase-32 shield-filter sandbox battery and the bash contract
+REM      twin (cross-tier parity) must all exit 0.
+REM   3. Phase-32 chosen-target pins (section D, plan 32-01): the CMD
+REM      os-upgrades reader + shield-feed filter literals, the host
+REM      multi-EKB grammar marker, the 6-row hop census and the
+REM      unmodified exemption echo lines.
 REM
 REM No DoUpdate sandbox of its own - the acceptance sandbox lives in
 REM tests\verify-upgrade-argv.cmd, which is invoked, not duplicated.
@@ -130,6 +135,98 @@ if errorlevel 1 (
 echo [PASS] .gitignore: sh/os-upgrades.ini excluded
 
 REM -----------------------------------------------------------------------
+REM 3. Phase-32 chosen-target pins (section D, plan 32-01): CMD reader,
+REM    feed filter, and host multi-EKB grammar literals fail-closed.
+REM    Full path on find.exe: this twin is launched from POSIX-spawned
+REM    cmd.exe sessions (MSYS PATH), where plain `find` resolves to GNU
+REM    find and turns census walks into whole-drive scans.
+REM -----------------------------------------------------------------------
+if not exist "%REPO_ROOT%\cmd\DownloadUpdates.cmd" (
+  echo FAIL: missing DownloadUpdates.cmd at "%REPO_ROOT%\cmd\DownloadUpdates.cmd"
+  goto Fail
+)
+set "PIPELINE_CMD=%REPO_ROOT%\cmd\DownloadUpdates.cmd"
+
+findstr /C:"TMP_UPG_TARGETS" "%PIPELINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DownloadUpdates.cmd is missing the os-upgrades reader literal TMP_UPG_TARGETS
+  goto Fail
+)
+echo [PASS] DownloadUpdates.cmd: TMP_UPG_TARGETS reader literal pinned
+
+set PIPELINE_TARGETS_COUNT=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:"TMP_UPG_TARGETS" "%PIPELINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set PIPELINE_TARGETS_COUNT=%%c
+if %PIPELINE_TARGETS_COUNT% LSS 6 (
+  echo FAIL: DownloadUpdates.cmd carries only %PIPELINE_TARGETS_COUNT% TMP_UPG_TARGETS sites ^(reader + both loop guards expect 6 or more^)
+  goto Fail
+)
+echo [PASS] DownloadUpdates.cmd: TMP_UPG_TARGETS site count = %PIPELINE_TARGETS_COUNT% (>= 6)
+
+findstr /C:"TMP_UPG_SEL_BAD" "%PIPELINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DownloadUpdates.cmd is missing the all-or-nothing bad flag TMP_UPG_SEL_BAD
+  goto Fail
+)
+echo [PASS] DownloadUpdates.cmd: TMP_UPG_SEL_BAD bad flag pinned
+
+findstr /C:"^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$" "%PIPELINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DownloadUpdates.cmd is missing the frozen selection grammar literal
+
+  goto Fail
+)
+echo [PASS] DownloadUpdates.cmd: selection grammar literal pinned
+
+set READER_LINE=
+set STEP5_LINE=
+for /F "delims=: tokens=1" %%a in ('%SystemRoot%\System32\findstr.exe /N /B /C:"set TMP_UPG_TARGETS=" "%PIPELINE_CMD%"') do if not defined READER_LINE set "READER_LINE=%%a"
+for /F "delims=: tokens=1" %%a in ('%SystemRoot%\System32\findstr.exe /N /B /C:"rem *** Step 5" "%PIPELINE_CMD%"') do if not defined STEP5_LINE set "STEP5_LINE=%%a"
+if not defined READER_LINE (
+  echo FAIL: DownloadUpdates.cmd reader block start line not found
+  goto Fail
+)
+if not defined STEP5_LINE (
+  echo FAIL: DownloadUpdates.cmd Step 5 header line not found
+  goto Fail
+)
+if !READER_LINE! GEQ !STEP5_LINE! (
+  echo FAIL: the os-upgrades reader ^(line !READER_LINE!^) must sit BEFORE the Step 5 header ^(line !STEP5_LINE!^) - DEC-32-04 placement
+  goto Fail
+)
+echo [PASS] DownloadUpdates.cmd: reader at line !READER_LINE! precedes Step 5 at line !STEP5_LINE!
+
+set PIPELINE_ECHO_COUNT=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:"echo windows10.0-%%%%c>>" "%PIPELINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set PIPELINE_ECHO_COUNT=%%c
+if %PIPELINE_ECHO_COUNT% LSS 4 (
+  echo FAIL: DownloadUpdates.cmd carries only %PIPELINE_ECHO_COUNT% unmodified echo windows10.0-%%%%c>> exemption lines ^(4 expected across both feed loops^)
+  goto Fail
+)
+echo [PASS] DownloadUpdates.cmd: exemption echo lines unmodified (count = %PIPELINE_ECHO_COUNT%)
+
+set "HOP_FILE=%REPO_ROOT%\client\static\StaticUpdateIds-BuildUpgrades.txt"
+set HOP_ROWS=0
+for /F %%c in ('type "%HOP_FILE%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set HOP_ROWS=%%c
+if not "%HOP_ROWS%"=="6" (
+  echo FAIL: hop census drifted - StaticUpdateIds-BuildUpgrades.txt carries %HOP_ROWS% rows, the frozen contract is 6 ^(T-32-02^)
+  goto Fail
+)
+echo [PASS] StaticUpdateIds-BuildUpgrades.txt: hop census = 6 rows
+
+findstr /C:"multi-EKB grammar (DEC-32-02)" "%HOST_CS%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: Program.cs is missing the multi-EKB grammar ^(DEC-32-02^) marker comment
+  goto Fail
+)
+echo [PASS] Program.cs: multi-EKB grammar (DEC-32-02) marker pinned
+
+findstr /C:"File.WriteAllLines(upgradeFlat" "%HOST_CS%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: Program.cs is missing the flat-twin File.WriteAllLines^(upgradeFlat call - the twin must write the full N-line list
+  goto Fail
+)
+echo [PASS] Program.cs: flat-twin N-line write pinned
+
+REM -----------------------------------------------------------------------
 REM 2. Battery invocation - argv acceptance + bash contract twin
 REM -----------------------------------------------------------------------
 echo [RUN ] invoking tests\verify-upgrade-argv.cmd ...
@@ -139,6 +236,14 @@ if errorlevel 1 (
   goto Fail
 )
 echo [PASS] argv acceptance battery exit 0
+
+echo [RUN ] invoking tests\verify-shield-filter.cmd ...
+call "%REPO_ROOT%\tests\verify-shield-filter.cmd"
+if errorlevel 1 (
+  echo FAIL: the shield-filter sandbox battery did not exit 0 - the CMD chosen-target vertical slice is broken
+  goto Fail
+)
+echo [PASS] shield-filter battery exit 0
 
 REM Resolve a bash interpreter: bare PATH first, Git for Windows fallback
 set "BASH_EXE=bash"

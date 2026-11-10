@@ -657,18 +657,38 @@ if "!OS_EDITIONID:~0,11!"=="EnterpriseS" (
   goto SkipBuildUpgrade
 )
 
+rem Chosen-target convergence: the observed build already equals the requested target -
+rem report it and purge every upgrade marker (apply-once via :SkipBuildUpgrade's purge)
+if defined WOU_UPGRADE_TARGET if "%OS_VER_BUILD%"=="%WOU_UPGRADE_TARGET%" (
+  echo Info: Upgrade target build %WOU_UPGRADE_TARGET% observed - jump complete
+  call :Log "Info: Upgrade target build %WOU_UPGRADE_TARGET% observed - jump complete"
+  goto SkipBuildUpgrade
+)
+
 rem enforced Build upgrade (e.g. 19041 -> 19042)
 set WOU_BUILDUPGRADE_OLDBUILD=
 set WOU_BUILDUPGRADE_MINREVIS=
 set WOU_BUILDUPGRADE_PREUPD=
 set WOU_BUILDUPGRADE_NEWBUILD=
 set WOU_BUILDUPGRADE_EPKGID=
+set "WOU_ROW_ALLOWED="
+set "WOU_TARGET_SEEN="
+set "WOU_TARGET_MINREV="
+set "WOU_TARGET_PRE="
+set "WOU_TARGET_EPKG="
+set "WOU_TARGET_FOUND_EPKG="
+set "WOU_TARGET_FOUND_PREUPD="
 if not exist ..\static\StaticUpdateIds-BuildUpgradesForced.txt goto SkipForcedBuildUpgrade
 set WOU_BUILDUPGRADE_FOUNDPREUPD=
 set WOU_BUILDUPGRADE_FOUNDEPKG=
 if "%OS_ARCH%"=="x64" (set OS_SEARCH_DIR=%OS_NAME%-%OS_ARCH%) else (set OS_SEARCH_DIR=%OS_NAME%)
 for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgradesForced.txt) do (
   if "%OS_VER_BUILD%"=="%%a" (
+    rem Chosen-target guard (WOU_ROW_ALLOWED): when a /upgradeos target is set, only
+    rem rows whose newbuild equals the target may win - the GEQ walk stays intact
+    set WOU_ROW_ALLOWED=1
+    if defined WOU_UPGRADE_TARGET if not "%%d"=="!WOU_UPGRADE_TARGET!" set "WOU_ROW_ALLOWED="
+    if defined WOU_ROW_ALLOWED (
     if "!WOU_BUILDUPGRADE_NEWBUILD!"=="" (
       set WOU_BUILDUPGRADE_FOUNDEPKG=0
       if "!WOU_BUILDUPGRADE_FOUNDEPKG!"=="0" (
@@ -688,6 +708,16 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
       if "!WOU_BUILDUPGRADE_FOUNDPREUPD!"=="0" (
         dir /b ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.cab ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.msu >nul 2>&1
         if "!errorlevel!"=="0" (set WOU_BUILDUPGRADE_FOUNDPREUPD=1)
+      )
+      rem persist the chosen row's facts for the named refusals (DEC-32-07) - the capture
+      rem runs even when the row loses, so a payload-absent target row still gets named
+      if defined WOU_UPGRADE_TARGET if "%%d"=="!WOU_UPGRADE_TARGET!" (
+        set "WOU_TARGET_SEEN=1"
+        set "WOU_TARGET_MINREV=%%b"
+        set "WOU_TARGET_PRE=%%c"
+        set "WOU_TARGET_EPKG=%%e"
+        set "WOU_TARGET_FOUND_EPKG=!WOU_BUILDUPGRADE_FOUNDEPKG!"
+        set "WOU_TARGET_FOUND_PREUPD=!WOU_BUILDUPGRADE_FOUNDPREUPD!"
       )
       if "!WOU_BUILDUPGRADE_FOUNDEPKG!"=="1" (
         if "!WOU_BUILDUPGRADE_FOUNDPREUPD!"=="1" (
@@ -718,6 +748,16 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
         dir /b ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.cab ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.msu >nul 2>&1
         if "!errorlevel!"=="0" (set WOU_BUILDUPGRADE_FOUNDPREUPD=1)
       )
+      rem persist the chosen row's facts for the named refusals (DEC-32-07) - the capture
+      rem runs even when the row loses, so a payload-absent target row still gets named
+      if defined WOU_UPGRADE_TARGET if "%%d"=="!WOU_UPGRADE_TARGET!" (
+        set "WOU_TARGET_SEEN=1"
+        set "WOU_TARGET_MINREV=%%b"
+        set "WOU_TARGET_PRE=%%c"
+        set "WOU_TARGET_EPKG=%%e"
+        set "WOU_TARGET_FOUND_EPKG=!WOU_BUILDUPGRADE_FOUNDEPKG!"
+        set "WOU_TARGET_FOUND_PREUPD=!WOU_BUILDUPGRADE_FOUNDPREUPD!"
+      )
       if "!WOU_BUILDUPGRADE_FOUNDEPKG!"=="1" (
         if "!WOU_BUILDUPGRADE_FOUNDPREUPD!"=="1" (
           set WOU_BUILDUPGRADE_OLDBUILD=%%a
@@ -727,6 +767,8 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
           set WOU_BUILDUPGRADE_EPKGID=%%e
         )
       )
+    )
+    rem - WOU_ROW_ALLOWED guard wrapper closes here
     )
   )
 )
@@ -742,11 +784,15 @@ if "%WOU_BUILDUPGRADE_EPKGID%"=="" goto SkipForcedBuildUpgrade
 call :Log "Info: A feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD% is enforced"
 
 rem If "StaticUpdateIds-BuildUpgradesForced.txt" says "19041 -> 19042" while "StaticUpdateIds-BuildUpgrades.txt" says "19041 -> 19044" and the user wants a build upgrade, go straight to 19044
+rem A chosen target authorizes its hop through the optional lane (DEC-32-03: /upgradeos alone consents)
+if defined WOU_UPGRADE_TARGET goto CheckBuildUpgradeOptional
 if "%DO_UPGRADES%"=="/upgradebuilds" (goto CheckBuildUpgradeOptional)
 rem otherwise go to 19042
 if %OS_VER_REVIS% GEQ %WOU_BUILDUPGRADE_MINREVIS% (goto PerformBuildUpgrade) else (goto PrepareBuildUpgrade)
 
 :SkipForcedBuildUpgrade
+rem a chosen target also reaches the optional-lane check (DEC-32-03)
+if defined WOU_UPGRADE_TARGET goto CheckBuildUpgrade
 if "%DO_UPGRADES%"=="/upgradebuilds" (goto CheckBuildUpgrade) else (goto SkipBuildUpgrade)
 
 :CheckBuildUpgrade
@@ -755,6 +801,13 @@ set WOU_BUILDUPGRADE_MINREVIS=
 set WOU_BUILDUPGRADE_PREUPD=
 set WOU_BUILDUPGRADE_NEWBUILD=
 set WOU_BUILDUPGRADE_EPKGID=
+set "WOU_ROW_ALLOWED="
+set "WOU_TARGET_SEEN="
+set "WOU_TARGET_MINREV="
+set "WOU_TARGET_PRE="
+set "WOU_TARGET_EPKG="
+set "WOU_TARGET_FOUND_EPKG="
+set "WOU_TARGET_FOUND_PREUPD="
 echo Checking for feature upgrades via enablement package...
 :CheckBuildUpgradeOptional
 if not exist ..\static\StaticUpdateIds-BuildUpgrades.txt goto SkipBuildUpgrade
@@ -763,6 +816,11 @@ set WOU_BUILDUPGRADE_FOUNDEPKG=
 if "%OS_ARCH%"=="x64" (set OS_SEARCH_DIR=%OS_NAME%-%OS_ARCH%) else (set OS_SEARCH_DIR=%OS_NAME%)
 for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrades.txt) do (
   if "%OS_VER_BUILD%"=="%%a" (
+    rem Chosen-target guard (WOU_ROW_ALLOWED): when a /upgradeos target is set, only
+    rem rows whose newbuild equals the target may win - the GEQ walk stays intact
+    set WOU_ROW_ALLOWED=1
+    if defined WOU_UPGRADE_TARGET if not "%%d"=="!WOU_UPGRADE_TARGET!" set "WOU_ROW_ALLOWED="
+    if defined WOU_ROW_ALLOWED (
     if "!WOU_BUILDUPGRADE_NEWBUILD!"=="" (
       set WOU_BUILDUPGRADE_FOUNDEPKG=0
       if "!WOU_BUILDUPGRADE_FOUNDEPKG!"=="0" (
@@ -782,6 +840,16 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
       if "!WOU_BUILDUPGRADE_FOUNDPREUPD!"=="0" (
         dir /b ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.cab ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.msu >nul 2>&1
         if "!errorlevel!"=="0" (set WOU_BUILDUPGRADE_FOUNDPREUPD=1)
+      )
+      rem persist the chosen row's facts for the named refusals (DEC-32-07) - the capture
+      rem runs even when the row loses, so a payload-absent target row still gets named
+      if defined WOU_UPGRADE_TARGET if "%%d"=="!WOU_UPGRADE_TARGET!" (
+        set "WOU_TARGET_SEEN=1"
+        set "WOU_TARGET_MINREV=%%b"
+        set "WOU_TARGET_PRE=%%c"
+        set "WOU_TARGET_EPKG=%%e"
+        set "WOU_TARGET_FOUND_EPKG=!WOU_BUILDUPGRADE_FOUNDEPKG!"
+        set "WOU_TARGET_FOUND_PREUPD=!WOU_BUILDUPGRADE_FOUNDPREUPD!"
       )
       if "!WOU_BUILDUPGRADE_FOUNDEPKG!"=="1" (
         if "!WOU_BUILDUPGRADE_FOUNDPREUPD!"=="1" (
@@ -812,6 +880,16 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
         dir /b ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.cab ..\%OS_SEARCH_DIR%\glb\%OS_VER_BUILD_INTERNAL%\*%%c*.msu >nul 2>&1
         if "!errorlevel!"=="0" (set WOU_BUILDUPGRADE_FOUNDPREUPD=1)
       )
+      rem persist the chosen row's facts for the named refusals (DEC-32-07) - the capture
+      rem runs even when the row loses, so a payload-absent target row still gets named
+      if defined WOU_UPGRADE_TARGET if "%%d"=="!WOU_UPGRADE_TARGET!" (
+        set "WOU_TARGET_SEEN=1"
+        set "WOU_TARGET_MINREV=%%b"
+        set "WOU_TARGET_PRE=%%c"
+        set "WOU_TARGET_EPKG=%%e"
+        set "WOU_TARGET_FOUND_EPKG=!WOU_BUILDUPGRADE_FOUNDEPKG!"
+        set "WOU_TARGET_FOUND_PREUPD=!WOU_BUILDUPGRADE_FOUNDPREUPD!"
+      )
       if "!WOU_BUILDUPGRADE_FOUNDEPKG!"=="1" (
         if "!WOU_BUILDUPGRADE_FOUNDPREUPD!"=="1" (
           set WOU_BUILDUPGRADE_OLDBUILD=%%a
@@ -822,11 +900,21 @@ for /F "tokens=1,2,3,4,5 delims=," %%a in (..\static\StaticUpdateIds-BuildUpgrad
         )
       )
     )
+    rem - WOU_ROW_ALLOWED guard wrapper closes here
+    )
   )
 )
 set OS_SEARCH_DIR=
 set WOU_BUILDUPGRADE_FOUNDEPKG=
 set WOU_BUILDUPGRADE_FOUNDEPKG=
+rem Chosen-target named refusals (DEC-32-03/07): fire BEFORE any install work and before
+rem the empty-row silent skip - inert when no target is defined (the unchosen lane keeps
+rem today's silent-skip byte-for-byte)
+if defined WOU_UPGRADE_TARGET if "%WOU_BUILDUPGRADE_NEWBUILD%"=="" if not defined WOU_TARGET_SEEN (
+  echo Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! has no upgrade path from build %OS_VER_BUILD%
+  call :Log "Warning: Chosen upgrade target !WOU_UPGRADE_TARGET! has no upgrade path from build %OS_VER_BUILD%"
+  goto SkipBuildUpgrade
+)
 if "%WOU_BUILDUPGRADE_OLDBUILD%"=="" goto SkipBuildUpgrade
 if "%WOU_BUILDUPGRADE_MINREVIS%"=="" goto SkipBuildUpgrade
 if "%WOU_BUILDUPGRADE_PREUPD%"=="" goto SkipBuildUpgrade
@@ -935,6 +1023,14 @@ if "%REBOOT_REQUIRED%"=="1" (
 if "%RECALL_REQUIRED%"=="1" goto Installed
 if "%REBOOT_REQUIRED%"=="1" goto Installed
 :SkipBuildUpgrade
+rem purge the chosen-target temporaries so no state leaks across runs
+set "WOU_ROW_ALLOWED="
+set "WOU_TARGET_SEEN="
+set "WOU_TARGET_MINREV="
+set "WOU_TARGET_PRE="
+set "WOU_TARGET_EPKG="
+set "WOU_TARGET_FOUND_EPKG="
+set "WOU_TARGET_FOUND_PREUPD="
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_prep_tried.txt del %WOU_TEMP_DIR%\wou_buildupgrade_prep_tried.txt
 if exist %SystemRoot%\Temp\wou_buildupgrade_prep_tried.txt del %SystemRoot%\Temp\wou_buildupgrade_prep_tried.txt
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt del %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt

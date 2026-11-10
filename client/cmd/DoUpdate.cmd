@@ -53,7 +53,13 @@ if /i "%~1"==":WriteMissingUpdatesReport" goto RunMissingUpdatesReport
 if /i "%~1"=="/testbuildupgrade" (
   set DO_UPGRADES=/upgradebuilds
   set WOU_TEST_MODE=1
-  goto CheckBuildUpgrade
+  if "%~2"=="" goto CheckBuildUpgrade
+  rem Additional args (e.g. /upgradeos:<build>) must flow through the frozen parse
+  rem (consent travels by argv only, T-32-07) - :NoMoreParams jumps to the block
+  rem once the parse is done, so the sandbox skips the privileged walk like the
+  rem single-arg form does.
+  shift /1
+  goto EvalParams
 )
 if "%WOU_TEMP_DIR%"=="" set WOU_TEMP_DIR=%SystemRoot%\Temp
 
@@ -163,6 +169,10 @@ shift /1
 goto EvalParams
 
 :NoMoreParams
+rem Test-mode entry with parsed extra args (see the /testbuildupgrade hook):
+rem enter the build-upgrade block at its top so the guards and the chosen-target
+rem convergence report evaluate exactly like in a real run
+if "%WOU_TEST_MODE%"=="1" goto SkipServicingStack
 if "%TEMP%"=="" goto NoTemp
 pushd "%TEMP%"
 if errorlevel 1 goto NoTempDir

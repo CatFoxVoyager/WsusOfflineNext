@@ -920,9 +920,10 @@ namespace WSUSOffline.Generator
             if (File.Exists(win10Ini))
             {
                 // Previously-known [OS Upgrades] keys, collected BEFORE
-                // the rewrite below destroys the prior section - they
-                // are what the single-target radio collapse flips to
-                // Disabled.
+                // the rewrite below destroys the prior section - they are
+                // what the emit-side collapse flips to Disabled when they
+                // are not part of the current selection (multi-EKB grammar
+                // (DEC-32-02)).
                 var knownUpgradeKeys = new List<string>();
                 bool inUpgSection = false;
                 foreach (string prior in File.ReadAllLines(win10Ini))
@@ -957,11 +958,11 @@ namespace WSUSOffline.Generator
                     }
                 }
 
-                // [OS Upgrades] single-target selection (DEC-07). The
-                // section lives in Windows10Versions.ini (sectioned
-                // readers); the bash twin is a SEPARATE flat file -
-                // never appended to windows-10-versions.ini, the flat
-                // build reader would conflate the grammars (Pitfall 4).
+                // [OS Upgrades] selection (DEC-07; multi-EKB emission
+                // (DEC-32-02)). The section lives in Windows10Versions.ini
+                // (sectioned readers); the bash twin is a SEPARATE flat
+                // file - never appended to windows-10-versions.ini, the
+                // flat build reader would conflate the grammars (Pitfall 4).
                 WriteOsUpgradesSection(lines, payload, knownUpgradeKeys);
                 File.WriteAllLines(win10Ini, lines);
 
@@ -985,14 +986,20 @@ namespace WSUSOffline.Generator
                     File.WriteAllLines(Path.Combine(root, "sh", "windows-10-versions.ini"), bashLines);
                 }
 
-                // Flat bash twin: <build>_<arch>=on when a target is
-                // selected, nothing when none - a cleared selection
-                // must not leave a stale twin behind.
-                string? upgradeSelection = GetUpgradePayloadSelection(payload);
+                // Flat bash twin: one "<build>_<arch>=on" line per chosen
+                // EKB target (multi-EKB grammar (DEC-32-02)), nothing when
+                // none - a cleared selection must not leave a stale twin
+                // behind.
+                List<string> upgradeSelection = GetUpgradePayloadSelection(payload);
                 string upgradeFlat = Path.Combine(root, "sh", "os-upgrades.ini");
-                if (!string.IsNullOrEmpty(upgradeSelection))
+                if (upgradeSelection.Count > 0)
                 {
-                    File.WriteAllLines(upgradeFlat, new[] { upgradeSelection + "=on" });
+                    var upgradeFlatLines = new List<string>(upgradeSelection.Count);
+                    foreach (string upgradeKey in upgradeSelection)
+                    {
+                        upgradeFlatLines.Add(upgradeKey + "=on");
+                    }
+                    File.WriteAllLines(upgradeFlat, upgradeFlatLines);
                 }
                 else if (File.Exists(upgradeFlat))
                 {
@@ -1070,27 +1077,65 @@ namespace WSUSOffline.Generator
         }
 
         /// <summary>
-        /// Payload selection extractor (DEC-07): the property "upgrade"
-        /// carries a "&lt;build&gt;_&lt;arch&gt;" string or empty. The value is
-        /// grammar-validated before any use - a malformed or
-        /// injection-shaped value (newlines, '=', '[') is treated as no
-        /// selection, never forwarded (GUI payload crosses the host INI
-        /// writer trust boundary). The pipeline switch form for Phases
+        /// Payload selection extractor (DEC-07, multi-EKB grammar
+        /// (DEC-32-02)): the property "upgrade" carries ONE
+        /// "&lt;build&gt;_&lt;arch&gt;" string (backward compatible) or an
+        /// ARRAY of such keys - N chosen EKB targets are all emitted. Every
+        /// element is grammar-validated before any use; if ANY element
+        /// fails IsUpgradeKeyShape (malformed or injection-shaped:
+        /// newlines, '=', '['), the WHOLE selection voids to an empty
+        /// list - one bad value voids all, never a partial selection (GUI
+        /// payload crosses the host INI writer trust boundary). Absent or
+        /// empty property = empty list = no selection. Duplicate keys
+        /// collapse to one target. The pipeline switch form for Phases
         /// 33/36 is /includeupgrade:&lt;build&gt; (DEC-08 - spelled here,
         /// NOT implemented; no consumer exists yet).
         /// </summary>
-        private static string? GetUpgradePayloadSelection(JsonElement payload)
+        private static List<string> GetUpgradePayloadSelection(JsonElement payload)
         {
-            if (!payload.TryGetProperty("upgrade", out var upg) || upg.ValueKind != JsonValueKind.String)
+            var selected = new List<string>();
+            if (!payload.TryGetProperty("upgrade", out var upg))
             {
-                return null;
+                return selected;
             }
-            string value = (upg.GetString() ?? "").Trim();
-            if (!IsUpgradeKeyShape(value))
+            if (upg.ValueKind == JsonValueKind.String)
             {
-                return null;
+                string value = (upg.GetString() ?? "").Trim();
+                if (value.Length > 0 && IsUpgradeKeyShape(value))
+                {
+                    selected.Add(value);
+                }
+                return selected;
             }
-            return value;
+            if (upg.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var element in upg.EnumerateArray())
+                {
+                    if (element.ValueKind != JsonValueKind.String)
+                    {
+                        return new List<string>();
+                    }
+                    string value = (element.GetString() ?? "").Trim();
+                    if (!IsUpgradeKeyShape(value))
+                    {
+                        return new List<string>();
+                    }
+                    bool alreadySelected = false;
+                    foreach (string chosen in selected)
+                    {
+                        if (string.Equals(chosen, value, StringComparison.OrdinalIgnoreCase))
+                        {
+                            alreadySelected = true;
+                            break;
+                        }
+                    }
+                    if (!alreadySelected)
+                    {
+                        selected.Add(value);
+                    }
+                }
+            }
+            return selected;
         }
 
         /// <summary>
@@ -1118,31 +1163,36 @@ namespace WSUSOffline.Generator
         }
 
         /// <summary>
-        /// [OS Upgrades] section writer (DEC-07 emit side): appends the
-        /// section with the selected target as the ONLY Enabled key -
-        /// every other previously-known upgrade key collapses to Disabled
-        /// (single-target radio semantics, one full-FU target per medium,
-        /// enforced at write time). The plan's signature gained the
-        /// knownUpgradeKeys parameter the radio collapse needs. With no
-        /// selection and no known keys the section is omitted entirely -
-        /// absence defaults to no-upgrade-selected (Pitfall 7).
+        /// [OS Upgrades] section writer (DEC-07 emit side, multi-EKB
+        /// grammar (DEC-32-02)): appends the section with EVERY selected
+        /// key as Enabled - N chosen EKB targets are all emitted - and
+        /// every previously-known upgrade key NOT in the selection
+        /// collapses to Disabled. The single-target radio collapse stays
+        /// reserved for full-FU keys (Phase 33). One bad payload value
+        /// voids the whole selection (GetUpgradePayloadSelection), so the
+        /// section can never carry a partial selection. With no selection
+        /// and no known keys the section is omitted entirely - absence
+        /// defaults to no-upgrade-selected (Pitfall 7).
         /// </summary>
         private static void WriteOsUpgradesSection(List<string> lines, JsonElement payload, IReadOnlyList<string> knownUpgradeKeys)
         {
-            string? selected = GetUpgradePayloadSelection(payload);
+            List<string> selected = GetUpgradePayloadSelection(payload);
             var keys = new List<string>(knownUpgradeKeys);
-            bool alreadyKnown = false;
-            foreach (string known in keys)
+            foreach (string sel in selected)
             {
-                if (string.Equals(known, selected, StringComparison.OrdinalIgnoreCase))
+                bool alreadyKnown = false;
+                foreach (string known in keys)
                 {
-                    alreadyKnown = true;
-                    break;
+                    if (string.Equals(known, sel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        alreadyKnown = true;
+                        break;
+                    }
                 }
-            }
-            if (!string.IsNullOrEmpty(selected) && !alreadyKnown)
-            {
-                keys.Add(selected);
+                if (!alreadyKnown)
+                {
+                    keys.Add(sel);
+                }
             }
             if (keys.Count == 0)
             {
@@ -1151,7 +1201,16 @@ namespace WSUSOffline.Generator
             lines.Add("[OS Upgrades]");
             foreach (string key in keys)
             {
-                lines.Add($"{key}={(string.Equals(key, selected, StringComparison.OrdinalIgnoreCase) ? "Enabled" : "Disabled")}");
+                bool isSelected = false;
+                foreach (string sel in selected)
+                {
+                    if (string.Equals(sel, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        isSelected = true;
+                        break;
+                    }
+                }
+                lines.Add($"{key}={(isSelected ? "Enabled" : "Disabled")}");
             }
         }
 

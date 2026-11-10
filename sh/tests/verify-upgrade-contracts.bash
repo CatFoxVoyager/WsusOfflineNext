@@ -24,6 +24,14 @@
 #      50-superseded-updates.bash, and the unchanged statu-quo printf
 #      line - fail-closed pins on the bash mirror of the CMD
 #      chosen-target slice (DEC-32-05/08/09).
+#   E. Engine-literal pins (plan 32-04): the Phase-32 chosen-target
+#      engine contract in client/cmd/DoUpdate.cmd fail-closed - the five
+#      DEC-32-07 message literals (each on exactly its two echo/:Log
+#      channels), the WOU_ROW_ALLOWED chosen-target guard in both row
+#      loops, the consent-composition branch (DEC-32-03), the attempts
+#      write-back format (DEC-32-06), the frozen 31-02 parse refusal at
+#      exactly 4 physical lines, and the DEC-32-01 CSV-only absence pin
+#      (zero selection-file references in the engine).
 #
 # Fixtures are self-created in a temp sandbox - no test reads the repo's
 # gitignored runtime-state INI files (research Pitfall 7). Every failure
@@ -336,6 +344,22 @@ has_min_count() {
     SECTION_PASS=$((SECTION_PASS + 1))
 }
 
+# Exact-count assert: a literal must appear EXACTLY n times in the file
+# (used for the engine pins, where the count itself is the contract -
+# e.g. a refusal literal on exactly its two echo/:Log channels). The
+# count is captured with a tolerant fallback so a genuine zero is a
+# measured 0, never a suppressed grep exit code.
+assert_count() {
+    local desc="$1" file="$2" expected="$3" literal="$4"
+    local n
+    n="$(grep -cF -- "$literal" "$file" || true)"
+    if [[ "$n" != "$expected" ]]; then
+        printf 'FAIL: %s (expected exactly %s hits for "%s", got %s)\n' "$desc" "$expected" "$literal" "$n"
+        exit 1
+    fi
+    SECTION_PASS=$((SECTION_PASS + 1))
+}
+
 # -----------------------------------------------------------------------
 # Section A: verdict evaluator parity over the canonical golden matrix
 # -----------------------------------------------------------------------
@@ -538,11 +562,75 @@ D_PASS=$SECTION_PASS
 printf '[D] bash shield-filter pipeline contracts: %s checks green\n' "$D_PASS"
 
 # -----------------------------------------------------------------------
+# Section E: engine-literal pins (plan 32-04) - the Phase-32 chosen-target
+# engine contract in client/cmd/DoUpdate.cmd, fail-closed
+# -----------------------------------------------------------------------
+echo "--- Section E: engine-literal pins (client/cmd/DoUpdate.cmd) ---"
+SECTION_PASS=0
+
+engine_file="${repo_root}/client/cmd/DoUpdate.cmd"
+
+if [[ ! -f "$engine_file" ]]; then
+    printf 'FAIL: missing engine file client/cmd/DoUpdate.cmd\n'
+    exit 1
+fi
+SECTION_PASS=$((SECTION_PASS + 1))
+
+# DEC-32-07 frozen literals: each message text must sit on EXACTLY its
+# two emission channels (echo + :Log call), byte-verbatim.
+assert_count "refusal literal: missing enablement package (echo + :Log)" \
+    "$engine_file" 2 'blocked: enablement package'
+assert_count "refusal literal: baseline revision below minimum (echo + :Log)" \
+    "$engine_file" 2 'blocked: baseline revision'
+assert_count "refusal literal: no upgrade path from build (echo + :Log)" \
+    "$engine_file" 2 'has no upgrade path from build'
+assert_count "convergence Info literal: jump observed complete (echo + :Log)" \
+    "$engine_file" 2 'observed - jump complete'
+assert_count "perform-stall Warning literal: build did not advance (echo + :Log)" \
+    "$engine_file" 2 'did not advance the OS build'
+
+# Chosen-target guard: the additive wrapper lives in BOTH :BuildUpgrade
+# row loops (DEC-32-03). The variable must be present throughout (reset,
+# guard body, wrapper close in both loops - floor 4) and the
+# target-mismatch clear line must exist exactly twice (once per loop).
+has_min_count "guard variable WOU_ROW_ALLOWED present (both row loops)" \
+    "$engine_file" 4 'WOU_ROW_ALLOWED'
+assert_count "guard line: target mismatch clears WOU_ROW_ALLOWED (both row loops)" \
+    "$engine_file" 2 'if defined WOU_UPGRADE_TARGET if not "%%d"=="!WOU_UPGRADE_TARGET!" set "WOU_ROW_ALLOWED="'
+
+# Consent composition (DEC-32-03): a defined /upgradeos target routes the
+# hop through the optional lane - exactly one such branch.
+assert_count "consent composition: defined target routes to the optional lane" \
+    "$engine_file" 1 'if defined WOU_UPGRADE_TARGET goto CheckBuildUpgradeOptional'
+
+# Attempts contract (DEC-32-06): the count,revision,build,leg write-back
+# - one prepare-leg record and one perform-leg record, sharing the
+# count,revision,build prefix shape.
+assert_count "perform-leg write-back (count,revision,build,perform record)" \
+    "$engine_file" 1 ',%OS_VER_REVIS%,%OS_VER_BUILD%,perform>'
+assert_count "prepare-leg write-back (count,revision,build,prepare record)" \
+    "$engine_file" 1 ',%OS_VER_REVIS%,%OS_VER_BUILD%,prepare>'
+assert_count "attempts format write prefix (count,revision,build,) on both write-backs" \
+    "$engine_file" 2 ',%OS_VER_REVIS%,%OS_VER_BUILD%,'
+
+# Frozen 31-02 parse contract: the loud parse refusal at exactly 4
+# physical lines (echo + :Log at the parse site AND the bare-token site).
+assert_count "frozen 31-02 parse refusal: exactly 4 lines (2 sites x 2 channels)" \
+    "$engine_file" 4 'ERROR: /upgradeos target must be a build number'
+
+# DEC-32-01: the engine stays CSV-only - zero selection-file references.
+assert_count "engine carries zero selection-file references (DEC-32-01 CSV-only)" \
+    "$engine_file" 0 'os-upgrades'
+
+E_PASS=$SECTION_PASS
+printf '[E] engine-literal pins: %s checks green\n' "$E_PASS"
+
+# -----------------------------------------------------------------------
 # All green
 # -----------------------------------------------------------------------
 echo ""
 echo "======================================================================="
-echo "Upgrade contract twin: A=${A_PASS} B=${B_PASS} C=${C_PASS} D=${D_PASS} checks green."
+echo "Upgrade contract twin: A=${A_PASS} B=${B_PASS} C=${C_PASS} D=${D_PASS} E=${E_PASS} checks green."
 echo "======================================================================="
 echo "UPGRADE-CONTRACTS-PASS"
 exit 0

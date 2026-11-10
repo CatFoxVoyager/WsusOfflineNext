@@ -18,6 +18,19 @@ REM   3. Phase-32 chosen-target pins (section D, plan 32-01): the CMD
 REM      os-upgrades reader + shield-feed filter literals, the host
 REM      multi-EKB grammar marker, the 6-row hop census and the
 REM      unmodified exemption echo lines.
+REM   4. Phase-32 engine-literal pins (plan 32-04): the five DEC-32-07
+REM      refusal/report messages, the WOU_ROW_ALLOWED target guard, the
+REM      DEC-32-06 perform record, the DEC-32-03 consent composition,
+REM      and the negative pins holding the frozen 31-02 parse contract
+REM      and the CSV-only engine (DEC-32-01) over client\cmd\DoUpdate.cmd.
+REM   4. Phase-32 engine-literal pins (plan 32-04): the chosen-target
+REM      engine contract in client\cmd\DoUpdate.cmd - the five DEC-32-07
+REM      message literals, the WOU_ROW_ALLOWED guard census, the
+REM      consent-composition branch, the attempts write-backs (DEC-32-06),
+REM      the frozen 31-02 parse refusal census and the DEC-32-01 CSV-only
+REM      absence pin. Message fragments pin by presence; the exact
+REM      two-channel counts live in the bash twin (a delayed-expansion
+REM      batch file cannot spell the engine's at-variable tokens).
 REM
 REM No DoUpdate sandbox of its own - the acceptance sandbox lives in
 REM tests\verify-upgrade-argv.cmd, which is invoked, not duplicated.
@@ -225,6 +238,115 @@ if errorlevel 1 (
   goto Fail
 )
 echo [PASS] Program.cs: flat-twin N-line write pinned
+
+REM -----------------------------------------------------------------------
+REM 4. Phase-32 engine-literal pins (plan 32-04): the chosen-target engine
+REM    contract in client\cmd\DoUpdate.cmd fails closed.
+REM -----------------------------------------------------------------------
+findstr /C:"blocked: enablement package" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the blocked-enablement refusal literal
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: blocked-enablement refusal literal pinned
+
+findstr /C:"blocked: baseline revision" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the blocked-baseline refusal literal
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: blocked-baseline refusal literal pinned
+
+findstr /C:"has no upgrade path from build" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the no-upgrade-path refusal literal
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: no-upgrade-path refusal literal pinned
+
+findstr /C:"observed - jump complete" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the observed-convergence Info literal
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: observed-convergence Info literal pinned
+
+findstr /C:"did not advance the OS build" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the perform-stall Warning literal
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: perform-stall Warning literal pinned
+
+set ENGINE_GUARD_COUNT=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:"WOU_ROW_ALLOWED" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_GUARD_COUNT=%%c
+if %ENGINE_GUARD_COUNT% LSS 4 (
+  echo FAIL: DoUpdate.cmd carries only %ENGINE_GUARD_COUNT% WOU_ROW_ALLOWED sites - both chosen-target loop guards expect 4 or more
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: WOU_ROW_ALLOWED site count = %ENGINE_GUARD_COUNT% (expected 4 or more)
+
+findstr /C:"if defined WOU_UPGRADE_TARGET goto CheckBuildUpgradeOptional" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the consent-composition branch - a defined target must route to the optional lane
+  goto Fail
+)
+set ENGINE_CONSENT_COUNT=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:"if defined WOU_UPGRADE_TARGET goto CheckBuildUpgradeOptional" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_CONSENT_COUNT=%%c
+if not "%ENGINE_CONSENT_COUNT%"=="1" (
+  echo FAIL: the consent-composition branch appears %ENGINE_CONSENT_COUNT% times - exactly 1 expected ^(DEC-32-03^)
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: consent-composition branch pinned (exactly 1)
+
+findstr /C:",perform>" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the perform-leg attempts write-back
+  goto Fail
+)
+set ENGINE_PERFORM_WB=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:",perform>" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_PERFORM_WB=%%c
+if not "%ENGINE_PERFORM_WB%"=="1" (
+  echo FAIL: the perform-leg write-back appears %ENGINE_PERFORM_WB% times - exactly 1 expected ^(DEC-32-06^)
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: perform-leg attempts write-back pinned (exactly 1)
+
+findstr /C:",prepare>" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the prepare-leg attempts write-back
+  goto Fail
+)
+set ENGINE_PREPARE_WB=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:",prepare>" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_PREPARE_WB=%%c
+if not "%ENGINE_PREPARE_WB%"=="1" (
+  echo FAIL: the prepare-leg write-back appears %ENGINE_PREPARE_WB% times - exactly 1 expected ^(DEC-32-06^)
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: prepare-leg attempts write-back pinned (exactly 1)
+
+set ENGINE_ATTEMPTS_FMT=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:",%%OS_VER_REVIS%%,%%OS_VER_BUILD%%," "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_ATTEMPTS_FMT=%%c
+if not "%ENGINE_ATTEMPTS_FMT%"=="2" (
+  echo FAIL: the attempts count,revision,build write prefix appears %ENGINE_ATTEMPTS_FMT% times - exactly 2 expected ^(prepare + perform write-backs^)
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: attempts format write prefix pinned (exactly 2)
+
+set ENGINE_REFUSAL_COUNT=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:"ERROR: /upgradeos target must be a build number" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_REFUSAL_COUNT=%%c
+if not "%ENGINE_REFUSAL_COUNT%"=="4" (
+  echo FAIL: the frozen 31-02 parse refusal drifted to %ENGINE_REFUSAL_COUNT% lines - exactly 4 expected ^(2 sites x 2 echo channels^)
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: frozen 31-02 parse refusal census = 4 lines (2 sites x 2 channels)
+
+findstr /C:"os-upgrades" "%ENGINE_CMD%" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: DoUpdate.cmd references a selection file - the DEC-32-01 CSV-only composition is violated
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: zero selection-file references (DEC-32-01 CSV-only)
 
 REM -----------------------------------------------------------------------
 REM 2. Battery invocation - argv acceptance + bash contract twin

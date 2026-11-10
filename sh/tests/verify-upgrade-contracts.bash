@@ -18,6 +18,12 @@
 #   C. Consent contracts: the frozen engine/GUI/host literals
 #      (25/25 counts, /upgradeos token, template default, engine
 #      refusal/acceptance literals, write-back absence, gitignore).
+#   D. Bash shield-filter pipeline contracts (plan 32-02): the selection
+#      reader library (read_upgrade_selection, CR strip, all-or-nothing
+#      void), the hop walk's field-4 binding + library reference in
+#      50-superseded-updates.bash, and the unchanged statu-quo printf
+#      line - fail-closed pins on the bash mirror of the CMD
+#      chosen-target slice (DEC-32-05/08/09).
 #
 # Fixtures are self-created in a temp sandbox - no test reads the repo's
 # gitignored runtime-state INI files (research Pitfall 7). Every failure
@@ -498,11 +504,45 @@ C_PASS=$SECTION_PASS
 printf '[C] consent contracts: %s checks green\n' "$C_PASS"
 
 # -----------------------------------------------------------------------
+# Section D: bash shield-filter pipeline contracts (plan 32-02)
+# -----------------------------------------------------------------------
+echo "--- Section D: bash shield-filter pipeline contracts (plan 32-02) ---"
+SECTION_PASS=0
+
+library_file="${repo_root}/sh/libraries/upgrade-selection.bash"
+task_file="${repo_root}/sh/download-updates-tasks/50-superseded-updates.bash"
+
+if [[ ! -f "$library_file" ]]; then
+    printf 'FAIL: missing library file sh/libraries/upgrade-selection.bash\n'
+    exit 1
+fi
+SECTION_PASS=$((SECTION_PASS + 1))
+
+has_literal "library defines the read_upgrade_selection reader (DEC-32-09)" \
+    "$library_file" 'read_upgrade_selection'
+has_literal "library strips the trailing CR from the state token (DEC-32-08)" \
+    "$library_file" 'state=${state%$'\''\r'\''}'
+has_literal "library carries the all-or-nothing void marker (T-32-03)" \
+    "$library_file" 'all-or-nothing'
+
+has_literal "hop walk binds field 4 - the new build of the hop (DEC-32-05)" \
+    "$task_file" 'field_4'
+has_literal "task reads the selection through the library reader" \
+    "$task_file" 'read_upgrade_selection'
+has_literal "task resolves the flat twin os-upgrades.ini as a bare sibling name" \
+    "$task_file" 'os-upgrades.ini'
+has_literal "statu-quo printf line unchanged in the hop walk" \
+    "$task_file" 'printf '\''%s\n'\'' "windows10.0-${kb_number}"'
+
+D_PASS=$SECTION_PASS
+printf '[D] bash shield-filter pipeline contracts: %s checks green\n' "$D_PASS"
+
+# -----------------------------------------------------------------------
 # All green
 # -----------------------------------------------------------------------
 echo ""
 echo "======================================================================="
-echo "Upgrade contract twin: A=${A_PASS} B=${B_PASS} C=${C_PASS} checks green."
+echo "Upgrade contract twin: A=${A_PASS} B=${B_PASS} C=${C_PASS} D=${D_PASS} checks green."
 echo "======================================================================="
 echo "UPGRADE-CONTRACTS-PASS"
 exit 0

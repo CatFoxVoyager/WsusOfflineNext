@@ -87,6 +87,8 @@ bin/.wget-hsts
 bin/mkisofs.exe
 bin/sigcheck*.exe
 bin/streams*.exe
+bin/aria2c*.exe
+bin/StaticDownloadLinks-aria2.txt
 bin/odt/
 client/office/
 client/bin/Autologon*.exe
@@ -94,6 +96,12 @@ client/bin/unzip.exe
 Windows10Versions.ini
 sh/windows-10-versions.ini
 sh/os-upgrades.ini
+
+# Upgrade media bytes (DEC-33-04): only manifest.txt stays trackable
+client/upgrade/**/*.esd
+client/upgrade/**/*.swm
+client/upgrade/**/sources/
+client/upgrade/**/set/
 
 # Logs & temporary files
 log/*.log

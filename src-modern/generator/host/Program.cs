@@ -519,14 +519,19 @@ namespace WSUSOffline.Generator
         private string GetRootDirectory()
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            if (File.Exists(Path.Combine(baseDir, "UpdateGenerator.ini")))
+            // The distance from BaseDirectory to the repo root depends on the
+            // build layout: 0 levels for the shipped root exe, 5 for a plain
+            // Debug bin, 7 for a Debug bin with a RuntimeIdentifier (win-x64
+            // adds a folder). A fixed-depth jump misses the RID layout, so
+            // probe every parent up to a bounded level count.
+            DirectoryInfo? dir = new DirectoryInfo(baseDir);
+            for (int levels = 0; levels <= 10 && dir != null; levels++)
             {
-                return baseDir;
-            }
-            string devRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", ".."));
-            if (File.Exists(Path.Combine(devRoot, "UpdateGenerator.ini")))
-            {
-                return devRoot;
+                if (File.Exists(Path.Combine(dir.FullName, "UpdateGenerator.ini")))
+                {
+                    return dir.FullName;
+                }
+                dir = dir.Parent;
             }
             return baseDir;
         }

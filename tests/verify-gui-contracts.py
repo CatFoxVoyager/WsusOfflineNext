@@ -20,7 +20,7 @@ LAZBUILD = os.path.join(LAZARUS_ROOT, "lazbuild.exe")
 LPI = os.path.join(repo_root, "src-native", "installer", "installer.lpi")
 
 # Test 1: enginecontracts.pas frozen INI sections/keys
-print("[Test 1/4] Verifying enginecontracts.pas frozen INI sections and keys...")
+print("[Test 1/5] Verifying enginecontracts.pas frozen INI sections and keys...")
 with open(os.path.join("src-native", "installer", "enginecontracts.pas"), "r", encoding="utf-8") as f:
     contracts = f.read()
 
@@ -61,7 +61,7 @@ print("[PASS] Test 1: enginecontracts.pas frozen INI sections and keys intact.")
 
 # Test 2: argv contracts (the launcher forwards argv verbatim, so the
 # incumbent 'enu'/'deu' language contract and the frozen switch table persist)
-print("\n[Test 2/4] Verifying command-line argument handling contracts...")
+print("\n[Test 2/5] Verifying command-line argument handling contracts...")
 assert "ENG_SWITCH_COUNT = 25" in contracts, "Installer missing the frozen 25-token switch table"
 assert "ENG_INI_DEFAULT_COUNT = 25" in contracts, "Installer missing the frozen 25-row INI defaults table"
 for token in ["/auditonly", "/updateoffice", "/autoreboot", "/instmsi", "/upgradeos"]:
@@ -82,7 +82,7 @@ print("[PASS] Test 2: Command-line contracts verified on the native sources.")
 # empty keeps the explicit-cleared DELETE contract (no stale twin).
 # Source-level pin over the generator host (path overridable for
 # scratch-copy bite proofs).
-print("\n[Test 3/4] Verifying the generator host OS-upgrades twin contract...")
+print("\n[Test 3/5] Verifying the generator host OS-upgrades twin contract...")
 GENERATOR_HOST_CS = os.environ.get(
     "WSON_GENERATOR_HOST_CS",
     os.path.join("src-modern", "generator", "host", "Program.cs"))
@@ -118,8 +118,44 @@ if missing_shapes:
     sys.exit(1)
 print("[PASS] Test 3: generator host OS-upgrades twin contract verified.")
 
+# Test 4: generator host dev-root discovery contract (bounded parent walk
+# over the UpdateGenerator.ini marker). The distance from BaseDirectory to
+# the repo root depends on the build layout: 0 levels for the shipped root
+# exe, 5 for a plain Debug bin, 7 for a Debug bin with a RuntimeIdentifier
+# (win-x64 adds a folder). A fixed-depth jump never finds the marker in the
+# RID layout: the host falls back to BaseDirectory and the launched pipeline
+# gets a nonexistent WorkingDirectory ("Nom de repertoire non valide").
+# Source-level pin over the same overridable path as Test 3.
+print("\n[Test 4/5] Verifying the generator host dev-root parent-walk contract...")
+walk_shapes = [
+    # The walk is rooted at the app's BaseDirectory (level 0 = shipped root).
+    ("BaseDirectory-rooted walk", "new DirectoryInfo(baseDir)"),
+    # A bounded loop probes EVERY parent level - no fixed-depth jump.
+    ("bounded parent-walk loop",
+     "for (int levels = 0; levels <= 10 && dir != null; levels++)"),
+    # Each level probes the marker and returns on the FIRST hit.
+    ("marker existence probe",
+     'File.Exists(Path.Combine(dir.FullName, "UpdateGenerator.ini"))'),
+    # Parents are walked one level at a time.
+    ("parent-level progression", "dir = dir.Parent"),
+    # Contract fallback: marker found nowhere -> BaseDirectory (unchanged).
+    ("BaseDirectory fallback", "return baseDir;"),
+]
+missing_walk = [(name, shape) for (name, shape) in walk_shapes
+                if shape not in gen_host_src]
+for name, shape in missing_walk:
+    print(f"[FAIL] generator host {GENERATOR_HOST_CS}: missing {name} literal: {shape}")
+if missing_walk:
+    sys.exit(1)
+# Regression pin: the old fixed 5-level jump literal must be gone.
+if '"..", "..", "..", "..", ".."' in gen_host_src:
+    print(f"[FAIL] generator host {GENERATOR_HOST_CS}: fixed 5-level '..' jump still present - "
+          f"RID layouts add win-x64 and need 7 levels; the walk must probe every parent.")
+    sys.exit(1)
+print("[PASS] Test 4: generator host dev-root parent-walk contract verified.")
+
 # Test 4: native compile + launcher contracts
-print("\n[Test 4/4] Compiling the native installer (both Release modes) and verifying the launcher contract...")
+print("\n[Test 5/5] Compiling the native installer (both Release modes) and verifying the launcher contract...")
 if not os.path.exists(LAZBUILD):
     print(f"[FAIL] lazbuild not found at {LAZBUILD} - set WO_LAZARUS_ROOT "
           f"(CI runner installation is Phase 27's lane)")
@@ -155,8 +191,8 @@ for name in ["UpdateInstaller.orig.exe", "UpdateInstallerLegacy.exe"]:
         print(f"[FAIL] Required exact-name probe '{name}' missing from Program.cs")
         sys.exit(1)
 print("  Program.cs exact-name probes verified.")
-print("[PASS] Test 4: Native compile and launcher contracts verified.")
+print("[PASS] Test 5: Native compile and launcher contracts verified.")
 
 print("\n" + "=" * 71)
-print("SUCCESS: All 4 GUI contract tests passed!")
+print("SUCCESS: All 5 GUI contract tests passed!")
 print("=" * 71)

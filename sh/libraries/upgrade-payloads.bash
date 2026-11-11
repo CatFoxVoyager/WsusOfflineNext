@@ -228,20 +228,23 @@ function uup_extract_files_map ()
     # Shape census: the number of whole-shape matches must equal the
     # number of sliced entries AND the raw field counts - a truncated
     # or reordered entry fails here. Every entry line ends with its
-    # own closing brace. The tolerated entry tail (plan 33-03): the
-    # LIVE get.php entries continue after the size field with the token
-    # fields url/uuid/expire, which the committed fixtures strip at
+    # own closing brace. The tolerated entry tail (plan 33-03, extended
+    # by the 33-04 live-chain consignment): the LIVE get.php entries
+    # continue after the size field with the token fields
+    # url/uuid/expire/debug, which the committed fixtures strip at
     # authoring - the anchored shape accepts zero or more
-    # ,"url":"..."/,"uuid":"..."/,"expire":<digits> repetitions before
-    # the closing brace and captures NONE of them (ACQ-01: the rows
-    # stay name|sha256|size only). Any OTHER field after the size still
-    # fails the census (fail-closed against unknown shapes).
+    # ,"url":"..."/,"uuid":"..."/,"expire":<digits>/,"debug":"..."
+    # repetitions before the closing brace and captures NONE of them
+    # (ACQ-01: the rows stay name|sha256|size only). The debug field
+    # carries the FileLocation XML blob (measured live 2026-11-11). Any
+    # OTHER field after the size still fails the census (fail-closed
+    # against unknown shapes).
     field_hits="$(grep -o '"sha1":' "${json_file}" | wc -l | tr -d '[:space:]')"
     matched=0
     rows_text=""
     for entry_line in "${entries[@]}"
     do
-        if [[ "${entry_line}" =~ ^\"([A-Za-z0-9._-]+)\":\{\"sha1\":\"[0-9a-f]{40}\",\"sha256\":\"([0-9a-f]{64})\",\"size\":\"([0-9]+)\"((,\"url\":\"[^\"]*\")|(,\"uuid\":\"[^\"]*\")|(,\"expire\":[0-9]+))*\}$ ]]
+        if [[ "${entry_line}" =~ ^\"([A-Za-z0-9._-]+)\":\{\"sha1\":\"[0-9a-f]{40}\",\"sha256\":\"([0-9a-f]{64})\",\"size\":\"([0-9]+)\"((,\"url\":\"[^\"]*\")|(,\"uuid\":\"[^\"]*\")|(,\"expire\":[0-9]+)|(,\"debug\":\"[^\"]*\"))*\}$ ]]
         then
             matched=$(( matched + 1 ))
             rows_text+="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}"$'\t'"${BASH_REMATCH[3]}"$'\n'
@@ -616,15 +619,21 @@ function uup_resolve ()
         # marker in the title, newest created wins. The candidate walk
         # goes through a temp FILE (the process-substitution form is
         # unreliable with piped content on MSYS hosts - same transport
-        # hazard as the files-map split).
+        # hazard as the files-map split). The sed carries ALL FIVE fields
+        # through (title, build, arch, created, uuid) - the arch field
+        # MUST survive into the TSV or the awk arch filter compares the
+        # created timestamp instead and nothing ever matches (measured
+        # live by the 33-04 live-chain consignment: the fixture path
+        # skips the listid call, so this filter's first real-data run was
+        # 33-04's).
         filter_file="$(mktemp "${TMPDIR:-/tmp}/uup-filter-XXXXXX")" || return 1
         grep -oE '"title":"[^"]*","build":"[0-9]+\.[0-9]+","arch":"[A-Za-z0-9_]+","created":[0-9]+,"uuid":"[0-9a-f-]{36}"' "${listid_json}" \
-            | sed -E 's/^"title":"([^"]*)","build":"([0-9]+\.[0-9]+)","arch":"([A-Za-z0-9_]+)","created":"?([0-9]+)"?,"uuid":"([0-9a-f-]{36})"$/\1\t\2\t\4\t\5/' \
+            | sed -E 's/^"title":"([^"]*)","build":"([0-9]+\.[0-9]+)","arch":"([A-Za-z0-9_]+)","created":"?([0-9]+)"?,"uuid":"([0-9a-f-]{36})"$/\1\t\2\t\3\t\4\t\5/' \
             | awk -F'\t' -v want_arch="${api_arch}" '$3 == want_arch' \
             > "${filter_file}"
 
         best_created=""
-        while IFS=$'\t' read -r candidate_title candidate_build candidate_created candidate_uuid
+        while IFS=$'\t' read -r candidate_title candidate_build candidate_arch candidate_created candidate_uuid
         do
             candidate_line="${candidate_build%%.*}"
             if [[ "${candidate_line}" != "${target_build}" ]]
@@ -878,6 +887,104 @@ function uup_hash_gate ()
     then
         printf 'upgrade payload integrity verification FAILED - the spool is refused, nothing is staged\n' >&2
         return 1
+    fi
+    return 0
+}
+
+# Purge the spool's revision churn for a target (plan 33-04, ACQ-06,
+# DEC-33-08, research Pitfall 6).
+#
+# Usage: uup_purge_revisions <cible> <arche> <langue> <staged_manifest>
+#
+# The CMD twin is :UpgPurgeRevisions in cmd/UpgradePayloads.cmd - parity of
+# BEHAVIOR, not bytes.
+#
+# Contract: invoked ONLY after successful staging; reads the STAGED
+# manifest's uuid meta row (the keep-list source), archives the current
+# working set (the spool root's manifest.txt + files/) under the staged
+# uuid when the keep-list revision dir does not exist yet, then removes
+# every sibling spool set under
+#
+#     <spool>/<cible>-<arche>-<langue>/<revision>/ (each with manifest.txt)
+#
+# whose manifest uuid differs from the staged uuid. Zero matching siblings
+# = zero deletions. A missing or unparseable staged manifest refuses
+# loudly - a failed or interrupted run removes NOTHING (Pitfall 6). This
+# function never touches client/upgrade/ content (staging's
+# delete-after-success replacement already handled the old revision there)
+# and never registers the subtree with the existing cleanup walk (the walk
+# at sh/libraries/cleanup-client-directories.bash iterates explicitly
+# passed dirs only).
+#
+# Spool root resolution mirrors the acquisition section: WOU_UPGRADE_SPOOL
+# overridable, default ${TMPDIR:-/tmp}/wou-upgrade-spool (DEC-33-14).
+#
+# Returns 0 on a completed purge (including 0 removals); 1 after logging +
+# counting when the staged manifest is missing or carries no uuid.
+
+function uup_purge_revisions ()
+{
+    local cible="$1" arche="$2" langue="$3" staged_manifest="$4"
+    local spool_root="${WOU_UPGRADE_SPOOL:-${TMPDIR:-/tmp}/wou-upgrade-spool}"
+    local sets_dir="" staged_uuid="" working_uuid="" revision=""
+    local revision_uuid="" kept=0 removed=0
+
+    if [[ -z "${staged_manifest}" ]] || [[ ! -s "${staged_manifest}" ]]
+    then
+        log_error_message "The staged manifest is missing or empty - the purge refuses without proof of successful staging: ${staged_manifest}"
+        increment_error_count
+        return 1
+    fi
+    staged_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${staged_manifest}")"
+    if [[ -z "${staged_uuid}" ]]
+    then
+        log_error_message "The staged manifest carries no uuid meta row - purge refused: ${staged_manifest}"
+        increment_error_count
+        return 1
+    fi
+
+    sets_dir="${spool_root}/${cible}-${arche}-${langue}"
+    mkdir -p "${sets_dir}"
+
+    # Archive the current working set under the staged uuid (the spool
+    # keeps exactly the current uuid set per target-lang-arch). Only when
+    # the keep-list revision dir does not exist yet and the working
+    # manifest matches the staged uuid.
+    if [[ ! -d "${sets_dir}/${staged_uuid}" && -s "${spool_root}/manifest.txt" ]]
+    then
+        working_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${spool_root}/manifest.txt")"
+        if [[ "${working_uuid}" == "${staged_uuid}" ]]
+        then
+            mkdir -p "${sets_dir}/${staged_uuid}"
+            mv "${spool_root}/manifest.txt" "${sets_dir}/${staged_uuid}/manifest.txt"
+            if [[ -d "${spool_root}/files" ]]
+            then
+                mv "${spool_root}/files" "${sets_dir}/${staged_uuid}/files"
+            fi
+            log_info_message "Working set archived under the staged uuid: ${staged_uuid}"
+        fi
+    fi
+
+    # The keep-list walk: remove every sibling set whose uuid differs
+    for revision in "${sets_dir}"/*
+    do
+        [[ -d "${revision}" ]] || continue
+        revision_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${revision}/manifest.txt" 2> /dev/null)"
+        if [[ "${revision_uuid}" == "${staged_uuid}" ]]
+        then
+            kept=$(( kept + 1 ))
+        else
+            rm -rf "${revision}"
+            removed=$(( removed + 1 ))
+            log_info_message "Purged stale revision set ${revision##*/} (uuid ${revision_uuid})"
+        fi
+    done
+
+    if (( removed == 0 ))
+    then
+        log_info_message "PURGE: 0 removals - the spool keeps only the staged revision ${staged_uuid} (${kept} set(s) kept)"
+    else
+        log_info_message "PURGE: ${removed} stale revision set(s) removed, ${kept} kept - the spool holds only revision ${staged_uuid} for ${cible}-${arche}-${langue}"
     fi
     return 0
 }

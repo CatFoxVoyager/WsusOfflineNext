@@ -36,6 +36,18 @@
 #      payload non-resumably (loud signal, error counted; environment-
 #      gated by a named marker when aria2c IS on PATH).
 #
+# Plan 33-04 sections (staging + purge), appended, existing sections
+# untouched:
+#   I. Staging the verified raw set (real create_integrity_database):
+#      set/ + manifest + integrity class + the loud Windows-only note
+#   J. Replacement-deletion timing: old revision aside in the spool and
+#      deleted only after the new set reads back (delete-after-success)
+#   K. Purge trio with the kept-set assertion: sole revision 0 removals /
+#      stale pair removed exactly while the staged-uuid keep set survives /
+#      failed-staging simulation removes nothing
+#   L. The no-image-tool source pin: the task file never names the image
+#      tooling (case-insensitive zero)
+#
 # Success sentinel: UPG-PAYLOADS-BASH-PASS. Every failure prints a FAIL:
 # line and exits 1.
 # =======================================================================
@@ -61,6 +73,11 @@ echo "======================================================================="
 
 tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t 'wou_upg_test')"
 trap 'rm -rf "$tmp_dir"' EXIT
+
+# Sandbox hygiene: a previous battery run (or a real engine run) may have
+# left the default DEC-33-14 spool root behind - Section B asserts its
+# absence, so start from the known state
+rm -rf "${TMPDIR:-/tmp}/wou-upgrade-spool" /tmp/wou-upgrade-spool
 
 sb_sh="${tmp_dir}/sh"
 sb_fix="${tmp_dir}/fixtures"
@@ -90,8 +107,29 @@ source "${repo_root}/sh/libraries/upgrade-selection.bash"
 source "${repo_root}/sh/libraries/messages.bash"
 # shellcheck source=/dev/null
 source "${repo_root}/sh/libraries/error-counter.bash"
+# The staging tail (plan 33-04) calls the REAL create_integrity_database -
+# source it and its two dependencies (unix_to_dos, require_directory)
+# shellcheck source=/dev/null
+source "${repo_root}/sh/libraries/dos-files.bash"
+# shellcheck source=/dev/null
+source "${repo_root}/sh/libraries/files-and-folders.bash"
+# shellcheck source=/dev/null
+source "${repo_root}/sh/libraries/integrity-database.bash"
 logfile="${tmp_dir}/battery.log"
 debug="disabled"
+fast_mode="disabled"
+use_integrity_database="enabled"
+
+# create_integrity_database invokes plain `hashdeep` from PATH - the
+# sandbox prepends a wrapper resolving to the repo's vendored binary
+sb_bin="${tmp_dir}/bin"
+mkdir -p "${sb_bin}"
+cat > "${sb_bin}/hashdeep" <<WRAPPER
+#!/usr/bin/env bash
+exec "${repo_root}/client/bin/hashdeep64.exe" "\$@"
+WRAPPER
+chmod +x "${sb_bin}/hashdeep"
+export PATH="${sb_bin}:${PATH}"
 
 if ! declare -F read_upgrade_selection > /dev/null; then
     printf 'FAIL: upgrade-selection.bash does not provide read_upgrade_selection\n'
@@ -504,6 +542,178 @@ fi
 export UUP_ARIA2_BIN="${sb_stubs}/aria2-stub.bash"
 export UUP_WGET_BIN="${sb_stubs}/wget-stub.bash"
 unset STUB_MODE || true
+
+# -----------------------------------------------------------------------
+# I. Staging the verified raw set (plan 33-04, DEC-33-05): set/ + manifest
+#    + integrity class + the loud Windows-generator-only note
+# -----------------------------------------------------------------------
+echo "--- Section I: staging the verified raw set (real create_integrity_database) ---"
+
+sb_client="${tmp_dir}/client"
+mkdir -p "${sb_client}/md"
+# The purge inside the staging tail resolves its spool root from this env -
+# pin it to the sandbox so the default spool root is never created
+export WOU_UPGRADE_SPOOL="${tmp_dir}/spool-i-root"
+mkdir -p "${WOU_UPGRADE_SPOOL}"
+spool_i="${tmp_dir}/spool-i"
+files_i="${spool_i}/files"
+mkdir -p "${files_i}"
+cp "${big_file}" "${files_i}/big.esd"
+cp "${small_file}" "${files_i}/small.cab"
+build_manifest "${spool_i}/manifest.txt"
+
+export UUP_CLIENT_ROOT="${sb_client}"
+if uup_stage_raw_set 26200 x64 en-us "${spool_i}/manifest.txt" > "${tmp_dir}/stage-i.log" 2>&1
+then
+    battery_pass=$(( battery_pass + 1 ))
+else
+    printf 'FAIL: the staging of the verified raw set must end green:\n'
+    cat "${tmp_dir}/stage-i.log"
+    exit 1
+fi
+target_i="${sb_client}/upgrade/26200-x64/en-us"
+assert_eq "$(ls "${target_i}/set")" "$(printf 'big.esd\nsmall.cab')" "the verified raw set is staged under set/"
+if [[ ! -s "${target_i}/manifest.txt" ]]; then
+    printf 'FAIL: the acquisition manifest must be staged beside the set\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+db_i="${sb_client}/md/hashes-upgrade-26200-x64-en-us.txt"
+if [[ ! -s "${db_i}" ]]; then
+    printf 'FAIL: the media integrity class is missing: %s\n' "${db_i}"
+    exit 1
+fi
+head -1 "${db_i}" | grep -q 'HASHDEEP-1.0' || {
+    printf 'FAIL: the db file must carry the hashdeep header\n'
+    exit 1
+}
+battery_pass=$(( battery_pass + 1 ))
+expect_contains "${tmp_dir}/stage-i.log" "Assembly is Windows-generator-only" "the loud Windows-generator-only note fires"
+expect_contains "${tmp_dir}/stage-i.log" "PURGE:" "the post-success purge runs last"
+echo "[I] staging positive: set/ + manifest + integrity class + note."
+
+# -----------------------------------------------------------------------
+# J. Replacement-deletion timing: the old revision dies only after the
+#    new one reads back (delete-after-success)
+# -----------------------------------------------------------------------
+echo "--- Section J: replacement-deletion timing ---"
+
+target_j="${sb_client}/upgrade/26200-x64/en-us"
+printf 'uuid|aaaaaaaa-0000-0000-0000-000000000000\n' > "${target_j}/manifest.txt"
+printf 'OLD-REVISION\n' > "${target_j}/old-media.bin"
+spool_j="${tmp_dir}/spool-j"
+files_j="${spool_j}/files"
+mkdir -p "${files_j}"
+cp "${big_file}" "${files_j}/big.esd"
+cp "${small_file}" "${files_j}/small.cab"
+build_manifest "${spool_j}/manifest.txt"
+export WOU_UPGRADE_SPOOL="${tmp_dir}/spool-root-j"
+mkdir -p "${WOU_UPGRADE_SPOOL}"
+if uup_stage_raw_set 26200 x64 en-us "${spool_j}/manifest.txt" > "${tmp_dir}/stage-j.log" 2>&1
+then
+    battery_pass=$(( battery_pass + 1 ))
+else
+    printf 'FAIL: the replacement staging must end green:\n'
+    cat "${tmp_dir}/stage-j.log"
+    exit 1
+fi
+grep -q 'uuid|bbbbbbbb' "${target_j}/manifest.txt" 2> /dev/null || true
+if ! grep -qF 'uuid|' "${target_j}/manifest.txt"; then
+    printf 'FAIL: the staged manifest must be present\n'
+    exit 1
+fi
+staged_j_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${target_j}/manifest.txt")"
+expected_j_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${spool_j}/manifest.txt")"
+assert_eq "${staged_j_uuid}" "${expected_j_uuid}" "the staged manifest reads back with the staged uuid"
+if [[ -e "${target_j}/old-media.bin" ]]; then
+    printf 'FAIL: the old revision media must be gone after success\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+asides_j="$(find "${WOU_UPGRADE_SPOOL}" -maxdepth 1 -name 'replaced-*' | wc -l | tr -d ' ')"
+assert_eq "${asides_j}" "0" "the moved-aside old revision is DELETED after the successful staging"
+echo "[J] delete-after-success replacement proven."
+
+# -----------------------------------------------------------------------
+# K. The purge trio with the kept-set assertion (ACQ-06, Pitfall 6)
+# -----------------------------------------------------------------------
+echo "--- Section K: purge trio (sole / stale / failed-staging) ---"
+
+export WOU_UPGRADE_SPOOL="${tmp_dir}/purge-spool"
+sets_k="${WOU_UPGRADE_SPOOL}/26200-x64-en-us"
+uuid_k="11111111-1111-1111-1111-111111111111"
+staged_k="${tmp_dir}/pr-staged.txt"
+printf 'uuid|%s\n' "${uuid_k}" > "${staged_k}"
+mkdir -p "${sets_k}/${uuid_k}/files"
+cp "${staged_k}" "${sets_k}/${uuid_k}/manifest.txt"
+printf 'KEEP-ME\n' > "${sets_k}/${uuid_k}/files/keep.txt"
+
+if uup_purge_revisions 26200 x64 en-us "${staged_k}" > "${tmp_dir}/purge-k1.log" 2>&1
+then
+    battery_pass=$(( battery_pass + 1 ))
+else
+    printf 'FAIL: the sole-revision purge must end green\n'
+    cat "${tmp_dir}/purge-k1.log"
+    exit 1
+fi
+expect_contains "${tmp_dir}/purge-k1.log" "PURGE: 0 removals" "a sole revision answers 0 removals"
+if [[ ! -f "${sets_k}/${uuid_k}/files/keep.txt" ]]; then
+    printf 'FAIL: the sole revision must be deleted-not\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+
+stale1="${sets_k}/22222222-2222-2222-2222-222222222222"
+stale2="${sets_k}/33333333-3333-3333-3333-333333333333"
+mkdir -p "${stale1}/files" "${stale2}"
+printf 'uuid|22222222-2222-2222-2222-222222222222\n' > "${stale1}/manifest.txt"
+printf 'STALE\n' > "${stale1}/files/stale.txt"
+printf 'uuid|33333333-3333-3333-3333-333333333333\n' > "${stale2}/manifest.txt"
+
+if uup_purge_revisions 26200 x64 en-us "${staged_k}" > "${tmp_dir}/purge-k2.log" 2>&1
+then
+    battery_pass=$(( battery_pass + 1 ))
+else
+    printf 'FAIL: the stale-revision purge must end green\n'
+    cat "${tmp_dir}/purge-k2.log"
+    exit 1
+fi
+if [[ -e "${stale1}" || -e "${stale2}" ]]; then
+    printf 'FAIL: both stale sets must be purged\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+if [[ ! -f "${sets_k}/${uuid_k}/files/keep.txt" ]]; then
+    printf 'FAIL: the staged-uuid keep set must still exist after the purge (the kept-set assertion)\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+expect_contains "${tmp_dir}/purge-k2.log" "2 stale revision set(s) removed" "the purge counts exactly 2 removals"
+
+if uup_purge_revisions 26200 x64 en-us "${tmp_dir}/nonexistent-staged-manifest.txt" > "${tmp_dir}/purge-k3.log" 2>&1
+then
+    printf 'FAIL: the purge must refuse without proof of successful staging\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+if [[ ! -d "${sets_k}/${uuid_k}" ]]; then
+    printf 'FAIL: the failed-staging simulation must remove NOTHING\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+echo "[K] purge answers 0 / exact / nothing, kept set survives."
+
+# -----------------------------------------------------------------------
+# L. The no-image-tool source pin: the task file must not name the image
+#    tooling at all (the Windows-tool refusal is total, DEC-33-05)
+# -----------------------------------------------------------------------
+echo "--- Section L: no-image-tool source pin on the task file ---"
+
+tool_hits="$(grep -ci 'dism\|wimlib' "${task_file}" || true)"
+assert_eq "${tool_hits}" "0" "the task file must not name the image tooling at all (case-insensitive)"
+echo "[L] no-image-tool source pin green."
+
+unset UUP_CLIENT_ROOT WOU_UPGRADE_SPOOL || true
 
 # -----------------------------------------------------------------------
 # All green

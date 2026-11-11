@@ -17,8 +17,11 @@
 # payloads >= 104857600 bytes with the uup option array, wget -c below,
 # size-descending big-first ordering - the spike-proven token-TTL shape),
 # and runs the fail-closed hash gate over the whole spool BEFORE anything
-# could stage. Staging is plan 33-04's boundary - this task stops at the
-# verified spool.
+# could stage. The verified spool then becomes the staged raw set (plan
+# 33-04, DEC-33-05): client/upgrade/<cible>-<arche>/<langue>/set/ + the
+# acquisition manifest + the media integrity class, the loud
+# Windows-generator-only note, and the post-success revision purge.
+# Assembly itself never happens on this side.
 #
 # Hygiene (T-33-09): the url map and the downloader list files carry
 # token URL material and are deleted on EVERY exit path - success,
@@ -259,8 +262,126 @@ function uup_download_and_verify ()
     return 0
 }
 
+# Stage the verified raw set (plan 33-04, DEC-33-05): the verified spool
+# payload set moves into client/upgrade/<cible>-<arche>/<langue>/set/ with
+# the acquisition manifest beside it and its integrity class created
+# through the existing create_integrity_database machinery (ACQ-04).
+#
+# Usage: uup_stage_raw_set <cible> <arche> <langue> <spool_manifest>
+#
+# Contract (parity with the CMD :UpgStageMedia staging half):
+#   - the whole-spool sha256 gate has ALREADY passed upstream (the section
+#     runs it before calling this stage) - nothing unverified can reach
+#     this point;
+#   - on a revision change (existing target dir whose manifest uuid
+#     differs from the staged uuid) the old target moves aside INTO THE
+#     SPOOL first and the aside is removed ONLY after the new set is
+#     staged and its manifest reads back (delete-after-success, T-33-12);
+#   - the loud Windows-generator-only note fires on every staging: the
+#     verified raw set under set/ is the input for the Windows generator's
+#     media assembly, never assembled on this side;
+#   - the post-success spool purge runs LAST (uup_purge_revisions).
+#
+# The client tree root is cwd-relative for the engine (the task runs from
+# the sh/ directory) with the UUP_CLIENT_ROOT seam for the sandbox battery.
+#
+# Returns 0 on success; 1 after logging + counting on any refusal (nothing
+# staged, any moved-aside old revision restored).
+
+function uup_stage_raw_set ()
+{
+    local cible="$1" arche="$2" langue="$3" spool_manifest="$4"
+    local client_root="${UUP_CLIENT_ROOT:-../client}"
+    local spool_root=""
+    local target="${client_root}/upgrade/${cible}-${arche}/${langue}"
+    local staged_uuid="" target_uuid="" readback_uuid="" aside=""
+
+    # The spool root is the staged manifest's directory (the DEC-33-14
+    # working layout: <spool>/manifest.txt + <spool>/files/) - the same
+    # derivation the CMD :UpgStageMedia applies to its manifest argument
+    spool_root="$(cd "$(dirname "${spool_manifest}")" && pwd)"
+
+    staged_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${spool_manifest}")"
+    if [[ -z "${staged_uuid}" ]]
+    then
+        log_error_message "The spool manifest carries no uuid meta row - staging refused: ${spool_manifest}"
+        increment_error_count
+        return 1
+    fi
+
+    # Revision replacement: move an existing target aside INTO THE SPOOL
+    if [[ -d "${target}" ]]
+    then
+        target_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${target}/manifest.txt" 2> /dev/null)"
+        if [[ "${target_uuid}" != "${staged_uuid}" ]]
+        then
+            aside="${spool_root}/replaced-${staged_uuid}-$$"
+            mkdir -p "${spool_root}"
+            log_info_message "Existing media found - moving the old tree aside (delete-after-success): ${aside}"
+            mv "${target}" "${aside}"
+            if [[ $? -ne 0 ]]
+            then
+                log_error_message "Could not move the existing media aside - staging refused, the old revision stays untouched"
+                increment_error_count
+                return 1
+            fi
+        fi
+    fi
+
+    mkdir -p "${target}"
+    if ! mv "${spool_root}/files" "${target}/set"
+    then
+        log_error_message "Staging the verified raw set failed - nothing staged"
+        increment_error_count
+        if [[ -n "${aside}" ]]
+        then
+            mv "${aside}" "${target}"
+        fi
+        return 1
+    fi
+
+    # The acquisition manifest lands beside the set
+    if ! cp "${spool_manifest}" "${target}/manifest.txt"
+    then
+        log_error_message "Staging the manifest beside the set failed"
+        increment_error_count
+        if [[ -n "${aside}" ]]
+        then
+            mv "${aside}" "${target}"
+        fi
+        return 1
+    fi
+
+    # Delete-after-success: the new set must be staged AND its manifest
+    # must read back with the staged uuid before the old revision dies
+    readback_uuid="$(awk -F'|' '$1 == "uuid" { print $2; exit }' "${target}/manifest.txt")"
+    if [[ "${readback_uuid}" != "${staged_uuid}" ]]
+    then
+        log_error_message "The staged manifest does not read back with uuid ${staged_uuid} - the old revision is kept for recovery"
+        increment_error_count
+        return 1
+    fi
+    if [[ -n "${aside}" ]]
+    then
+        rm -rf "${aside}"
+        log_info_message "Old revision media deleted after successful staging (delete-after-success)"
+    fi
+
+    # The media integrity class through the existing machinery (ACQ-04)
+    create_integrity_database "${target}" \
+        "${client_root}/md/hashes-upgrade-${cible}-${arche}-${langue}.txt"
+
+    # The loud Windows-generator-only note (DEC-33-05): the verified raw
+    # set under set/ is the input for the Windows generator to assemble
+    log_warning_message "Assembly is Windows-generator-only: the verified raw set is staged under set/ for the Windows generator to assemble"
+
+    # Post-success spool purge (uuid keep-list, ACQ-06)
+    uup_purge_revisions "${cible}" "${arche}" "${langue}" "${target}/manifest.txt"
+    return 0
+}
+
 # The acquisition section (plan 33-03): selection gate, one-shot resolve,
-# coupled download + verification
+# coupled download + verification; the plan 33-04 staging tail
 
 function acquire_upgrade_payloads ()
 {
@@ -328,6 +449,12 @@ function acquire_upgrade_payloads ()
         # The download/verify stage already logged + counted + cleaned up
         return 0
     fi
+
+    # The verified spool becomes the staged raw set (plan 33-04): set/ +
+    # manifest + integrity class + the loud Windows-only note, then the
+    # post-success purge. The staging stage already logged + counted on a
+    # refusal.
+    uup_stage_raw_set "${target_build}" "${target_arch}" "${lang}" "${manifest}"
     return 0
 }
 

@@ -49,36 +49,51 @@ one document-only fallback:
    `.swm` split probe are BLOCKED by this prerequisite failure (no install.esd exists
    to append to or split).
 
-3. **CONSEQUENCE (the wimlib-only disposition):** a complete DISM-only assembly path
-   does not exist for UUP sets. Until (and unless) wimlib-imagex is vendored under the
-   license decision below, this toolchain can acquire, hash-verify, stage the raw set
-   (plans 33-02/33-03) and extract the scaffold (command 1) - but `sources\install.esd`
-   itself remains a documented external dependency, not a produced artifact.
+3. **CONSEQUENCE (resolved by the vendoring decision):** a complete DISM-only assembly
+   path does not exist for UUP sets. The owner's 2026-11-11 decision (plan 33-04) vendored
+   wimlib-imagex, so `sources\install.esd` IS now produced by this toolchain: the shipped
+   assembly stage is `cmd\UpgradePayloads.cmd :UpgAssembleMedia`, which runs the wimlib
+   sequences below through the vendored binaries (scaffold apply from index 1, install.esd
+   export per edition with --ref globs, info census). The consigned DISM failure stands as
+   the reason the in-box path is not used for the export step.
 
-## wimlib-imagex fallback (document-only - NOT EXECUTED IN THIS REPO)
+## wimlib-imagex (vendored per the owner decision of 2026-11-11 - the shipped mechanism)
 
 The reference implementations (uup-dump converter `convert.sh` v0.7.3, both the Linux
-and the Windows package path) assemble UUP sets with wimlib, not DISM. Reference
-sequences, transcribed from the converter source read at research time:
+and the Windows package path) assemble UUP sets with wimlib, not DISM. The owner's
+2026-11-11 decision (plan 33-04 of milestone v5.0) accepted the GPLv3+ obligations and
+VENDORED the wimlib-imagex Windows binaries into `bin\wimlib\` (x64 + x86, version
+1.14.5 from https://wimlib.net/downloads/, COPYING texts verbatim, provenance in
+`bin\wimlib\LICENSE-NOTES`, SHA256 pins in `bin\wimlib\SHA256SUMS`, fail-closed
+verification before any invocation, no UPX). License boundary per ACQ-03
+("licence vérifiée avant vendoring"): the CLI is GPLv3+, the library LGPLv3+, and the
+license documentation ships beside the binaries.
+
+The reference sequences (transcribed from the converter source read at research time)
+are what the shipped assembly stage implements through the vendored binaries -
+executed for the first time against the real 26200 set on 2026-11-11 (158 component
+cabs converted, 4 editions exported into a 2.5 GB multi-edition install.esd, census
+green):
 
 ```bash
 # media tree from index 1
 wimlib-imagex apply "$firstMetadata" 1 ISODIR --no-acls --no-attributes
-# winre from index 2
-wimlib-imagex export "$firstMetadata" 2 "$tempDir/winre.wim" --compress=maximum --boot
-# component cabs are converted to ESDs first (cabextract -> wimlib-imagex capture),
+# component cabs are converted to ESDs first (extract -> wimlib-imagex capture),
 # then one export per edition metadata ESD; repeated export appends indexes
 wimlib-imagex export "$metadata" 3 ISODIR/sources/install.esd "$editionName" \
-  --ref="$uupDir"/*.[eE][sS][dD]
+  --solid --ref="$uupDir"/*.esd
 ```
 
 `--ref` globs are exactly what DISM lacks - they resolve the external blob references
-that killed the DISM export. These sequences are NOT EXECUTED IN THIS REPO: wimlib is
-GPLv3+ (license verified from the upstream COPYING), and vendoring GPLv3+ binaries into
-the distributed zip carries obligations the project has not accepted. Boundary per
-ACQ-03: "licence vérifiée avant vendoring" - any future vendoring is an owner decision
-that updates the consigned record first and the code after; wimlib stays un-vendored
-this phase.
+that killed the DISM export. Windows-side measured facts baked into the shipped stage:
+the Windows wimlib build's `--ref` IS the glob form (there is no `--ref-glob` there),
+its glob rejects `[eE]` character classes and `..` path segments (plain `*.esd`
+patterns against clean absolute paths only - Windows globbing is case-insensitive so
+the .ESD payload files are covered), and component-cab extraction uses the in-box
+`System32\expand.exe` (no cabextract on Windows generators). The assembly needs NO
+elevation - the DEC-33-13 targeted-RunAs policy (built for in-box DISM) has no surface
+on the shipped path; its fail-closed refusal discipline is preserved on every
+tool-gate failure.
 
 ## FAT32 / exFAT-NTFS guidance (ACQ-05, DEC-33-11)
 

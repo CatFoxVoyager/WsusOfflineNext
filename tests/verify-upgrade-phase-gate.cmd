@@ -2,7 +2,7 @@
 setlocal
 
 REM =======================================================================
-REM WSUS Offline Update - Phase 32 Upgrade Phase Gate (consigned)
+REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04)
 REM File: tests\verify-upgrade-phase-gate.cmd
 REM
 REM Plan 32-04 / DEC-32-10: the full phase gate lives as THIS artifact -
@@ -14,6 +14,9 @@ REM
 REM The chain requires exit 0 from EACH link, in order:
 REM    1. bash -n over the five Phase-32 bash files (the task file, the
 REM       selection library, both bash batteries, the bash contract twin)
+REM       + the Phase-33 acquisition bash files (62 task, resolver
+REM       library, payloads battery - the 33-04 extension; the original
+REM       five-file command shape is preserved, the list only grew)
 REM    2. sh/tests/verify-reboot-cycle.bash     (evaluator, 12 states)
 REM    3. tests/verify-reboot-cycle.cmd         (real engine, 12 states)
 REM    4. sh/tests/verify-win11-26h1.bash
@@ -29,11 +32,23 @@ REM   12. tests/verify-gui-contracts.cmd        (lazbuild both modes)
 REM   13. both generation twins' drift check: bash sh/generate-build-sites.bash
 REM       --check AND cscript //Nologo cmd\GenerateBuildSites.vbs --check
 REM       (run from the repo root, the cscript double-slash preserved)
+REM   14. sh/tests/verify-upgrade-resolver.bash (Phase-33 bash resolver twin)
+REM   15. tests/verify-upgrade-resolver.cmd     (Phase-33 CMD resolver + parity)
+REM   16. sh/tests/verify-upgrade-payloads.bash (Phase-33 acquisition + staging)
+REM   17. tests/verify-upgrade-payloads.cmd     (Phase-33 assembly + gates + purge)
+REM   18. tests/verify-upgrade-media.cmd        (consigned record + staged media)
+REM   19. the assembly doc markers (winning set / GPLv3 / exFAT)
 REM
 REM A red link is diagnosable by its GATE number: every link echoes one
 REM numbered line before running and a PASS line after. Bash resolves at
 REM runtime (bare PATH first, the Git for Windows fallback second) - the
 REM contract-twin idiom. Success sentinel: UPGRADE-PHASE-GATE-PASS.
+REM
+REM ENVIRONMENT: run this gate from a clean MSYS environment. If
+REM MSYS2_ARG_CONV_EXCL='*' is inherited from the caller, the bash-side
+REM children that invoke Windows binaries with POSIX paths (the bash
+REM batteries' hashdeep calls) receive unconverted paths and fail - the
+REM gate was consigned green WITHOUT the exclusion (33-04 consigned run).
 REM =======================================================================
 
 REM The pushd is HELD for the whole run: every link runs from the repo
@@ -56,10 +71,10 @@ if errorlevel 1 (
 )
 echo [INFO] bash resolved to "%BASH_EXE%"
 
-echo [GATE 1] bash -n syntax over the five Phase-32 bash files...
-"%BASH_EXE%" -n sh/download-updates-tasks/50-superseded-updates.bash sh/libraries/upgrade-selection.bash sh/tests/verify-reboot-cycle.bash sh/tests/verify-shield-filter.bash sh/tests/verify-upgrade-contracts.bash
+echo [GATE 1] bash -n syntax over the five Phase-32 bash files + the Phase-33 acquisition bash files...
+"%BASH_EXE%" -n sh/download-updates-tasks/50-superseded-updates.bash sh/libraries/upgrade-selection.bash sh/tests/verify-reboot-cycle.bash sh/tests/verify-shield-filter.bash sh/tests/verify-upgrade-contracts.bash sh/download-updates-tasks/62-upgrade-payloads.bash sh/libraries/upgrade-payloads.bash sh/tests/verify-upgrade-payloads.bash
 if errorlevel 1 (
-  echo FAIL: GATE 1 red - bash -n syntax check failed on a Phase-32 bash file
+  echo FAIL: GATE 1 red - bash -n syntax check failed on a Phase-32/33 bash file
   goto Fail
 )
 echo [GATE 1] PASS
@@ -165,9 +180,75 @@ if errorlevel 1 (
 )
 echo [GATE 13] PASS
 
+REM =======================================================================
+REM Phase 33 extension (plan 33-04): the original 13 links above are
+REM byte-identical to the consigned 32-04 chain - Phase-33 links APPEND
+REM as GATE 14..19 (DEC-32-10 consignment discipline: extend, never
+REM rewrite). The resolver twins, the acquisition batteries on both
+REM platforms, the media gate and the assembly-doc markers join the chain.
+REM =======================================================================
+
+echo [GATE 14] bash resolver twin battery...
+"%BASH_EXE%" sh/tests/verify-upgrade-resolver.bash
+if errorlevel 1 (
+  echo FAIL: GATE 14 red - the bash resolver battery is not green
+  goto Fail
+)
+echo [GATE 14] PASS
+
+echo [GATE 15] CMD resolver launcher (VBS positive + negatives + byte parity)...
+call tests\verify-upgrade-resolver.cmd
+if errorlevel 1 (
+  echo FAIL: GATE 15 red - the CMD resolver launcher is not green
+  goto Fail
+)
+echo [GATE 15] PASS
+
+echo [GATE 16] bash payload acquisition battery (download + staging + purge)...
+"%BASH_EXE%" sh/tests/verify-upgrade-payloads.bash
+if errorlevel 1 (
+  echo FAIL: GATE 16 red - the bash payloads battery is not green
+  goto Fail
+)
+echo [GATE 16] PASS
+
+echo [GATE 17] CMD payload acquisition battery (assembly + refuse-staging + staging + db + purge)...
+call tests\verify-upgrade-payloads.cmd
+if errorlevel 1 (
+  echo FAIL: GATE 17 red - the CMD payloads battery is not green
+  goto Fail
+)
+echo [GATE 17] PASS
+
+echo [GATE 18] the media gate (consigned record + staged media + contingency branch)...
+call tests\verify-upgrade-media.cmd
+if errorlevel 1 (
+  echo FAIL: GATE 18 red - the media gate is not green
+  goto Fail
+)
+echo [GATE 18] PASS
+
+echo [GATE 19] the assembly doc markers (winning set + GPLv3 + exFAT guidance)...
+findstr /I /C:"winning" doc\upgrade-media-assembly.md >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 19 red - the doc carries no winning-set section
+  goto Fail
+)
+findstr /I /C:"GPLv3" doc\upgrade-media-assembly.md >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 19 red - the doc carries no GPLv3 note
+  goto Fail
+)
+findstr /I /C:"exFAT" doc\upgrade-media-assembly.md >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 19 red - the doc carries no exFAT guidance
+  goto Fail
+)
+echo [GATE 19] PASS
+
 echo.
 echo =======================================================================
-echo UPGRADE-PHASE-GATE-PASS: all 13 links green in one run.
+echo UPGRADE-PHASE-GATE-PASS: all 19 links green in one run.
 echo =======================================================================
 popd
 exit /b 0
@@ -175,7 +256,7 @@ exit /b 0
 :Fail
 echo.
 echo =======================================================================
-echo FAILURE: Phase-32 upgrade phase gate failed - see the named GATE above.
+echo FAILURE: upgrade phase gate failed - see the named GATE above.
 echo =======================================================================
 popd
 exit /b 1

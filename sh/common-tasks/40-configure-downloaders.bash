@@ -206,6 +206,31 @@ aria2c_logfile_prefix="--log="
 aria2c_download_dir_prefix="--dir="
 aria2c_inputfile_prefix="--input-file="
 
+# UUP upgrade payload downloads (Phase 33, plan 33-03, ACQ-02): these
+# option sets belong to the UUP acquisition section ONLY. The shared
+# arrays above are consumed by every other download section and stay
+# byte-identical - in particular the failsafe array carries the
+# NOT-resume-tuned shape (--always-resume=false --max-resume-failure-tries=0)
+# that a multi-GiB ESD must never see (research Pitfall 4). The UUP set is
+# the spike-proven shape: continue semantics kept, segmented connections,
+# no file allocation, bounded retries.
+aria2c_uup_options=(
+    "--continue"
+    "-x8"
+    "-s8"
+    "-j4"
+    "-k1M"
+    "--file-allocation=none"
+    "--max-tries=10"
+    "--retry-wait=10"
+    "--timeout=60"
+)
+
+wget_uup_options=(
+    "-c"
+    "-nv"
+)
+
 # The connection test should only use complete URLs. While web servers
 # usually offer a standard document like index.html for incomplete URLs,
 # this is not true for the download servers "download.windowsupdate.com"

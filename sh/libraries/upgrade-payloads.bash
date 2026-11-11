@@ -135,6 +135,57 @@ function uup_check_error_field ()
     return 0
 }
 
+# Split a get.php response's files map into one entry line per file
+#
+# Usage: uup_split_entries <json_file>
+#
+# Prints one raw entry line per files-map entry, in document order,
+# through a temp FILE (the process-substitution form is unreliable with
+# piped content on MSYS hosts - the transport hazard measured live in
+# plan 33-02). Shared by both extractors; empty output = unparsable map.
+# Returns 1 with a diagnostic on stderr when the map cannot be sliced.
+
+function uup_split_entries ()
+{
+    local json_file="$1"
+    local files_slice=""
+    local split_file=""
+
+    # Slice the files map value out of the compact single-line JSON:
+    # after the "files":{ opener (the first entry's opening quote stays
+    # so every entry line is fully quoted) up to the files/response
+    # closing braces + jsonApiVersion tail. The strip keeps the LAST
+    # entry's own closing brace (the byte sequence is
+    # <size>"}}},"jsonApiVer..." = entry-close, files-close,
+    # response-close). A response that does not close the map
+    # (truncated JSON) keeps its raw tail and fails the anchored census
+    # in the extractors (all-or-nothing).
+    files_slice="$(sed -n 's/^.*"files":{//p' "${json_file}" \
+        | sed 's/}},"jsonApiVersion".*$//')"
+
+    if [[ -z "${files_slice}" ]]
+    then
+        printf 'no parsable files map in: %s\n' "${json_file}" >&2
+        return 1
+    fi
+
+    # One entry per line: split before every ",<name>":{" open. The
+    # anchored per-entry match in the extractors then cannot grab a
+    # suffix of a hostile name (e.g. "evil/../../evil.esd" keeps its
+    # separators on its own line and fails the anchor). The split goes
+    # through a temp FILE, not a process substitution: on MSYS hosts a
+    # large builtin-printf pipe inside <(...) delivers zero bytes to
+    # the reader, while the same pipeline through a file is byte-exact
+    # everywhere.
+    split_file="$(mktemp "${TMPDIR:-/tmp}/uup-split-XXXXXX")" || return 1
+    printf '%s' "${files_slice}" \
+        | sed 's/,"\([A-Za-z0-9._-]\{1,\}\)":{"/\n"\1":{"/g' \
+        > "${split_file}"
+
+    printf '%s' "${split_file}"
+    return 0
+}
+
 # Extract the files map from a get.php response
 #
 # Usage: uup_extract_files_map <json_file>
@@ -149,41 +200,11 @@ function uup_check_error_field ()
 function uup_extract_files_map ()
 {
     local json_file="$1"
-    local files_slice=""
     local split_file=""
     local -a entries=()
     local entry_line="" matched=0 field_hits=0 rows_text=""
 
-    # Slice the files map value out of the compact single-line JSON:
-    # after the "files":{ opener (the first entry's opening quote stays
-    # so every entry line is fully quoted) up to the files/response
-    # closing braces + jsonApiVersion tail. The strip keeps the LAST
-    # entry's own closing brace (the byte sequence is
-    # <size>"}}},"jsonApiVer..." = entry-close, files-close,
-    # response-close). A response that does not close the map
-    # (truncated JSON) keeps its raw tail and fails the anchored census
-    # below (all-or-nothing).
-    files_slice="$(sed -n 's/^.*"files":{//p' "${json_file}" \
-        | sed 's/}},"jsonApiVersion".*$//')"
-
-    if [[ -z "${files_slice}" ]]
-    then
-        printf 'no parsable files map in: %s\n' "${json_file}" >&2
-        return 1
-    fi
-
-    # One entry per line: split before every ",<name>":{" open. The
-    # anchored per-entry match below then cannot grab a suffix of a
-    # hostile name (e.g. "evil/../../evil.esd" keeps its separators on
-    # its own line and fails the anchor). The split goes through a
-    # temp FILE, not a process substitution: on MSYS hosts a large
-    # builtin-printf pipe inside <(...) delivers zero bytes to the
-    # reader (transport hazard, measured live in plan 33-02), while
-    # the same pipeline through a file is byte-exact everywhere.
-    split_file="$(mktemp "${TMPDIR:-/tmp}/uup-split-XXXXXX")" || return 1
-    printf '%s' "${files_slice}" \
-        | sed 's/,"\([A-Za-z0-9._-]\{1,\}\)":{"/\n"\1":{"/g' \
-        > "${split_file}"
+    split_file="$(uup_split_entries "${json_file}")" || return 1
 
     entries=()
     while IFS= read -r entry_line || [[ -n "${entry_line}" ]]
@@ -207,13 +228,20 @@ function uup_extract_files_map ()
     # Shape census: the number of whole-shape matches must equal the
     # number of sliced entries AND the raw field counts - a truncated
     # or reordered entry fails here. Every entry line ends with its
-    # own closing brace.
+    # own closing brace. The tolerated entry tail (plan 33-03): the
+    # LIVE get.php entries continue after the size field with the token
+    # fields url/uuid/expire, which the committed fixtures strip at
+    # authoring - the anchored shape accepts zero or more
+    # ,"url":"..."/,"uuid":"..."/,"expire":<digits> repetitions before
+    # the closing brace and captures NONE of them (ACQ-01: the rows
+    # stay name|sha256|size only). Any OTHER field after the size still
+    # fails the census (fail-closed against unknown shapes).
     field_hits="$(grep -o '"sha1":' "${json_file}" | wc -l | tr -d '[:space:]')"
     matched=0
     rows_text=""
     for entry_line in "${entries[@]}"
     do
-        if [[ "${entry_line}" =~ ^\"([A-Za-z0-9._-]+)\":\{\"sha1\":\"[0-9a-f]{40}\",\"sha256\":\"([0-9a-f]{64})\",\"size\":\"([0-9]+)\"\}$ ]]
+        if [[ "${entry_line}" =~ ^\"([A-Za-z0-9._-]+)\":\{\"sha1\":\"[0-9a-f]{40}\",\"sha256\":\"([0-9a-f]{64})\",\"size\":\"([0-9]+)\"((,\"url\":\"[^\"]*\")|(,\"uuid\":\"[^\"]*\")|(,\"expire\":[0-9]+))*\}$ ]]
         then
             matched=$(( matched + 1 ))
             rows_text+="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}"$'\t'"${BASH_REMATCH[3]}"$'\n'
@@ -229,6 +257,64 @@ function uup_extract_files_map ()
 
     # name<TAB>sha256<TAB>size, emitted only after the whole map
     # validated (all-or-nothing)
+    printf '%s' "${rows_text}"
+    return 0
+}
+
+# Extract the coupled-download url map from a get.php response
+#
+# Usage: uup_extract_url_map <json_file>
+#
+# Prints one line "name<TAB>url" per files-map entry whose url field is
+# present (the LIVE response shape). All-or-nothing: every sliced entry
+# must carry a non-empty url inside the tolerated entry shape, or the
+# whole extraction fails with no output. The output is a TEMP runtime
+# artifact for the coupled download - token URL material never lands in
+# the manifest or any committed file (T-33-09).
+
+function uup_extract_url_map ()
+{
+    local json_file="$1"
+    local split_file=""
+    local -a entries=()
+    local entry_line="" matched=0 field_hits=0 rows_text=""
+
+    split_file="$(uup_split_entries "${json_file}")" || return 1
+
+    entries=()
+    while IFS= read -r entry_line || [[ -n "${entry_line}" ]]
+    do
+        [[ -z "${entry_line}" ]] && continue
+        entries+=( "${entry_line}" )
+        entry_line=""
+    done < "${split_file}"
+    rm -f "${split_file}"
+
+    if (( ${#entries[@]} == 0 ))
+    then
+        printf 'empty files map in: %s\n' "${json_file}" >&2
+        return 1
+    fi
+
+    field_hits="$(grep -o '"sha1":' "${json_file}" | wc -l | tr -d '[:space:]')"
+    matched=0
+    rows_text=""
+    for entry_line in "${entries[@]}"
+    do
+        if [[ "${entry_line}" =~ ^\"([A-Za-z0-9._-]+)\":\{\"sha1\":\"[0-9a-f]{40}\",\"sha256\":\"[0-9a-f]{64}\",\"size\":\"[0-9]+\",\"url\":\"([^\"]+)\" ]]
+        then
+            matched=$(( matched + 1 ))
+            rows_text+="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}"$'\n'
+        fi
+    done
+    if (( matched == 0 )) || (( matched != ${#entries[@]} )) \
+        || (( matched != field_hits ))
+    then
+        printf 'url map does not cover every files-map entry (%s/%s entries carry a url)\n' \
+            "${matched}" "${#entries[@]}" "${field_hits}" >&2
+        return 1
+    fi
+
     printf '%s' "${rows_text}"
     return 0
 }
@@ -429,7 +515,7 @@ function uup_extract_meta ()
 
 # The resolve chain (DEC-33-03)
 #
-# Usage: uup_resolve <target_build> <arch> <lang> <out_manifest> [--fixture <path>]
+# Usage: uup_resolve <target_build> <arch> <lang> <out_manifest> [--fixture <path>] [--urlmap <path>]
 #
 # Fixture mode (DEC-33-12): --fixture <path> or env WOU_UUP_FIXTURE -
 # the local file replaces the network entirely (battery-only seam).
@@ -445,14 +531,34 @@ function uup_resolve ()
 {
     local target_build="$1" arch="$2" lang="$3" out_manifest="$4"
     local fixture_path=""
+    local urlmap_path="" urlmap_tmp=""
     local api_arch="" listid_json="" get_json="" resolved_uuid=""
     local candidate_line="" best_created="" best_uuid="" filter_file=""
     local meta_file="" rows_file=""
 
-    if [[ "${5:-}" == "--fixture" ]]
-    then
-        fixture_path="${6:-}"
-    elif [[ -n "${WOU_UUP_FIXTURE:-}" ]]
+    # Optional switches after the 4 positional arguments (plan 33-03):
+    # --fixture <path> (DEC-33-12 seam) and --urlmap <path> (the coupled-
+    # download side map, API mode only). The fixture seam also honors the
+    # WOU_UUP_FIXTURE environment variable.
+    local switch_index=5
+    local next_index=0
+    while [[ "${!switch_index:-}" != "" ]]
+    do
+        next_index=$(( switch_index + 1 ))
+        if [[ "${!switch_index}" == "--fixture" ]]
+        then
+            fixture_path="${!next_index}"
+            switch_index=$(( switch_index + 2 ))
+        elif [[ "${!switch_index}" == "--urlmap" ]]
+        then
+            urlmap_path="${!next_index}"
+            switch_index=$(( switch_index + 2 ))
+        else
+            printf 'unknown argument: %s\n' "${!switch_index}" >&2
+            return 1
+        fi
+    done
+    if [[ -z "${fixture_path}" && -n "${WOU_UUP_FIXTURE:-}" ]]
     then
         fixture_path="${WOU_UUP_FIXTURE}"
     fi
@@ -587,6 +693,37 @@ function uup_resolve ()
                     "${lang}" "${meta_build}" "${out_manifest}"
                 then
                     rm -f "${meta_file}" "${rows_file}"
+                    if [[ -n "${urlmap_path}" ]]
+                    then
+                        if [[ -n "${fixture_path}" ]]
+                        then
+                            # Fixture mode: the committed fixtures carry
+                            # no url fields (token material stripped at
+                            # authoring) - the coupled download against a
+                            # fixture-resolved manifest is a battery-side
+                            # concern (DEC-33-12), no map is written
+                            :
+                        else
+                            # API mode: write the name-TAB-url side map
+                            # for the coupled download through a temp
+                            # file and move it into place - a failed
+                            # extraction removes the fresh manifest too
+                            # (fail-closed whole resolve; T-33-09: the
+                            # map is a TEMP runtime artifact consumed by
+                            # this run only)
+                            urlmap_tmp="${urlmap_path}.part"
+                            if uup_extract_url_map "${get_json}" > "${urlmap_tmp}" \
+                               && [[ -s "${urlmap_tmp}" ]]
+                            then
+                                mv -f "${urlmap_tmp}" "${urlmap_path}"
+                            else
+                                rm -f "${urlmap_tmp}" "${out_manifest}"
+                                rm -f "${get_json}"
+                                printf 'url map extraction failed\n' >&2
+                                return 1
+                            fi
+                        fi
+                    fi
                     [[ -n "${fixture_path}" ]] || rm -f "${get_json}"
                     return 0
                 fi
@@ -601,6 +738,148 @@ function uup_resolve ()
     [[ -n "${fixture_path}" ]] || rm -f "${get_json}"
     printf 'resolve failed: %s\n' "${resolve_error}" >&2
     return 1
+}
+
+# Classify a payload byte size (plan 33-03, ACQ-02)
+#
+# Usage: uup_classify_size <bytes>
+#
+# Prints "aria2" for byte counts >= 104857600 (100 MiB - resumable,
+# segmented download) and "wget" below. Native 64-bit arithmetic only -
+# a 10902883408-byte total must never touch a 32-bit form (DEC-33-02
+# extension). Exit 1 on a non-numeric argument.
+
+function uup_classify_size ()
+{
+    local bytes="$1"
+
+    if ! [[ "${bytes}" =~ ^[0-9]+$ ]]
+    then
+        printf 'invalid size: %s\n' "${bytes}" >&2
+        return 1
+    fi
+    if (( bytes >= 104857600 ))
+    then
+        printf 'aria2\n'
+    else
+        printf 'wget\n'
+    fi
+    return 0
+}
+
+# Resolve the hashdeep binary for the UUP hash gate
+#
+# Usage: uup_resolve_hashdeep
+#
+# Prints the binary to use: the UUP_HASHDEEP_BIN override first (battery
+# seam), then bare hashdeep (the integrity-database idiom), then the
+# vendored client/bin tool. Exit 1 loudly when nothing resolves - the
+# fail-closed gate never runs against nothing.
+
+function uup_resolve_hashdeep ()
+{
+    if [[ -n "${UUP_HASHDEEP_BIN:-}" ]] && [[ -x "${UUP_HASHDEEP_BIN}" ]]
+    then
+        printf '%s\n' "${UUP_HASHDEEP_BIN}"
+        return 0
+    fi
+    if type -P hashdeep > /dev/null
+    then
+        printf 'hashdeep\n'
+        return 0
+    fi
+    local candidate=""
+    for candidate in "../client/bin/hashdeep64.exe" "../client/bin/hashdeep.exe"
+    do
+        if [[ -x "${candidate}" ]]
+        then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+    printf 'no hashdeep binary found (checked UUP_HASHDEEP_BIN, PATH, ../client/bin)\n' >&2
+    return 1
+}
+
+# The fail-closed spool hash gate (plan 33-03, ACQ-02 + the sha256 half
+# of ACQ-04)
+#
+# Usage: uup_hash_gate <manifest> <spool_dir>
+#
+# Generates a hashdeep-format expectation file in a TEMP directory from
+# the manifest rows (size,sha256,name - the unquoted CSV hashdeep writes,
+# size always the first column), audits the WHOLE spool with
+# hashdeep -a -vv -k -b -r, and returns nonzero on ANY mismatch with
+# NOTHING moved (T-33-08: the structural after-resume re-verify - a
+# truncated or modified payload cannot stage even though a resume
+# "succeeded"). The expectation lives OUTSIDE the audited spool (the -k
+# file itself would count as a new file otherwise) and dies with the
+# audit. Any malformed manifest row is a loud failure (the manifest is a
+# generated contract), never a skipped row.
+
+function uup_hash_gate ()
+{
+    local manifest="$1" spool_dir="$2"
+    local hashdeep_bin="" exp_dir="" exp_file=""
+    local name="" hash="" size="" rest=""
+    local bad=0 rows=0 audit_rc=0
+
+    if [[ ! -s "${manifest}" ]]
+    then
+        printf 'manifest missing or empty: %s\n' "${manifest}" >&2
+        return 1
+    fi
+    if [[ ! -d "${spool_dir}" ]]
+    then
+        printf 'spool directory missing: %s\n' "${spool_dir}" >&2
+        return 1
+    fi
+    hashdeep_bin="$(uup_resolve_hashdeep)" || return 1
+
+    exp_dir="$(mktemp -d "${TMPDIR:-/tmp}/uup-expect-XXXXXX")" || return 1
+    exp_file="${exp_dir}/expectation.txt"
+    {
+        printf '%s\n' '%%%% HASHDEEP-1.0'
+        printf '%s\n' '%%%% size,sha256,filename'
+        printf '%s\n' '## Generated from the upgrade payload manifest by uup_hash_gate - TEMP runtime artifact, never persisted'
+    } > "${exp_file}"
+
+    # Manifest rows -> expectation. Meta rows carry only 2 pipe fields
+    # and are skipped by the empty-size guard; comment lines have no
+    # pipe-delimited size either. The row grammar mirrors the resolver's
+    # frozen contract.
+    while IFS='|' read -r name hash size rest
+    do
+        [[ -n "${size}" ]] || continue
+        if [[ -n "${rest}" ]] \
+            || ! [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] \
+            || ! [[ "${hash}" =~ ^[0-9a-f]{64}$ ]] \
+            || ! [[ "${size}" =~ ^[0-9]+$ ]]
+        then
+            printf 'malformed manifest row refused by the hash gate: %s\n' "${name}" >&2
+            bad=1
+            break
+        fi
+        printf '%s,%s,%s\n' "${size}" "${hash}" "${name}" >> "${exp_file}"
+        rows=$(( rows + 1 ))
+    done < "${manifest}"
+
+    if (( bad == 1 )) || (( rows == 0 ))
+    then
+        rm -rf "${exp_dir}"
+        [[ "${bad}" == "1" ]] || printf 'manifest carries no payload rows: %s\n' "${manifest}" >&2
+        return 1
+    fi
+
+    "${hashdeep_bin}" -a -vv -k "${exp_file}" -b -r "${spool_dir}"
+    audit_rc=$?
+    rm -rf "${exp_dir}"
+    if (( audit_rc != 0 ))
+    then
+        printf 'upgrade payload integrity verification FAILED - the spool is refused, nothing is staged\n' >&2
+        return 1
+    fi
+    return 0
 }
 
 return 0

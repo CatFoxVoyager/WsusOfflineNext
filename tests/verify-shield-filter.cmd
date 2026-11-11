@@ -17,6 +17,10 @@ REM   Case 3: 19045_x64=on                -> exactly windows10.0-kb5021233
 REM   Case 4: 26200_x64=on AND 19045_x64=on -> exactly kb5064081 + kb5021233
 REM   Case 5: one key plus bad_line       -> full statu-quo feed (all-or-nothing)
 REM   Case 6: CRLF fixture + blank tail   -> case 2 result unchanged
+REM   Case 7: acquisition absence (no selection) -> no output, no spool
+REM   Case 8: fu_media=0 row              -> no resolve attempt, no spool
+REM   Case 9: fu_media=1 fixture seam     -> budget line, spool root created
+REM   Case 10: eol-target exemption pair  -> derived row flips on membership
 REM
 REM T-32-06 report: per-target dropped exemption lines vs the golden are
 REM enumerated per case (Pitfall-4 warning signs).
@@ -164,6 +168,139 @@ if errorlevel 1 (
 )
 echo PASS: case 6 - CRLF fixture parses to the case-2 feed.
 
+rem ----------------------------------------------------------------------
+rem Acquisition statu quo cases (plan 33-03, DEC-33-09 / DEC-33-14):
+rem the REAL acquisition entry (cmd\UpgradePayloads.cmd :UpgSectionEntry -
+rem the exact code the engine's Phase-33 region calls) is driven in a
+rem sandbox over fixture seams. Without a qualifying selection the region
+rem is invisible: no output lines, no spool. With the fu_media=1 fixture
+rem seam the section gets as far as the budget line before any network
+rem attempt would occur.
+rem ----------------------------------------------------------------------
+set "WOU_UPGRADE_SEL=%SB_SH%\os-upgrades-acq.ini"
+set "WOU_UPGRADE_TABLE=%SB_STATIC%\upgrades.txt"
+set "WOU_UPGRADE_SPOOL=%SANDBOX%\spool-acq"
+set "WOU_UPGRADE_LANG=en-us"
+copy /y "%REPO_ROOT%\client\UpdateTable\upgrades.txt" "%WOU_UPGRADE_TABLE%" >nul 2>&1
+if not exist "%WOU_UPGRADE_TABLE%" (
+  echo ERROR: Failed to copy the committed upgrades.txt into the sandbox.
+  goto Fail
+)
+
+echo --- Case 7: acquisition absence - no selection, no spool, no output ---
+set "TMP_UPG_TARGETS="
+type nul >"%SB_FEED%\acq7.out"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_FEED%\acq7.out" 2>&1
+set "ACQ7_RC=!errorlevel!"
+if not "%ACQ7_RC%"=="0" (
+  echo FAIL: case 7 ^(no selection^) - the acquisition entry must exit 0, got %ACQ7_RC%.
+  type "%SB_FEED%\acq7.out"
+  goto Fail
+)
+for /F %%c in ('type "%SB_FEED%\acq7.out" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "ACQ7_LINES=%%c"
+if not "%ACQ7_LINES%"=="0" (
+  echo FAIL: case 7 ^(no selection^) - the engine output must carry no acquisition-section lines ^(got %ACQ7_LINES%^).
+  type "%SB_FEED%\acq7.out"
+  goto Fail
+)
+if exist "%WOU_UPGRADE_SPOOL%" (
+  echo FAIL: case 7 ^(no selection^) - the DEC-33-14 spool root must NOT be created.
+  goto Fail
+)
+echo PASS: case 7 - no selection = the Phase-33 region is a byte-level no-op.
+
+echo --- Case 8: acquisition absence - fu_media=0 row answers the no-op path ---
+set "TMP_UPG_TARGETS=19045"
+echo 19045_x64=on>"%WOU_UPGRADE_SEL%"
+type nul >"%SB_FEED%\acq8.out"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_FEED%\acq8.out" 2>&1
+set "ACQ8_RC=!errorlevel!"
+if not "%ACQ8_RC%"=="0" (
+  echo FAIL: case 8 ^(fu_media=0^) - the acquisition entry must exit 0, got %ACQ8_RC%.
+  type "%SB_FEED%\acq8.out"
+  goto Fail
+)
+for /F %%c in ('type "%SB_FEED%\acq8.out" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "ACQ8_LINES=%%c"
+if not "%ACQ8_LINES%"=="0" (
+  echo FAIL: case 8 ^(fu_media=0^) - the gate refuses loudly-silent: no resolve attempt, no spool ^(got %ACQ8_LINES% lines^).
+  type "%SB_FEED%\acq8.out"
+  goto Fail
+)
+if exist "%WOU_UPGRADE_SPOOL%" (
+  echo FAIL: case 8 ^(fu_media=0^) - the spool root must NOT be created.
+  goto Fail
+)
+echo PASS: case 8 - fu_media=0 = no resolve attempt, no spool.
+
+echo --- Case 9: fu_media=1 fixture seam - budget-deep, offline-bounded ---
+set "TMP_UPG_TARGETS=26200"
+echo 26200_x64=on>"%WOU_UPGRADE_SEL%"
+set "WOU_UUP_FIXTURE=%REPO_ROOT%\tests\fixtures\uup-get-26200-en-us-multiedition.json"
+if not exist "%WOU_UUP_FIXTURE%" (
+  echo ERROR: the golden fixture is missing at "%WOU_UUP_FIXTURE%".
+  goto Fail
+)
+call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_FEED%\acq9.out" 2>&1
+set "ACQ9_RC=!errorlevel!"
+if "%ACQ9_RC%"=="0" (
+  echo FAIL: case 9 ^(fu_media=1^) - in the sandbox the fixture resolve emits no url map, so the section must abort at the join, not end green.
+  type "%SB_FEED%\acq9.out"
+  goto Fail
+)
+findstr /C:"BUDGET:" "%SB_FEED%\acq9.out" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: case 9 ^(fu_media=1^) - the budget line must precede any network attempt.
+  type "%SB_FEED%\acq9.out"
+  goto Fail
+)
+if not exist "%WOU_UPGRADE_SPOOL%" (
+  echo FAIL: case 9 ^(fu_media=1^) - the spool root must be created by the qualifying run.
+  goto Fail
+)
+if not exist "%WOU_UPGRADE_SPOOL%\manifest.txt" (
+  echo FAIL: case 9 ^(fu_media=1^) - the resolved manifest must land in the spool.
+  goto Fail
+)
+echo PASS: case 9 - budget line emitted, spool root created, wiring proven without network.
+set "TMP_UPG_TARGETS="
+set "WOU_UUP_FIXTURE="
+
+echo --- Case 10: eol-target exemption pair - selection membership only ---
+rem ACQ-06's exemption half (can-fail BOTH directions): the expected
+rem exemption row is DERIVED from the fixture hop file - the row whose
+rem field 4 equals 19044 ^(the eol-status target of the DEC-31-05
+rem precedent^) - its KB literal is never hardcoded here. With a selection
+rem naming only 26200_x64 the derived row is ABSENT (suppressed - not
+rem chosen); with 26200_x64 PLUS 19044_x64 the SAME row is PRESENT -
+rem presence flips purely on selection membership because the
+rem chosen-target filter reads no status field.
+set "EOL_KB="
+for /F "usebackq tokens=3,4 delims=," %%c in ("%SB_STATIC%\StaticUpdateIds-BuildUpgrades.txt") do (
+  if "%%d"=="19044" if not defined EOL_KB set "EOL_KB=%%c"
+)
+if not defined EOL_KB (
+  echo FAIL: case 10 - the eol-target derivation found no hop row with field 4 = 19044.
+  goto Fail
+)
+set "SEL10A=%SB_SH%\sel-case10a.ini"
+echo 26200_x64=on>"%SEL10A%"
+call :FilterEvaluator "%SEL10A%" "%SB_FEED%\feed10a.txt"
+findstr /L /C:"windows10.0-%EOL_KB%" "%SB_FEED%\feed10a.txt" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: case 10 ^(absent direction^) - the derived eol row windows10.0-%EOL_KB% must be suppressed when only 26200_x64 is chosen.
+  goto Fail
+)
+set "SEL10B=%SB_SH%\sel-case10b.ini"
+echo 26200_x64=on>"%SEL10B%"
+>>"%SEL10B%" echo 19044_x64=on
+call :FilterEvaluator "%SEL10B%" "%SB_FEED%\feed10b.txt"
+findstr /L /C:"windows10.0-%EOL_KB%" "%SB_FEED%\feed10b.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: case 10 ^(present direction^) - the derived eol row windows10.0-%EOL_KB% must be emitted when 19044_x64 joins the selection - a superseded-stated target stays selectable.
+  goto Fail
+)
+echo PASS: case 10 - the eol exemption row flips absent-to-present purely on selection membership ^(derived row: windows10.0-%EOL_KB%^).
+
 echo --- Cross-tier link: bash shield-filter twin - both must be green ---
 rem Resolve a bash interpreter: bare PATH first, Git for Windows fallback
 rem (31-04 contract-twin invocation idiom). The CMD sentinel below is
@@ -187,7 +324,7 @@ echo [PASS] bash shield-filter twin exit 0
 
 echo.
 echo =======================================================================
-echo SHIELD-FILTER-CMD-PASS: all 6 shield-filter cases green.
+echo SHIELD-FILTER-CMD-PASS: all 10 shield-filter cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

@@ -25,6 +25,11 @@
 #                                                     (3 rows) + kb5064081
 #   Feed case 8:   no selection                        -> full statu-quo
 #                                                     golden feed
+#   Acquisition case 9:  no selection                  -> no output, no spool
+#   Acquisition case 10: fu_media=0 row                -> no resolve, no spool
+#   Acquisition case 11: fu_media=1 fixture seam       -> budget line, spool
+#   Acquisition case 12: eol-target exemption pair     -> derived row flips
+#                                                     on selection membership
 #
 # Fixture hop files are copies of the committed census data (6 optional
 # + 2 forced rows - committed data, not runtime state). Every selection
@@ -235,8 +240,143 @@ build_golden_feed "${sb_feed}/expected8.txt"
 expect_file "case 8 (feed, statu quo)" "${sb_feed}/expected8.txt" "${sb_feed}/feed8.txt"
 echo "PASS: case 8 - feed byte-identical without selection."
 
+# -----------------------------------------------------------------------
+# Acquisition statu quo cases (plan 33-03, DEC-33-09 / DEC-33-14): the
+# REAL acquisition task (sh/download-updates-tasks/62-upgrade-payloads.bash,
+# sourced - the exact code run_tasks sources) is driven in a sandbox over
+# fixture seams. Without a qualifying selection the task is invisible: no
+# output lines, no spool. With the fu_media=1 fixture seam the section
+# gets as far as the budget line before any network attempt would occur.
+# The fixture seam is pinned on EVERY section invocation - no battery
+# path ever reaches the live API.
+# -----------------------------------------------------------------------
+# shellcheck source=/dev/null
+source "${repo_root}/sh/libraries/upgrade-payloads.bash"
+# shellcheck source=/dev/null
+source "${repo_root}/sh/libraries/messages.bash"
+# shellcheck source=/dev/null
+source "${repo_root}/sh/libraries/error-counter.bash"
+logfile="${tmp_dir}/battery-acq.log"
+export COLUMNS=200
+battery_pass=0
+
+expect_contains() {
+    local haystack_file="$1" needle="$2" desc="$3"
+    if ! grep -qF -- "${needle}" "${haystack_file}"; then
+        printf 'FAIL: %s - "%s" not found in %s\n' "${desc}" "${needle}" "${haystack_file}"
+        exit 1
+    fi
+    battery_pass=$(( battery_pass + 1 ))
+}
+acq_table="${sb_sh}/upgrades.txt"
+cp "${repo_root}/client/UpdateTable/upgrades.txt" "${acq_table}"
+acq_spool="${tmp_dir}/spool-acq"
+golden_fixture="${repo_root}/tests/fixtures/uup-get-26200-en-us-multiedition.json"
+if [[ ! -f "${golden_fixture}" ]]; then
+    printf 'FAIL: golden fixture missing at %s\n' "${golden_fixture}"
+    exit 1
+fi
+
+run_acq_section() {
+    local selection_content="$1"
+    printf '%s\n' "${selection_content}" > "${sb_sh}/os-upgrades.ini"
+    local out_file="${tmp_dir}/acq-out-$$.log"
+    local rc=0
+    (
+        cd "${sb_sh}" || exit 9
+        UUP_UPGRADES_TABLE="${acq_table}"
+        WOU_UPGRADE_SPOOL="${acq_spool}"
+        WOU_UPGRADE_LANG="en-us"
+        WOU_UUP_FIXTURE="${golden_fixture}"
+        export UUP_UPGRADES_TABLE WOU_UPGRADE_SPOOL WOU_UPGRADE_LANG WOU_UUP_FIXTURE
+        source "${repo_root}/sh/download-updates-tasks/62-upgrade-payloads.bash"
+    ) > "${out_file}" 2>&1 || rc=$?
+    printf '%s' "${rc}"
+}
+
+echo "--- Acquisition case 9: no selection - no output, no spool ---"
+rm -f "${sb_sh}/os-upgrades.ini"
+acq_rc="$(run_acq_section "__unset__")"
+out_file_9="${tmp_dir}/acq-out-$$.log"
+if [[ "${acq_rc}" != "0" ]]; then
+    printf 'FAIL: case 9 (no selection) - the acquisition section must exit 0\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+if [[ -s "${out_file_9}" ]]; then
+    printf 'FAIL: case 9 (no selection) - engine output must carry no acquisition lines\n'
+    cat "${out_file_9}"
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+if [[ -d "${acq_spool}" ]]; then
+    printf 'FAIL: case 9 (no selection) - the DEC-33-14 spool root must NOT be created\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+echo "PASS: case 9 - no selection = the Phase-33 task is a byte-level no-op."
+
+echo "--- Acquisition case 10: fu_media=0 row - no resolve attempt, no spool ---"
+acq_rc="$(run_acq_section "19045_x64=on")"
+out_file_10="${tmp_dir}/acq-out-$$.log"
+expect_output "case 10 (fu_media=0) rc" "0" "${acq_rc}"
+if [[ -s "${out_file_10}" ]]; then
+    printf 'FAIL: case 10 (fu_media=0) - the gate refuses loudly-silent: got output\n'
+    cat "${out_file_10}"
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+if [[ -d "${acq_spool}" ]]; then
+    printf 'FAIL: case 10 (fu_media=0) - the spool root must NOT be created\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+echo "PASS: case 10 - fu_media=0 = no resolve attempt, no spool."
+
+echo "--- Acquisition case 11: fu_media=1 fixture seam - budget-deep ---"
+acq_rc="$(run_acq_section "26200_x64=on")"
+out_file_11="${tmp_dir}/acq-out-$$.log"
+if [[ "${acq_rc}" != "0" ]]; then
+    printf 'FAIL: case 11 (fu_media=1) - the section ends green even with the counted fixture-mode abort\n'
+    exit 1
+fi
+expect_contains "${out_file_11}" "BUDGET: 196 files, 10902883408 bytes, 10397 MiB" "the budget line precedes any network attempt"
+if [[ ! -f "${acq_spool}/manifest.txt" ]]; then
+    printf 'FAIL: case 11 (fu_media=1) - the resolved manifest must land in the spool\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+echo "PASS: case 11 - budget line emitted, spool root created, wiring proven without network."
+
+echo "--- Acquisition case 12: eol-target exemption pair - selection membership only ---"
+# ACQ-06's exemption half (can-fail BOTH directions): the expected
+# exemption row is DERIVED from the fixture hop file - the row whose
+# field 4 equals 19044 (the eol-status target of the DEC-31-05 precedent);
+# its KB literal is never hardcoded here.
+eol_kb="$(awk -F',' '$4 == "19044" { print $3; exit }' "${sb_static}/StaticUpdateIds-BuildUpgrades.txt")"
+if [[ -z "${eol_kb}" ]]; then
+    printf 'FAIL: case 12 - the eol-target derivation found no hop row with field 4 = 19044\n'
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+UPGB_TARGETS=( "26200" )
+feed_evaluator "${sb_feed}/feed12a.txt"
+if grep -qF "windows10.0-${eol_kb}" "${sb_feed}/feed12a.txt"; then
+    printf 'FAIL: case 12 (absent direction) - the derived eol row windows10.0-%s must be suppressed when only 26200_x64 is chosen\n' "${eol_kb}"
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+UPGB_TARGETS=( "26200" "19044" )
+feed_evaluator "${sb_feed}/feed12b.txt"
+if ! grep -qF "windows10.0-${eol_kb}" "${sb_feed}/feed12b.txt"; then
+    printf 'FAIL: case 12 (present direction) - the derived eol row windows10.0-%s must be emitted when 19044_x64 joins the selection - a superseded-stated target stays selectable\n' "${eol_kb}"
+    exit 1
+fi
+battery_pass=$(( battery_pass + 1 ))
+echo "PASS: case 12 - the eol exemption row flips absent-to-present purely on selection membership (derived row: windows10.0-${eol_kb})."
+
 echo ""
 echo "======================================================================="
-echo "SHIELD-FILTER-BASH-PASS: all 8 shield-filter cases green."
+echo "SHIELD-FILTER-BASH-PASS: all 12 shield-filter cases green."
 echo "======================================================================="
 exit 0

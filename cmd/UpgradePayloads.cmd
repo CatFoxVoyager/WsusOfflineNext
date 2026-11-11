@@ -47,7 +47,12 @@ rem --max-resume-failure-tries=0, the NOT-resume-tuned shape, and a
 rem multi-GiB ESD must never redownload from zero.
 rem =======================================================================
 
-rem Entry dispatch - the battery calls subroutines directly
+rem Entry dispatch - the battery calls subroutines directly.
+rem UUP_LIB_DIR is captured BEFORE the dispatch shift: `call script :label`
+rem moves the label into %0, which makes %~dp0 resolve to the caller's cwd
+rem everywhere below (measured live); the internal `call :label` form
+rem restores the real script dir, but the capture here is authoritative.
+set "UUP_LIB_DIR=%~dp0"
 if "%~1"=="" goto :UpgUsage
 set "UUP_ENTRY=%~1"
 if "!UUP_ENTRY:~0,1!" neq ":" goto :UpgUsage
@@ -181,10 +186,11 @@ if not exist "!UUP_HG_SPOOL!\" (
   exit /b 1
 )
 if "!UUP_HG_BIN!"=="" (
-  rem The default is anchored at THIS script's own directory (%~dp0), not
-  rem at the caller's cwd - the sandbox batteries run from the repo root.
-  if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set "UUP_HG_BIN=%~dp0..\client\bin\hashdeep64.exe") else (
-    if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" (set "UUP_HG_BIN=%~dp0..\client\bin\hashdeep64.exe") else (set "UUP_HG_BIN=%~dp0..\client\bin\hashdeep.exe")
+  rem The default is anchored at the library's own directory (captured
+  rem before the dispatch shift), not at the caller's cwd - the sandbox
+  rem batteries run from the repo root.
+  if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set "UUP_HG_BIN=!UUP_LIB_DIR!..\client\bin\hashdeep64.exe") else (
+    if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" (set "UUP_HG_BIN=!UUP_LIB_DIR!..\client\bin\hashdeep64.exe") else (set "UUP_HG_BIN=!UUP_LIB_DIR!..\client\bin\hashdeep.exe")
   )
 )
 if not exist "!UUP_HG_BIN!" (
@@ -269,15 +275,20 @@ if not exist "!UUP_AQ_MANIFEST!" (
   echo ERROR: upgrade payload manifest not found: !UUP_AQ_MANIFEST!
   exit /b 1
 )
-if not exist "!UUP_AQ_URLMAP!" (
-  echo ERROR: UUP url map not found: !UUP_AQ_URLMAP!
-  exit /b 1
-)
 if not exist "!UUP_AQ_SPOOL!" md "!UUP_AQ_SPOOL!"
 
 rem The media budget precedes ANY download (ACQ-05, DEC-33-07: warn only)
 call :UpgBudgetLine "!UUP_AQ_MANIFEST!"
 if errorlevel 1 goto :UpgAcquireFail
+
+rem The url map must exist once the budget is named - the budget is the
+rem FIRST observable output of the acquisition, and the map check precedes
+rem every downloader invocation (a fixture-mode resolve writes no map; the
+rem battery's budget-deep case depends on this order)
+if not exist "!UUP_AQ_URLMAP!" (
+  echo ERROR: UUP url map not found: !UUP_AQ_URLMAP!
+  goto :UpgAcquireFail
+)
 
 rem Downloader binaries: env overrides exist for the sandbox battery; the
 rem engine defaults mirror the shared resolution idioms.
@@ -455,13 +466,17 @@ set "UUP_SPOOL=%WOU_UPGRADE_SPOOL%"
 if "!UUP_SPOOL!"=="" set "UUP_SPOOL=%TEMP%\wou-upgrade-spool"
 set "UUP_TABLE=%WOU_UPGRADE_TABLE%"
 rem First selected build_arch key whose upgrades.txt row carries fu_media=1
-rem (DEC-33-09). One full-FU target per medium: the first qualifying key
-rem wins; further keys would be consumed by a later run.
+rem (DEC-33-09). The key grammar is <build>_<arch>=on - the delims walk
+rem splits on BOTH the underscore and the equals sign, so %%b carries the
+rem build part and %%c the bare arch. One full-FU target per medium: the
+rem first qualifying key wins; further keys would be consumed by a later
+rem run.
 set "UUP_TGT_BUILD="
 set "UUP_TGT_ARCH="
-for /F "usebackq eol=# tokens=1-2 delims=_" %%b in ("!UUP_SEL_FILE!") do (
+for /F "usebackq eol=# tokens=1-2 delims=_=" %%b in ("!UUP_SEL_FILE!") do (
   if "!UUP_TGT_BUILD!"=="" (
-    call :UpgReadFuMedia %%b %%c "!UUP_TABLE!"
+    rem the internal caller reads UUP_FM_VALUE; the value echo is redirected
+    call :UpgReadFuMedia %%b %%c "!UUP_TABLE!" >nul
     if "!UUP_FM_VALUE!"=="1" (
       set "UUP_TGT_BUILD=%%b"
       set "UUP_TGT_ARCH=%%c"
@@ -477,7 +492,7 @@ if exist "!UUP_SE_URLMAP!" del "!UUP_SE_URLMAP!" >nul 2>&1
 if not exist "!UUP_SPOOL!\files" md "!UUP_SPOOL!\files"
 set "UUP_SE_CSCRIPT=%CSCRIPT_PATH%"
 if "!UUP_SE_CSCRIPT!"=="" set "UUP_SE_CSCRIPT=cscript"
-"!UUP_SE_CSCRIPT!" //Nologo "%~dp0ResolveUpgradePayloads.vbs" !UUP_TGT_BUILD! !UUP_TGT_ARCH! !UUP_LANG! "!UUP_SE_MANIFEST!" /urlmap:"!UUP_SE_URLMAP!"
+"!UUP_SE_CSCRIPT!" //Nologo "!UUP_LIB_DIR!ResolveUpgradePayloads.vbs" !UUP_TGT_BUILD! !UUP_TGT_ARCH! !UUP_LANG! "!UUP_SE_MANIFEST!" /urlmap:"!UUP_SE_URLMAP!"
 if errorlevel 1 (
   echo ERROR: UUP payload resolve failed - download aborted, no token material persisted.
   exit /b 1

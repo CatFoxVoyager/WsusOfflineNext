@@ -39,6 +39,33 @@ REM   Case 9: fail-path cleanup - a stub that fails both schemes aborts
 REM           loudly AND the url map is deleted (cleanup on the failure
 REM           path too)
 REM
+REM Plan 33-04 cases (assembly + staging + purge), appended, existing
+REM cases untouched:
+REM   Case 10: :UpgAssembleMedia positive - stub wimlib over a 2-edition
+REM           fixture spool, matching SHA256SUMS pins, census + scaffold +
+REM           exclusion-pattern cab skip
+REM   Case 11: tampered vendored-tool pin = fail-closed refusal, nothing
+REM           staged (T-33-SC)
+REM   Case 12: failing stub export = loud refusal, stage dir cleaned
+REM   Case 13: :UpgAuthenticodeGate trio - Signed stub passes, Unsigned
+REM           .exe row refuses, .mui convention row allowed and counted
+REM   Case 14: staging-order - a corrupted spool fails the hash gate
+REM           BEFORE the Authenticode scan or any move (gate order, T-33-12)
+REM   Case 15: revision replacement - old revision aside in the spool and
+REM           deleted ONLY after the new media reads back (delete-after-
+REM           success)
+REM   Case 16: :UpgPurgeRevisions trio - sole revision 0 removals / stale
+REM           pair removed exactly while the staged-uuid keep set survives /
+REM           failed-staging simulation removes nothing
+REM   Case 17: :UpgCreateMediaDb - the staged fixture produces the db file
+REM           carrying the hashdeep header
+REM
+REM NOTE (DEC-33-13 supersession): the assembly runs the VENDORED wimlib
+REM (owner decision 2026-11-11), a userspace tool - there is NO elevation
+REM and NO RunAs prompt anywhere in this pipeline. The fail-closed refusal
+REM discipline the elevation policy protected (nothing staged on a failed
+REM gate) is proven by cases 11/12/14 instead.
+REM
 REM Fixture hashes are pinned constants for fixed byte strings: big.esd is
 REM 104857600 zero bytes (created with fsutil, exactly at the aria2/wget
 REM threshold), small.cab is 100 B's + CRLF. The committed upgrades.txt is
@@ -173,6 +200,74 @@ endlocal
 if not exist "%SB_STUBS%\aria2-stub.cmd" goto Fail
 if not exist "%SB_STUBS%\wget-stub.cmd" goto Fail
 
+rem -----------------------------------------------------------------------
+rem Plan 33-04 stubs: the wimlib stub (apply/export/capture/info over
+rem fixture files) and the sigcheck stub (CSV rows by mode). Written with
+rem delayed expansion DISABLED so the stubs' own %variables% survive.
+rem -----------------------------------------------------------------------
+setlocal disabledelayedexpansion
+>"%SB_STUBS%\wimlib-stub.cmd" echo @echo off
+>>"%SB_STUBS%\wimlib-stub.cmd" echo setlocal enabledelayedexpansion
+>>"%SB_STUBS%\wimlib-stub.cmd" echo set "STUB_CMD=%%~1"
+>>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="capture" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   type nul ^> "%%~3"
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo )
+>>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="apply" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   mkdir "%%~4\sources" 2^>nul
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   ^>"%%~4\sources\setup.exe" echo STUB-SETUP
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   ^>"%%~4\sources\setuphost.exe" echo STUB-SETUPHOST
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo )
+>>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="export" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="EXPORT-FAILS" exit /b 1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   ^>^>"%%~4" echo %%~5
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo )
+>>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="info" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if "%%~3"=="" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     set /a STUB_N=0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     for /F "usebackq delims=" %%%%L in ("%%~2") do set /a STUB_N+=1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     echo WIM header
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     echo Image Count: !STUB_N!
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   )
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   for /F "delims=_-" %%%%x in ("%%~nx2") do echo Edition ID: %%%%x
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo )
+>>"%SB_STUBS%\wimlib-stub.cmd" echo exit /b 1
+>"%SB_STUBS%\sigcheck-stub.cmd" echo @echo off
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo type nul ^> "%%TEMP%%\wou-upg-sigcheck-stub-invoked"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo if /i "%%UUP_STUB_SIGCHECK_MODE%%"=="UNSIGNED-MUI" (
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "Path","Company","Product","Version","Unsigned"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "D:\stage\sources\en-us\helper.mui","Microsoft","Resources","","Unsigned"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "D:\stage\sources\replacementmanifests\diskmonmigplugin.dll","Microsoft","Migration","","Unsigned"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo )
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo if /i "%%UUP_STUB_SIGCHECK_MODE%%"=="UNSIGNED-EXE" (
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "Path","Company","Product","Version","Unsigned"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "D:\stage\sources\evil.exe","Evil","Bad","","Unsigned"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo )
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo echo "Path","Company","Product","Version","Signed"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo echo "D:\stage\sources\setup.exe","Microsoft","Setup","","Signed"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo exit /b 0
+endlocal
+if not exist "%SB_STUBS%\wimlib-stub.cmd" goto Fail
+if not exist "%SB_STUBS%\sigcheck-stub.cmd" goto Fail
+
+rem The wimlib stub's true SHA256 for the matching-pin sidecar (the
+rem fail-closed verification computes certutil hashes - the sidecar here
+rem must carry the stub's real digest)
+set "STUB_WIMLIB=%SB_STUBS%\wimlib-stub.cmd"
+set "STUB_WIMLIB_HASH="
+for /F "skip=1 delims=" %%h in ('certutil -hashfile "%STUB_WIMLIB%" SHA256 2^>nul') do if not defined STUB_WIMLIB_HASH set "STUB_WIMLIB_HASH=%%h"
+set "STUB_WIMLIB_HASH=%STUB_WIMLIB_HASH: =%"
+if not defined STUB_WIMLIB_HASH (
+  echo ERROR: certutil produced no hash for the wimlib stub.
+  goto Fail
+)
+
 echo --- Case 1: :UpgClassifySize boundaries (string compare, no set /a) ---
 call :AnswerOf :UpgClassifySize 104857600
 if not "%ANS_OUT%"=="aria2" (echo FAIL: 104857600 must classify aria2 ^(exactly at the threshold^), got "%ANS_OUT%" & goto Fail)
@@ -300,9 +395,165 @@ call :TempArtifactCount
 if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: TEMP artifact count %TEMP_COUNT% differs from the baseline %TEMP_BASELINE% - the failure path leaked artifacts & goto Fail)
 echo PASS: case 9 - loud abort, url map deleted on the failure path.
 
+echo --- Case 10: :UpgAssembleMedia positive - stub wimlib, matching pins ---
+set "STUB_WIMLIB_MODE=OK"
+set "UUP_WIMLIB=%STUB_WIMLIB%"
+set "ASM_SPOOL=%SANDBOX%\spool10"
+mkdir "%ASM_SPOOL%" 2>nul
+>"%ASM_SPOOL%\core_en-us.esd" echo fake-metadata-core
+>"%ASM_SPOOL%\professional_en-us.esd" echo fake-metadata-professional
+>"%ASM_SPOOL%\ssu-26200-test.cab" echo excluded-pattern-cab
+>"%SB_FIX%\SHA256SUMS.ok" echo %STUB_WIMLIB_HASH% *wimlib-stub.cmd
+set "UUP_WIMLIB_SHA256SUMS=%SB_FIX%\SHA256SUMS.ok"
+set "ASM_STAGE=%SANDBOX%\stage10"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm10.out" 2>&1
+if errorlevel 1 (echo FAIL: the stubbed assembly must end green over matching pins & type "%SB_OUT%\asm10.out" & goto Fail)
+if not exist "%ASM_STAGE%\sources\setup.exe" (echo FAIL: the assembly must produce the scaffold sources\setup.exe & type "%SB_OUT%\asm10.out" & goto Fail)
+if not exist "%ASM_STAGE%\sources\install.esd" (echo FAIL: the assembly must produce sources\install.esd & goto Fail)
+findstr /C:"Media assembly complete - 2 edition image" "%SB_OUT%\asm10.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the census must report 2 images for the 2-edition fixture & type "%SB_OUT%\asm10.out" & goto Fail)
+findstr /C:"Converted 0 component cab" "%SB_OUT%\asm10.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the excluded-pattern cab must not be converted & goto Fail)
+set "CONV_COUNT=0"
+for /F %%c in ('dir /B "%SANDBOX%\converted\*" 2^>nul ^| %SystemRoot%\System32\find.exe /c /v ""') do set "CONV_COUNT=%%c"
+if not "%CONV_COUNT%"=="0" (echo FAIL: no conversion-target cab existed - the converted dir must hold nothing to convert, holds %CONV_COUNT% & goto Fail)
+echo PASS: case 10 - assembly positive with the vendored-tool pin verification.
+
+echo --- Case 11: :UpgAssembleMedia tampered pin - fail-closed refusal ---
+set "ASM_STAGE=%SANDBOX%\stage11"
+>"%SB_FIX%\SHA256SUMS.bad" echo 20492a4d0d84f8beb1767f6616229f85d44c2827b64bdbfb260ee12fa1109e0e *wimlib-stub.cmd
+set "UUP_WIMLIB_SHA256SUMS=%SB_FIX%\SHA256SUMS.bad"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm11.out" 2>&1
+set "ASM11_RC=!errorlevel!"
+if "%ASM11_RC%"=="0" (echo FAIL: a tampered vendored-tool pin must be refused fail-closed & goto Fail)
+if exist "%ASM_STAGE%" (echo FAIL: a refused assembly must leave NOTHING staged & goto Fail)
+findstr /C:"SHA256 pin MISMATCH" "%SB_OUT%\asm11.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the refusal must name the pin mismatch & type "%SB_OUT%\asm11.out" & goto Fail)
+echo PASS: case 11 - tampered vendored tool refused, nothing staged.
+
+echo --- Case 12: :UpgAssembleMedia failing export - loud refusal, stage cleaned ---
+set "STUB_WIMLIB_MODE=EXPORT-FAILS"
+set "UUP_WIMLIB_SHA256SUMS=%SB_FIX%\SHA256SUMS.ok"
+set "ASM_STAGE=%SANDBOX%\stage12"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm12.out" 2>&1
+set "ASM12_RC=!errorlevel!"
+if "%ASM12_RC%"=="0" (echo FAIL: a failing wimlib export must refuse the assembly & goto Fail)
+if exist "%ASM_STAGE%" (echo FAIL: the failing assembly must clean the stage dir - nothing may linger & goto Fail)
+findstr /C:"install.esd export failed" "%SB_OUT%\asm12.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the export failure must be named loudly & type "%SB_OUT%\asm12.out" & goto Fail)
+set "STUB_WIMLIB_MODE=OK"
+echo PASS: case 12 - failing export refused loudly, stage dir cleaned.
+
+echo --- Case 13: :UpgAuthenticodeGate refuse-staging trio ---
+set "AG_STAGE=%SANDBOX%\stage13"
+mkdir "%AG_STAGE%\sources" 2>nul
+>"%AG_STAGE%\sources\setup.exe" echo STUB-SETUP
+set "UUP_SIGCHK_PATH=%SB_STUBS%\sigcheck-stub.cmd"
+set "UUP_STUB_SIGCHECK_MODE=SIGNED"
+call cmd\UpgradePayloads.cmd :UpgAuthenticodeGate "%AG_STAGE%" >"%SB_OUT%\ag13a.out" 2>&1
+if errorlevel 1 (echo FAIL: the Signed stub must pass the Authenticode gate & type "%SB_OUT%\ag13a.out" & goto Fail)
+set "UUP_STUB_SIGCHECK_MODE=UNSIGNED-EXE"
+call cmd\UpgradePayloads.cmd :UpgAuthenticodeGate "%AG_STAGE%" >"%SB_OUT%\ag13b.out" 2>&1
+set "AG13B_RC=!errorlevel!"
+if "%AG13B_RC%"=="0" (echo FAIL: an Unsigned executable row must REFUSE staging & goto Fail)
+findstr /C:"UNSIGNED executable" "%SB_OUT%\ag13b.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the unsigned refusal must name the row & type "%SB_OUT%\ag13b.out" & goto Fail)
+set "UUP_STUB_SIGCHECK_MODE=UNSIGNED-MUI"
+call cmd\UpgradePayloads.cmd :UpgAuthenticodeGate "%AG_STAGE%" >"%SB_OUT%\ag13c.out" 2>&1
+if errorlevel 1 (echo FAIL: the .mui and migration-DLL convention rows must be allowed & type "%SB_OUT%\ag13c.out" & goto Fail)
+findstr /C:"2 allowed convention row" "%SB_OUT%\ag13c.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the allowed .mui row must be counted loudly, not silently skipped & goto Fail)
+set "UUP_STUB_SIGCHECK_MODE=SIGNED"
+echo PASS: case 13 - Signed passes, Unsigned refuses, .mui + migration-DLL convention allowed and counted.
+
+echo --- Case 14: staging-order - corrupted spool fails the hash gate BEFORE any scan or move ---
+set "SM_SPOOL=%SANDBOX%\spool14"
+mkdir "%SM_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SM_SPOOL%\files\big.esd" >nul 2>&1
+>"%SM_SPOOL%\files\small.cab" echo !SB100:~0,99!C
+>"%SM_SPOOL%\manifest.txt" echo uuid^|aaaaaaaa-0000-0000-0000-000000000000
+>>"%SM_SPOOL%\manifest.txt" echo small.cab^|!H_SMALL!^|102
+>>"%SM_SPOOL%\manifest.txt" echo big.esd^|!H_BIG!^|104857600
+mkdir "%SANDBOX%\stage14" 2>nul
+>"%SANDBOX%\stage14\sources\setup.exe" echo STUB
+set "UUP_CLIENT_ROOT=%SANDBOX%\client"
+if exist "%TEMP%\wou-upg-sigcheck-stub-invoked" del "%TEMP%\wou-upg-sigcheck-stub-invoked" >nul 2>&1
+call cmd\UpgradePayloads.cmd :UpgStageMedia "%SANDBOX%\stage14" "%SM_SPOOL%\manifest.txt" 26200 x64 en-us >"%SB_OUT%\sm14.out" 2>&1
+set "SM14_RC=!errorlevel!"
+if "%SM14_RC%"=="0" (echo FAIL: a corrupted spool must refuse staging & goto Fail)
+if exist "%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us" (echo FAIL: the hash-gate refusal must move NOTHING into the tree & goto Fail)
+if exist "%TEMP%\wou-upg-sigcheck-stub-invoked" (echo FAIL: the hash gate must fire BEFORE the Authenticode scan - gate order violated & goto Fail)
+findstr /C:"hash gate refused staging" "%SB_OUT%\sm14.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the gate-order refusal must be named & type "%SB_OUT%\sm14.out" & goto Fail)
+echo PASS: case 14 - hash gate precedes Authenticode and the move, nothing moved.
+
+echo --- Case 15: staging replacement - old revision dies only after the new one reads back ---
+set "SM_SPOOL=%SANDBOX%\spool15"
+mkdir "%SM_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SM_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SM_SPOOL%\files\small.cab" >nul 2>&1
+>"%SM_SPOOL%\manifest.txt" echo uuid^|bbbbbbbb-0000-0000-0000-000000000000
+>>"%SM_SPOOL%\manifest.txt" echo small.cab^|!H_SMALL!^|102
+>>"%SM_SPOOL%\manifest.txt" echo big.esd^|!H_BIG!^|104857600
+mkdir "%SANDBOX%\stage15\sources" 2>nul
+>"%SANDBOX%\stage15\sources\setup.exe" echo STUB-NEW
+>"%SM_SPOOL%\urlmap-marker.txt" echo spool-working-set
+mkdir "%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us" 2>nul
+>"%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us\manifest.txt" echo uuid^|aaaaaaaa-0000-0000-0000-000000000000
+>"%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us\old-media.bin" echo OLD-REVISION
+call cmd\UpgradePayloads.cmd :UpgStageMedia "%SANDBOX%\stage15" "%SM_SPOOL%\manifest.txt" 26200 x64 en-us >"%SB_OUT%\sm15.out" 2>&1
+if errorlevel 1 (echo FAIL: the replacement staging must end green & type "%SB_OUT%\sm15.out" & goto Fail)
+findstr /C:"uuid|bbbbbbbb-0000-0000-0000-000000000000" "%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us\manifest.txt" >nul 2>&1
+if errorlevel 1 (echo FAIL: the staged manifest must carry the new uuid & goto Fail)
+if not exist "%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us\sources\setup.exe" (echo FAIL: the new media must be in the tree & goto Fail)
+if exist "%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us\old-media.bin" (echo FAIL: the old revision media must be gone after success & goto Fail)
+for /F %%c in ('dir /B "%SM_SPOOL%\replaced-*" 2^>nul ^| %SystemRoot%\System32\find.exe /c /v ""') do set "ASIDES_LEFT=%%c"
+if not "%ASIDES_LEFT%"=="0" (echo FAIL: the moved-aside old revision must be DELETED after the successful staging, %ASIDES_LEFT% asides remain & goto Fail)
+echo PASS: case 15 - delete-after-success replacement proven.
+
+echo --- Case 16: :UpgPurgeRevisions trio (sole / stale / failed-staging) ---
+set "PR_SPOOL=%SANDBOX%\purge-spool"
+set "WOU_UPGRADE_SPOOL=%PR_SPOOL%"
+set "PR_SETS=%PR_SPOOL%\26200-x64-en-us"
+>"%SB_FIX%\pr-staged.txt" echo uuid^|11111111-1111-1111-1111-111111111111
+mkdir "%PR_SETS%\11111111-1111-1111-1111-111111111111\files" 2>nul
+copy /y "%SB_FIX%\pr-staged.txt" "%PR_SETS%\11111111-1111-1111-1111-111111111111\manifest.txt" >nul
+>"%PR_SETS%\11111111-1111-1111-1111-111111111111\files\keep.txt" echo KEEP-ME
+call cmd\UpgradePayloads.cmd :UpgPurgeRevisions 26200 x64 en-us "%SB_FIX%\pr-staged.txt" >"%SB_OUT%\pr16a.out" 2>&1
+if errorlevel 1 (echo FAIL: the sole-revision purge must end green & type "%SB_OUT%\pr16a.out" & goto Fail)
+findstr /C:"PURGE: 0 removals" "%SB_OUT%\pr16a.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: a sole revision must answer 0 removals & type "%SB_OUT%\pr16a.out" & goto Fail)
+mkdir "%PR_SETS%\22222222-2222-2222-2222-222222222222\files" 2>nul
+>"%PR_SETS%\22222222-2222-2222-2222-222222222222\manifest.txt" echo uuid^|22222222-2222-2222-2222-222222222222
+>"%PR_SETS%\22222222-2222-2222-2222-222222222222\files\stale.txt" echo STALE
+mkdir "%PR_SETS%\33333333-3333-3333-3333-333333333333" 2>nul
+>"%PR_SETS%\33333333-3333-3333-3333-333333333333\manifest.txt" echo uuid^|33333333-3333-3333-3333-333333333333
+call cmd\UpgradePayloads.cmd :UpgPurgeRevisions 26200 x64 en-us "%SB_FIX%\pr-staged.txt" >"%SB_OUT%\pr16b.out" 2>&1
+if errorlevel 1 (echo FAIL: the stale-revision purge must end green & type "%SB_OUT%\pr16b.out" & goto Fail)
+if exist "%PR_SETS%\22222222-2222-2222-2222-222222222222" (echo FAIL: the first stale set must be purged & goto Fail)
+if exist "%PR_SETS%\33333333-3333-3333-3333-333333333333" (echo FAIL: the second stale set must be purged & goto Fail)
+if not exist "%PR_SETS%\11111111-1111-1111-1111-111111111111\files\keep.txt" (echo FAIL: the staged-uuid keep set must still exist after the purge - the kept-set assertion & goto Fail)
+findstr /C:"2 stale revision set" "%SB_OUT%\pr16b.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the purge must count exactly 2 removals & type "%SB_OUT%\pr16b.out" & goto Fail)
+call cmd\UpgradePayloads.cmd :UpgPurgeRevisions 26200 x64 en-us "%SB_FIX%\nonexistent-staged-manifest.txt" >"%SB_OUT%\pr16c.out" 2>&1
+set "PR16C_RC=!errorlevel!"
+if "%PR16C_RC%"=="0" (echo FAIL: the purge must refuse without proof of successful staging & goto Fail)
+if not exist "%PR_SETS%\11111111-1111-1111-1111-111111111111" (echo FAIL: the failed-staging simulation must remove NOTHING & goto Fail)
+set "WOU_UPGRADE_SPOOL="
+echo PASS: case 16 - purge answers 0 / exact / nothing, kept set survives.
+
+echo --- Case 17: :UpgCreateMediaDb - the staged media gets its integrity class ---
+call cmd\UpgradePayloads.cmd :UpgCreateMediaDb 26200 x64 en-us >"%SB_OUT%\cd17.out" 2>&1
+if errorlevel 1 (echo FAIL: the media db creation must end green over the staged fixture & type "%SB_OUT%\cd17.out" & goto Fail)
+set "DB17=%UUP_CLIENT_ROOT%\md\hashes-upgrade-26200-x64-en-us.txt"
+if not exist "%DB17%" (echo FAIL: the integrity class file is missing & goto Fail)
+findstr /B /C:"%%%%" "%DB17%" >nul 2>&1
+if errorlevel 1 (echo FAIL: the db file must carry the hashdeep header & goto Fail)
+echo PASS: case 17 - media integrity class created with the hashdeep header.
+
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 9 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 17 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

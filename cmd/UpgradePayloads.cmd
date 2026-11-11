@@ -36,8 +36,57 @@ rem           line FIRST, size-descending (big-first) split download (aria2
 rem           resume-tuned / wget -c), hash gate, TEMP-artifact cleanup on
 rem           EVERY exit path (T-33-09: the url map and the downloader lists
 rem           carry token URL material and never persist)
+rem   :UpgAssembleMedia <payload_dir> <media_stage_dir> <manifest>
+rem           - the media assembly stage (plan 33-04, ACQ-03): verifies the
+rem             vendored wimlib fail-closed against bin\wimlib\SHA256SUMS
+rem             (owner vendoring decision 2026-11-11 - see LICENSE-NOTES),
+rem             converts the set's component cabs to reference ESDs
+rem             (System32 expand.exe + wimlib capture - the converter v0.7.3
+rem             sequence), applies metadata ESD index 1 into the stage dir
+rem             (media scaffold), exports each edition metadata ESD's index 3
+rem             into sources\install.esd with --ref globs (the step in-box
+rem             DISM provably cannot do: CONSIGN-DISM-FAILURE, 33-01), and
+rem             runs the wimlib info census. NO ELEVATION anywhere: wimlib
+rem             is a userspace tool, so the DEC-33-13 targeted-elevation
+rem             policy (the RunAs wrapper + owner UAC click the plan built
+rem             around in-box DISM) has NO surface on this path - the
+rem             owner's 2026-11-11 vendoring decision replaced the DISM
+rem             assembly mechanism and with it the elevation prompt. The
+rem             policy's fail-closed refusal discipline (nothing staged on
+rem             a failed gate, loud error, error counted) is preserved on
+rem             EVERY tool-gate failure instead: pin mismatch, failed
+rem             conversion/apply/export/census all leave NOTHING staged.
+rem   :UpgAuthenticodeGate <media_stage_dir> - refuse-staging signature gate
+rem           (DEC-33-06, T-33-11): arch-switched sigcheck over the staged
+rem           tree; ANY unsigned row that is not a .mui resource or a
+rem           catalog-signed migration DLL (the consigned Microsoft media
+rem           convention, 33-01 spike census) = loud refusal, media stays in
+rem           the spool. The engine's delete-and-continue loop is
+rem           deliberately NOT copied. Binary absent = one runtime fetch
+rem           (the Sysinternals task-20 path) then still absent = loud
+rem           refusal - a silent skip is forbidden.
+rem   :UpgStageMedia <media_stage_dir> <manifest> <cible> <arche> <langue>
+rem           - gate-ordered whole-tree staging (T-33-12): the spool hash
+rem             gate AND the Authenticode gate must both pass BEFORE the
+rem             move; on a revision change the old target moves aside INTO
+rem             THE SPOOL first and is deleted ONLY after the new media is
+rem             staged and its manifest reads back (delete-after-success).
+rem   :UpgCreateMediaDb <cible> <arche> <langue> - the media integrity class
+rem           (ACQ-04): recreates client\md\hashes-upgrade-<c>-<a>-<l>.txt
+rem           over the staged tree with hashdeep (md5,sha1,sha256), mirroring
+rem           the bash create_integrity_database idiom.
+rem   :UpgPurgeRevisions <cible> <arche> <langue> <staged_manifest> - revision
+rem           churn purge (ACQ-06, DEC-33-08, Pitfall 6): invoked ONLY after
+rem           successful staging; archives the current working set under the
+rem           staged uuid and removes every sibling spool set for the same
+rem           target-lang-arch whose manifest uuid differs (keep-list =
+rem           staged uuid). Zero matching siblings = zero deletions. This
+rem           stage NEVER touches client\upgrade\ content and never
+rem           registers the subtree with the existing cleanup walk.
 rem   :UpgSectionEntry - the engine gate: no TMP_UPG_TARGETS selection or no
-rem           fu_media=1 row = absolute no-op (statu quo, DEC-33-09)
+rem           fu_media=1 row = absolute no-op (statu quo, DEC-33-09); with a
+rem           qualifying target: acquire, assemble, stage gate-ordered,
+rem           create the media db, purge revisions post-success.
 rem
 rem Resume-tuned options (ACQ-02, research Pitfall 4): this library defines
 rem its OWN option variables (UUP_DLDR_* / UUP_WGET_*). The engine's shared
@@ -61,7 +110,7 @@ goto %UUP_ENTRY%
 
 :UpgUsage
 echo Usage: %~n0 ^<subroutine^> [args...]
-echo Subroutines: :UpgReadFuMedia :UpgBudgetLine :UpgClassifySize :UpgHashGate :UpgAcquire :UpgSectionEntry
+echo Subroutines: :UpgReadFuMedia :UpgBudgetLine :UpgClassifySize :UpgHashGate :UpgAcquire :UpgSectionEntry :UpgAssembleMedia :UpgAuthenticodeGate :UpgStageMedia :UpgCreateMediaDb :UpgPurgeRevisions
 exit /b 1
 
 :UpgReadFuMedia
@@ -498,4 +547,622 @@ if errorlevel 1 (
   exit /b 1
 )
 call :UpgAcquire "!UUP_SE_MANIFEST!" "!UUP_SE_URLMAP!" "!UUP_SPOOL!\files"
+if errorlevel 1 exit /b 1
+rem The verified spool becomes the assembled media (plan 33-04). Gate order
+rem is the contract: hash gate + Authenticode gate inside :UpgStageMedia
+rem precede the move; the purge runs ONLY after successful staging.
+call :UpgAssembleMedia "!UUP_SPOOL!\files" "!UUP_SPOOL!\media-stage" "!UUP_SE_MANIFEST!"
+if errorlevel 1 exit /b 1
+call :UpgStageMedia "!UUP_SPOOL!\media-stage" "!UUP_SE_MANIFEST!" !UUP_TGT_BUILD! !UUP_TGT_ARCH! !UUP_LANG!
+if errorlevel 1 exit /b 1
+call :UpgCreateMediaDb !UUP_TGT_BUILD! !UUP_TGT_ARCH! !UUP_LANG!
+if errorlevel 1 exit /b 1
+call :UpgPurgeRevisions !UUP_TGT_BUILD! !UUP_TGT_ARCH! !UUP_LANG! "!UUP_LIB_DIR!..\client\upgrade\!UUP_TGT_BUILD!-!UUP_TGT_ARCH!\!UUP_LANG!\manifest.txt"
 exit /b !errorlevel!
+
+:UpgAssembleMedia
+rem === media assembly stage (plan 33-04, ACQ-03) ===
+rem %1 = payload dir (the spool's files\ dir), %2 = media stage dir (created;
+rem cleaned on failure), %3 = the acquisition manifest.
+rem Implements the consigned assembly record (doc\upgrade-media-assembly.md)
+rem through the VENDORED wimlib (owner decision 2026-11-11):
+rem   1. fail-closed vendored-tool verification against bin\wimlib\SHA256SUMS
+rem   2. component-cab -> reference ESD conversion (System32 expand.exe +
+rem      wimlib capture, the converter v0.7.3 sequence, exclusions kept)
+rem   3. wimlib apply of metadata ESD index 1 (the media scaffold)
+rem   4. wimlib export of each edition metadata ESD index 3 into
+rem      sources\install.esd with --ref globs (appending indexes)
+rem   5. the census (wimlib info Image Count vs the edition count)
+rem Every failure: loud ERROR line, stage dir cleaned, NOTHING staged.
+set "UUP_AM_PAYLOAD=%~1"
+set "UUP_AM_STAGE=%~2"
+set "UUP_AM_MANIFEST=%~3"
+if "!UUP_AM_PAYLOAD!"=="" (
+  echo ERROR: payload directory argument missing for :UpgAssembleMedia.
+  exit /b 1
+)
+if "!UUP_AM_STAGE!"=="" (
+  echo ERROR: media stage directory argument missing for :UpgAssembleMedia.
+  exit /b 1
+)
+if "!UUP_AM_MANIFEST!"=="" (
+  echo ERROR: manifest argument missing for :UpgAssembleMedia.
+  exit /b 1
+)
+if not exist "!UUP_AM_PAYLOAD!\" (
+  echo ERROR: payload directory not found: !UUP_AM_PAYLOAD!
+  exit /b 1
+)
+if not exist "!UUP_AM_MANIFEST!" (
+  echo ERROR: manifest not found: !UUP_AM_MANIFEST!
+  exit /b 1
+)
+if exist "!UUP_AM_STAGE!" (
+  echo ERROR: media stage directory already exists - refusing to assemble into a dirty stage: !UUP_AM_STAGE!
+  exit /b 1
+)
+
+rem --- vendored wimlib resolution + fail-closed SHA256 verification ---
+rem The override pair (UUP_WIMLIB / UUP_WIMLIB_SHA256SUMS) exists for the
+rem sandbox battery; the engine defaults to the vendored pair. Pin keys are
+rem the FULL sidecar-relative paths (x64/... vs x86/... share basenames).
+set "UUP_AM_WIMLIB=%UUP_WIMLIB%"
+set "UUP_AM_SHA256SUMS=%UUP_WIMLIB_SHA256SUMS%"
+set "UUP_AM_WIMDLL="
+if "!UUP_AM_WIMLIB!"=="" (
+  if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+    set "UUP_AM_ARCHDIR=x64"
+  ) else (
+    if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" (set "UUP_AM_ARCHDIR=x64") else (set "UUP_AM_ARCHDIR=x86")
+  )
+  set "UUP_AM_WIMLIB=!UUP_LIB_DIR!..\bin\wimlib\!UUP_AM_ARCHDIR!\wimlib-imagex.exe"
+  set "UUP_AM_WIMDLL=!UUP_LIB_DIR!..\bin\wimlib\!UUP_AM_ARCHDIR!\libwim-15.dll"
+  set "UUP_AM_SHA256SUMS=!UUP_LIB_DIR!..\bin\wimlib\SHA256SUMS"
+  set "UUP_AM_KEY1=!UUP_AM_ARCHDIR!/wimlib-imagex.exe"
+  set "UUP_AM_KEY2=!UUP_AM_ARCHDIR!/libwim-15.dll"
+) else (
+  for %%n in ("!UUP_AM_WIMLIB!") do set "UUP_AM_KEY1=%%~nxn"
+  set "UUP_AM_KEY2="
+)
+if not exist "!UUP_AM_WIMLIB!" (
+  echo ERROR: vendored wimlib binary not found: !UUP_AM_WIMLIB!
+  echo ERROR: the assembly refuses to run without the verified vendored tool ^(see bin\wimlib\LICENSE-NOTES^).
+  exit /b 1
+)
+if "!UUP_AM_SHA256SUMS!"=="" (
+  echo ERROR: no SHA256SUMS sidecar named for the assembly tool - refusing fail-closed.
+  exit /b 1
+)
+if not exist "!UUP_AM_SHA256SUMS!" (
+  echo ERROR: SHA256SUMS sidecar not found: !UUP_AM_SHA256SUMS!
+  exit /b 1
+)
+call :UpgVerifySha256Pin "!UUP_AM_WIMLIB!" "!UUP_AM_SHA256SUMS!" "!UUP_AM_KEY1!"
+if errorlevel 1 (
+  echo ERROR: vendored wimlib binary FAILED the SHA256 pin verification - assembly refused, nothing staged ^(T-33-SC^).
+  exit /b 1
+)
+if not "!UUP_AM_KEY2!"=="" (
+  if not exist "!UUP_AM_WIMDLL!" (
+    echo ERROR: vendored wimlib library not found beside the binary: !UUP_AM_WIMDLL!
+    exit /b 1
+  )
+  call :UpgVerifySha256Pin "!UUP_AM_WIMDLL!" "!UUP_AM_SHA256SUMS!" "!UUP_AM_KEY2!"
+  if errorlevel 1 (
+    echo ERROR: vendored wimlib library FAILED the SHA256 pin verification - assembly refused, nothing staged ^(T-33-SC^).
+    exit /b 1
+  )
+)
+
+rem --- edition metadata ESD detection (lang from the manifest meta rows) ---
+set "UUP_AM_LANG="
+for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("!UUP_AM_MANIFEST!") do (
+  if /i "%%a"=="lang" if not defined UUP_AM_LANG set "UUP_AM_LANG=%%b"
+)
+if "!UUP_AM_LANG!"=="" (
+  echo ERROR: manifest carries no lang meta row: !UUP_AM_MANIFEST!
+  exit /b 1
+)
+set "UUP_AM_META=%TEMP%\wou-upg-asm-meta-%RANDOM%%RANDOM%.txt"
+dir /B "!UUP_AM_PAYLOAD!\*_!UUP_AM_LANG!.esd" >"!UUP_AM_META!" 2>nul
+%SystemRoot%\System32\sort.exe <"!UUP_AM_META!" >"!UUP_AM_META!.srt"
+set /a UUP_AM_EDITIONS=0
+set "UUP_AM_FIRST="
+for /F "usebackq delims=" %%e in ("!UUP_AM_META!.srt") do (
+  rem Edition-name grammar: <word>_<lang>.esd only (a LanguagePack or other
+  rem package ESD carries hyphens in the name part and is NOT an edition
+  rem metadata ESD - the reference converter selects editions the same way)
+  echo %%e| %SystemRoot%\System32\findstr.exe /R /I "^[A-Za-z0-9][A-Za-z0-9]*_!UUP_AM_LANG!.esd$" >nul 2>&1
+  if errorlevel 1 (
+    echo Info: %%e is not an edition metadata ESD ^(package ESD^) - skipped.
+  ) else (
+    if not exist "!UUP_AM_PAYLOAD!\%%e" (
+      echo ERROR: manifest lang !UUP_AM_LANG! names no matching metadata ESD in the payload dir - refusing.
+      goto :UpgAssembleFail
+    )
+    set /a UUP_AM_EDITIONS+=1
+    if not defined UUP_AM_FIRST set "UUP_AM_FIRST=%%e"
+  )
+)
+if !UUP_AM_EDITIONS! EQU 0 (
+  echo ERROR: no metadata ESD for lang !UUP_AM_LANG! in the payload dir: !UUP_AM_PAYLOAD!
+  goto :UpgAssembleFail
+)
+echo Info: Assembling media for !UUP_AM_EDITIONS! edition metadata ESD^(s^), scaffold from !UUP_AM_FIRST!
+
+rem --- component-cab -> reference ESD conversion (converter v0.7.3 set) ---
+rem The exclusions keep the update/SSU/metadata cabs out of the reference
+rem set exactly as the reference implementation does. Converted ESDs live
+rem in the spool subtree (outside the shipped tree) and are reused by later
+rem runs of the same revision family. The sibling dir is derived from the
+rem payload dir's PARENT (%%~dp expansion) - a literal ".." segment in the
+rem path would poison wimlib's glob expansion later (measured live).
+rem NOTE: the for /R directory argument MUST be percent-expanded
+rem (%UUP_AM_PAYLOAD%, not !UUP_AM_PAYLOAD!) - delayed expansion in a
+rem for /R dir argument silently iterates NOTHING (measured live).
+for %%p in ("%UUP_AM_PAYLOAD%") do set "UUP_AM_PARENT=%%~dpp"
+set "UUP_AM_CONVERTED=!UUP_AM_PARENT!converted"
+set "UUP_AM_EXTRACT=!UUP_AM_PARENT!convert-extract"
+if not exist "!UUP_AM_CONVERTED!\" md "!UUP_AM_CONVERTED!"
+set /a UUP_AM_CONVERTED_N=0
+for /R "%UUP_AM_PAYLOAD%" %%C in (*.cab) do (
+  set "UUP_AM_CABNAME=%%~nxC"
+  echo !UUP_AM_CABNAME!| %SystemRoot%\System32\findstr.exe /I /C:"windows1" /C:"-kb" /C:"ssu-" /C:"desktopdeployment" /C:"aggregatedmetadata" >nul 2>&1
+  if errorlevel 1 (
+    if not exist "!UUP_AM_CONVERTED!\%%~nC.esd" (
+      echo Info: CAB -^> ESD: %%~nC
+      if exist "!UUP_AM_EXTRACT!\" rd /s /q "!UUP_AM_EXTRACT!" >nul 2>&1
+      md "!UUP_AM_EXTRACT!"
+      %SystemRoot%\System32\expand.exe -F:* "%%~fC" "!UUP_AM_EXTRACT!" >nul 2>&1
+      if errorlevel 1 (
+        echo ERROR: cab extraction failed for %%~nxC - assembly refused.
+        goto :UpgAssembleFail
+      )
+      rem The call form is REQUIRED: the battery stub is batch-shaped, and a
+      rem batch-shaped binary invoked without call terminates the caller with
+      rem its own exit code (the 33-03 lesson replayed).
+      call "!UUP_AM_WIMLIB!" capture "!UUP_AM_EXTRACT!" "!UUP_AM_CONVERTED!\%%~nC.esd" --no-acls --norpfix "Edition Package" "Edition Package" >nul 2>&1
+      if errorlevel 1 (
+        echo ERROR: wimlib capture failed for %%~nxC - assembly refused.
+        goto :UpgAssembleFail
+      )
+      rd /s /q "!UUP_AM_EXTRACT!" >nul 2>&1
+      set /a UUP_AM_CONVERTED_N+=1
+    )
+  )
+)
+if exist "!UUP_AM_EXTRACT!\" rd /s /q "!UUP_AM_EXTRACT!" >nul 2>&1
+echo Info: Converted !UUP_AM_CONVERTED_N! component cab^(s^) to reference ESD^(s^) ^(reused from previous runs when present^).
+
+rem --- scaffold apply: metadata ESD index 1 into the stage dir ---
+echo Info: Applying the media scaffold from index 1 of !UUP_AM_FIRST! ...
+if not exist "!UUP_AM_STAGE!\" md "!UUP_AM_STAGE!"
+rem call form: see the capture note (batch-shaped stubs terminate the caller otherwise)
+call "!UUP_AM_WIMLIB!" apply "!UUP_AM_PAYLOAD!\!UUP_AM_FIRST!" 1 "!UUP_AM_STAGE!" --no-acls --no-attributes >nul
+if errorlevel 1 (
+  echo ERROR: scaffold apply failed - assembly refused, nothing staged.
+  goto :UpgAssembleFail
+)
+
+rem --- install.esd export: one per edition metadata ESD, appended ---
+rem --ref globs resolve the external blob resources that killed the DISM
+rem export (CONSIGN-DISM-FAILURE); wimlib expands the globs itself.
+set "UUP_AM_INSTALL=!UUP_AM_STAGE!\sources\install.esd"
+if not exist "!UUP_AM_STAGE!\sources\" (
+  echo ERROR: the scaffold produced no sources\ directory - assembly refused.
+  goto :UpgAssembleFail
+)
+for /F "usebackq delims=" %%e in ("!UUP_AM_META!.srt") do (
+  set "UUP_AM_EDITION_ID="
+  rem The extra quote pair defeats the cmd /c leading-quote stripping (a
+  rem command line that both starts with a quote and carries more quotes is
+  rem otherwise mangled)
+  for /F "usebackq delims=" %%L in (`""!UUP_AM_WIMLIB!" info "!UUP_AM_PAYLOAD!\%%e" 3 ^| %SystemRoot%\System32\findstr.exe /B /C:"Edition ID:""`) do (
+    for /F "tokens=3 delims=: " %%z in ("%%L") do set "UUP_AM_EDITION_ID=%%z"
+  )
+  if "!UUP_AM_EDITION_ID!"=="" (
+    echo ERROR: no Edition ID reported for %%e - assembly refused.
+    goto :UpgAssembleFail
+  )
+  echo Info: Exporting edition !UUP_AM_EDITION_ID! to sources\install.esd ...
+  rem --ref IS the glob form on the Windows wimlib build (its usage line
+  rem documents --ref="GLOB"): the patterns are expanded by wimlib itself -
+  rem the shell never expands them on this side. The glob must NOT carry
+  rem [eE] character classes (wimlib's glob rejects them - measured live);
+  rem plain *.esd covers the .ESD payload files because Windows globbing is
+  rem case-insensitive (the converter's classes exist for Linux shells).
+  call "!UUP_AM_WIMLIB!" export "!UUP_AM_PAYLOAD!\%%e" 3 "!UUP_AM_INSTALL!" "Windows 11 !UUP_AM_EDITION_ID!" --solid --ref="!UUP_AM_PAYLOAD!\*.esd" --ref="!UUP_AM_CONVERTED!\*.esd" >nul
+  if errorlevel 1 (
+    echo ERROR: install.esd export failed for %%e - assembly refused, nothing staged.
+    goto :UpgAssembleFail
+  )
+)
+
+rem --- the census: image count must equal the exported edition count ---
+set "UUP_AM_IMAGECOUNT="
+for /F "usebackq delims=" %%L in (`""!UUP_AM_WIMLIB!" info "!UUP_AM_INSTALL!" ^| %SystemRoot%\System32\findstr.exe /B /C:"Image Count:""`) do (
+  for /F "tokens=3 delims=: " %%z in ("%%L") do set "UUP_AM_IMAGECOUNT=%%z"
+)
+if "!UUP_AM_IMAGECOUNT!"=="" (
+  echo ERROR: the census could not read the Image Count of !UUP_AM_INSTALL! - assembly refused.
+  goto :UpgAssembleFail
+)
+if !UUP_AM_IMAGECOUNT! NEQ !UUP_AM_EDITIONS! (
+  echo ERROR: census mismatch - install.esd carries !UUP_AM_IMAGECOUNT! image^(s^), expected !UUP_AM_EDITIONS! - assembly refused.
+  goto :UpgAssembleFail
+)
+del "!UUP_AM_META!" >nul 2>&1
+del "!UUP_AM_META!.srt" >nul 2>&1
+echo Info: Media assembly complete - !UUP_AM_IMAGECOUNT! edition image^(s^) in sources\install.esd, census green.
+exit /b 0
+
+:UpgAssembleFail
+if exist "!UUP_AM_STAGE!\" rd /s /q "!UUP_AM_STAGE!" >nul 2>&1
+if exist "!UUP_AM_META!" del "!UUP_AM_META!" >nul 2>&1
+if exist "!UUP_AM_META!.srt" del "!UUP_AM_META!.srt" >nul 2>&1
+exit /b 1
+
+:UpgVerifySha256Pin
+rem %1 = file to verify, %2 = SHA256SUMS sidecar (sha256sum -c format:
+rem "<hex>[ *]<relative/path>"), %3 = the pin key (the sidecar-relative path
+rem of the file - basenames collide across x64/ and x86/). Computes certutil
+rem SHA256 of %1 and compares case-insensitively against the sidecar line
+rem naming the same key. Exit 0 = pin verified; exit 1 = missing line,
+rem missing file, or mismatch.
+set "UUP_VSP_FILE=%~1"
+set "UUP_VSP_SIDECAR=%~2"
+set "UUP_VSP_KEY=%~3"
+set "UUP_VSP_EXPECTED="
+for /F "usebackq tokens=1,2 delims= " %%a in ("!UUP_VSP_SIDECAR!") do (
+  for /F "delims=*" %%n in ("%%b") do (
+    if /i "%%n"=="!UUP_VSP_KEY!" set "UUP_VSP_EXPECTED=%%a"
+  )
+)
+if "!UUP_VSP_EXPECTED!"=="" (
+  echo ERROR: SHA256SUMS sidecar carries no pin for !UUP_VSP_NAME!: !UUP_VSP_SIDECAR!
+  exit /b 1
+)
+set "UUP_VSP_ACTUAL="
+for /F "skip=1 delims=" %%h in ('certutil -hashfile "!UUP_VSP_FILE!" SHA256 2^>nul') do (
+  if not defined UUP_VSP_ACTUAL set "UUP_VSP_ACTUAL=%%h"
+)
+set "UUP_VSP_ACTUAL=!UUP_VSP_ACTUAL: =!"
+if "!UUP_VSP_ACTUAL!"=="" (
+  echo ERROR: certutil produced no hash for !UUP_VSP_FILE!
+  exit /b 1
+)
+if /i not "!UUP_VSP_ACTUAL!"=="!UUP_VSP_EXPECTED!" (
+  echo ERROR: SHA256 pin MISMATCH for !UUP_VSP_NAME!: expected !UUP_VSP_EXPECTED!, got !UUP_VSP_ACTUAL!
+  exit /b 1
+)
+exit /b 0
+
+:UpgAuthenticodeGate
+rem === refuse-staging signature gate (DEC-33-06, T-33-11) ===
+rem %1 = the assembled media stage dir. Runs the arch-switched sigcheck over
+rem the staged tree (-s, CSV) and classifies every row: rows carrying the
+rem quoted "Signed" marker pass; unsigned rows are allowed ONLY for .mui
+rem resources and replacementmanifests migration DLLs (the consigned
+rem Microsoft media convention - the 33-01 spike census measured exactly
+rem those two classes on the real scaffold); ANY other unsigned row refuses
+rem staging: loud ERROR, exit 1, NOTHING moved (the caller keeps the media
+rem in the spool). Binary absent = one runtime fetch through the existing
+rem Sysinternals path (task-20 precedent), then still absent = loud refusal.
+set "UUP_AG_STAGE=%~1"
+set "UUP_AG_SIGCHK=%UUP_SIGCHK_PATH%"
+if "!UUP_AG_STAGE!"=="" (
+  echo ERROR: media stage directory argument missing for :UpgAuthenticodeGate.
+  exit /b 1
+)
+if not exist "!UUP_AG_STAGE!\" (
+  echo ERROR: media stage directory not found: !UUP_AG_STAGE!
+  exit /b 1
+)
+if not exist "!UUP_AG_STAGE!\sources\" (
+  echo ERROR: media stage carries no sources\ directory: !UUP_AG_STAGE!
+  exit /b 1
+)
+if "!UUP_AG_SIGCHK!"=="" (
+  if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set "UUP_AG_SIGCHK=!UUP_LIB_DIR!..\bin\sigcheck64.exe") else (
+    if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" (set "UUP_AG_SIGCHK=!UUP_LIB_DIR!..\bin\sigcheck64.exe") else (set "UUP_AG_SIGCHK=!UUP_LIB_DIR!..\bin\sigcheck.exe")
+  )
+)
+if not exist "!UUP_AG_SIGCHK!" (
+  rem Runtime fetch through the EXISTING Sysinternals path - never a silent
+  rem skip. Wget is vendored; unzip is vendored; both are anchored at the
+  rem library dir so the caller's cwd cannot shadow them.
+  echo Info: sigcheck not found - fetching through the existing Sysinternals runtime path...
+  "!UUP_LIB_DIR!..\bin\wget.exe" -nv -O "!UUP_LIB_DIR!..\bin\Sigcheck.zip" https://download.sysinternals.com/files/Sigcheck.zip >nul 2>&1
+  if errorlevel 1 (
+    echo ERROR: the Sysinternals Sigcheck fetch failed - the Authenticode gate refuses fail-closed ^(no silent skip^).
+    exit /b 1
+  )
+  pushd "!UUP_LIB_DIR!..\bin"
+  unzip.exe -u -o Sigcheck.zip -x Eula.txt >nul 2>&1
+  popd
+)
+if not exist "!UUP_AG_SIGCHK!" (
+  echo ERROR: sigcheck is not available and the fetch did not produce it - the Authenticode gate refuses fail-closed.
+  exit /b 1
+)
+set "UUP_AG_CSV=%TEMP%\wou-upg-sigcheck-%RANDOM%%RANDOM%.csv"
+rem call form: the battery stub is batch-shaped (see the capture note)
+call "!UUP_AG_SIGCHK!" -accepteula -q -c -nobanner -utf8 -e -s "!UUP_AG_STAGE!" >"!UUP_AG_CSV!" 2>nul
+set /a UUP_AG_ROWS=0
+set /a UUP_AG_SIGNED=0
+set /a UUP_AG_ALLOWED=0
+set /a UUP_AG_BAD=0
+for /F "skip=1 usebackq tokens=1,* delims=," %%a in ("!UUP_AG_CSV!") do (
+  set /a UUP_AG_ROWS+=1
+  echo %%b| %SystemRoot%\System32\findstr.exe /C:"\"Signed\"" >nul 2>&1
+  if not errorlevel 1 (
+    set /a UUP_AG_SIGNED+=1
+  ) else (
+    set UUP_AG_ROWPATH=%%a
+    rem Strip the CSV quoting so the extension anchor can bind (delayed
+    rem substitution, not a path modifier - %%~q is not a defined modifier
+    rem and mangles the path)
+    set UUP_AG_ROWPATH=!UUP_AG_ROWPATH:"=!
+    set "UUP_AG_ALLOWED_ROW=0"
+    echo !UUP_AG_ROWPATH!| %SystemRoot%\System32\findstr.exe /I /E /C:".mui" >nul 2>&1
+    if not errorlevel 1 set "UUP_AG_ALLOWED_ROW=1"
+    rem The doubled backslashes are REQUIRED: a single trailing backslash
+    rem before the closing quote escapes the quote at the C-runtime argv
+    rem layer and findstr receives a mangled literal (measured live on the
+    rem real scaffold's replacementmanifests migration DLL)
+    echo !UUP_AG_ROWPATH!| %SystemRoot%\System32\findstr.exe /I /C:"\\replacementmanifests\\" >nul 2>&1
+    if not errorlevel 1 set "UUP_AG_ALLOWED_ROW=1"
+    if "!UUP_AG_ALLOWED_ROW!"=="1" (
+      set /a UUP_AG_ALLOWED+=1
+    ) else (
+      set /a UUP_AG_BAD+=1
+      echo ERROR: UNSIGNED executable in the staged media - staging refused: !UUP_AG_ROWPATH!
+    )
+  )
+)
+del "!UUP_AG_CSV!" >nul 2>&1
+if !UUP_AG_ROWS! EQU 0 (
+  echo ERROR: the Authenticode scan examined zero rows - the gate refuses fail-closed ^(an empty scan verifies nothing^).
+  exit /b 1
+)
+if !UUP_AG_BAD! GTR 0 (
+  echo ERROR: Authenticode gate FAILED - !UUP_AG_BAD! unsigned row^(s^) outside the consigned convention. Media stays in the spool, nothing staged.
+  exit /b 1
+)
+echo Info: Authenticode gate passed - !UUP_AG_SIGNED! signed row^(s^), !UUP_AG_ALLOWED! allowed convention row^(s^) ^(.mui resources / catalog-signed migration DLLs^), !UUP_AG_ROWS! rows scanned.
+exit /b 0
+
+:UpgStageMedia
+rem === gate-ordered whole-tree staging (T-33-12) ===
+rem %1 = assembled media stage dir, %2 = the spool acquisition manifest,
+rem %3..%5 = target cible/arche/langue. Gate order is the contract: the
+rem spool hash gate runs FIRST, then the Authenticode gate, and only then
+rem the move into client\upgrade\<cible>-<arche>\<langue>\. On a revision
+rem change (existing target dir whose manifest uuid differs - or an
+rem unparseable existing manifest) the old target moves aside INTO THE
+rem SPOOL first and the aside is deleted ONLY after the new media is staged
+rem and its manifest reads back with the staged uuid (delete-after-success).
+rem A gate failure stages nothing.
+set "UUP_SM_STAGE=%~1"
+set "UUP_SM_MANIFEST=%~2"
+set "UUP_SM_CIBLE=%~3"
+set "UUP_SM_ARCHE=%~4"
+set "UUP_SM_LANGUE=%~5"
+if "!UUP_SM_STAGE!"=="" (
+  echo ERROR: media stage directory argument missing for :UpgStageMedia.
+  exit /b 1
+)
+if "!UUP_SM_MANIFEST!"=="" (
+  echo ERROR: manifest argument missing for :UpgStageMedia.
+  exit /b 1
+)
+if "!UUP_SM_CIBLE!"=="" exit /b 2
+if "!UUP_SM_ARCHE!"=="" exit /b 2
+if "!UUP_SM_LANGUE!"=="" exit /b 2
+if not exist "!UUP_SM_STAGE!\" (
+  echo ERROR: media stage directory not found: !UUP_SM_STAGE!
+  exit /b 1
+)
+if not exist "!UUP_SM_MANIFEST!" (
+  echo ERROR: manifest not found: !UUP_SM_MANIFEST!
+  exit /b 1
+)
+rem Spool root = the manifest's directory (the DEC-33-14 working layout:
+rem <spool>\manifest.txt + <spool>\files\)
+set "UUP_SM_SPOOL=%~dp2"
+set "UUP_SM_SPOOL=!UUP_SM_SPOOL:~0,-1!"
+rem The client tree root: the sandbox battery pins UUP_CLIENT_ROOT; the
+rem engine default is the library's sibling client tree.
+set "UUP_SM_CLIENT=%UUP_CLIENT_ROOT%"
+if "!UUP_SM_CLIENT!"=="" set "UUP_SM_CLIENT=!UUP_LIB_DIR!..\client"
+set "UUP_SM_TARGET=!UUP_SM_CLIENT!\upgrade\!UUP_SM_CIBLE!-!UUP_SM_ARCHE!\!UUP_SM_LANGUE!"
+
+rem Gate 1: the whole-spool sha256 audit (33-03) - refusal leaves the tree
+rem untouched, the media in the stage dir
+echo Info: Staging gate 1/2 - the fail-closed spool hash audit...
+call :UpgHashGate "!UUP_SM_MANIFEST!" "!UUP_SM_SPOOL!\files"
+if errorlevel 1 (
+  echo ERROR: the spool hash gate refused staging - NOTHING moved ^(T-33-12 gate order^).
+  exit /b 1
+)
+rem Gate 2: Authenticode refuse-staging over the assembled tree
+echo Info: Staging gate 2/2 - the Authenticode refuse-staging scan...
+call :UpgAuthenticodeGate "!UUP_SM_STAGE!"
+if errorlevel 1 (
+  echo ERROR: the Authenticode gate refused staging - NOTHING moved ^(T-33-12 gate order^).
+  exit /b 1
+)
+rem Staged uuid from the spool manifest meta rows
+set "UUP_SM_UUID="
+for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("!UUP_SM_MANIFEST!") do (
+  if /i "%%a"=="uuid" if not defined UUP_SM_UUID set "UUP_SM_UUID=%%b"
+)
+if "!UUP_SM_UUID!"=="" (
+  echo ERROR: the spool manifest carries no uuid meta row - staging refused.
+  exit /b 1
+)
+rem Revision replacement: move an existing target aside INTO THE SPOOL
+set "UUP_SM_ASIDE="
+if exist "!UUP_SM_TARGET!\" (
+  set "UUP_SM_ASIDE=!UUP_SM_SPOOL!\replaced-!UUP_SM_UUID!-%RANDOM%"
+  echo Info: Existing media found - moving the old tree aside ^(delete-after-success^): !UUP_SM_ASIDE!
+  move "!UUP_SM_TARGET!" "!UUP_SM_ASIDE!" >nul
+  if errorlevel 1 (
+    echo ERROR: could not move the existing media aside - staging refused, the old revision stays untouched.
+    set "UUP_SM_ASIDE="
+    exit /b 1
+  )
+)
+rem The move: the whole assembled tree lands in the target in one movement
+if not exist "!UUP_SM_CLIENT!\upgrade\!UUP_SM_CIBLE!-!UUP_SM_ARCHE!\" md "!UUP_SM_CLIENT!\upgrade\!UUP_SM_CIBLE!-!UUP_SM_ARCHE!"
+move "!UUP_SM_STAGE!" "!UUP_SM_TARGET!" >nul
+if errorlevel 1 (
+  echo ERROR: the media move failed - staging refused.
+  if defined UUP_SM_ASIDE move "!UUP_SM_ASIDE!" "!UUP_SM_TARGET!" >nul
+  exit /b 1
+)
+rem The acquisition manifest lands beside the media
+copy /y "!UUP_SM_MANIFEST!" "!UUP_SM_TARGET!\manifest.txt" >nul
+if errorlevel 1 (
+  echo ERROR: staging the manifest beside the media failed.
+  if defined UUP_SM_ASIDE move "!UUP_SM_ASIDE!" "!UUP_SM_TARGET!" >nul
+  exit /b 1
+)
+rem Delete-after-success: the new media must be staged AND its manifest
+rem must read back with the staged uuid before the old revision dies
+set "UUP_SM_READBACK="
+for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("!UUP_SM_TARGET!\manifest.txt") do (
+  if /i "%%a"=="uuid" if not defined UUP_SM_READBACK set "UUP_SM_READBACK=%%b"
+)
+if not "!UUP_SM_READBACK!"=="!UUP_SM_UUID!" (
+  echo ERROR: the staged manifest does not read back with uuid !UUP_SM_UUID! - the old revision is kept for recovery.
+  exit /b 1
+)
+if defined UUP_SM_ASIDE (
+  rd /s /q "!UUP_SM_ASIDE!" >nul 2>&1
+  echo Info: Old revision media deleted after successful staging ^(delete-after-success^).
+)
+echo Info: Media staged - client\upgrade\!UUP_SM_CIBLE!-!UUP_SM_ARCHE!\!UUP_SM_LANGUE! \(uuid !UUP_SM_UUID!\).
+exit /b 0
+
+:UpgCreateMediaDb
+rem === media integrity class (ACQ-04) ===
+rem %1..%3 = cible/arche/langue. Recreates client\md\hashes-upgrade-<..>.txt
+rem over the STAGED tree (create pattern, mirroring the bash
+rem create_integrity_database idiom: rm -f the existing db, hashdeep -c
+rem md5,sha1,sha256 -b -r over the directory).
+set "UUP_CD_CIBLE=%~1"
+set "UUP_CD_ARCHE=%~2"
+set "UUP_CD_LANGUE=%~3"
+if "!UUP_CD_CIBLE!"=="" exit /b 2
+if "!UUP_CD_ARCHE!"=="" exit /b 2
+if "!UUP_CD_LANGUE!"=="" exit /b 2
+set "UUP_CD_CLIENT=%UUP_CLIENT_ROOT%"
+if "!UUP_CD_CLIENT!"=="" set "UUP_CD_CLIENT=!UUP_LIB_DIR!..\client"
+set "UUP_CD_DIR=!UUP_CD_CLIENT!\upgrade\!UUP_CD_CIBLE!-!UUP_CD_ARCHE!\!UUP_CD_LANGUE!"
+set "UUP_CD_DB=!UUP_CD_CLIENT!\md\hashes-upgrade-!UUP_CD_CIBLE!-!UUP_CD_ARCHE!-!UUP_CD_LANGUE!.txt"
+if not exist "!UUP_CD_DIR!\" (
+  echo ERROR: staged media directory not found: !UUP_CD_DIR!
+  exit /b 1
+)
+if not exist "!UUP_CD_CLIENT!\md\" md "!UUP_CD_CLIENT!\md"
+if exist "!UUP_CD_DB!" del "!UUP_CD_DB!" >nul 2>&1
+if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set "UUP_CD_HASHDEEP=!UUP_LIB_DIR!..\client\bin\hashdeep64.exe") else (
+  if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" (set "UUP_CD_HASHDEEP=!UUP_LIB_DIR!..\client\bin\hashdeep64.exe") else (set "UUP_CD_HASHDEEP=!UUP_LIB_DIR!..\client\bin\hashdeep.exe")
+)
+if not exist "!UUP_CD_HASHDEEP!" (
+  echo ERROR: hashdeep not found: !UUP_CD_HASHDEEP!
+  exit /b 1
+)
+echo Info: Creating the media integrity class - client\md\hashes-upgrade-!UUP_CD_CIBLE!-!UUP_CD_ARCHE!-!UUP_CD_LANGUE!.txt
+"!UUP_CD_HASHDEEP!" -c md5,sha1,sha256 -b -r "!UUP_CD_DIR!" >"!UUP_CD_DB!"
+if errorlevel 1 (
+  echo ERROR: hashdeep failed creating the media integrity class.
+  if exist "!UUP_CD_DB!" del "!UUP_CD_DB!" >nul 2>&1
+  exit /b 1
+)
+findstr /B /C:"%%%%" "!UUP_CD_DB!" >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: the media integrity class carries no hashdeep header - refusing.
+  del "!UUP_CD_DB!" >nul 2>&1
+  exit /b 1
+)
+exit /b 0
+
+:UpgPurgeRevisions
+rem === revision churn purge (ACQ-06, DEC-33-08, Pitfall 6) ===
+rem %1..%3 = cible/arche/langue, %4 = the STAGED manifest (the keep-list
+rem source). Invoked ONLY after successful staging. Archives the current
+rem working set under the staged uuid, then removes every sibling spool set
+rem for the same target-lang-arch whose manifest uuid differs. Zero matching
+rem siblings = zero deletions. NEVER touches client\upgrade\ content; never
+rem registers the subtree with the existing cleanup walk.
+set "UUP_PR_CIBLE=%~1"
+set "UUP_PR_ARCHE=%~2"
+set "UUP_PR_LANGUE=%~3"
+set "UUP_PR_MANIFEST=%~4"
+if "!UUP_PR_CIBLE!"=="" exit /b 2
+if "!UUP_PR_ARCHE!"=="" exit /b 2
+if "!UUP_PR_LANGUE!"=="" exit /b 2
+if "!UUP_PR_MANIFEST!"=="" (
+  echo ERROR: staged manifest argument missing for :UpgPurgeRevisions.
+  exit /b 1
+)
+if not exist "!UUP_PR_MANIFEST!" (
+  echo ERROR: staged manifest not found - the purge refuses without proof of successful staging: !UUP_PR_MANIFEST!
+  exit /b 1
+)
+set "UUP_PR_UUID="
+for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("!UUP_PR_MANIFEST!") do (
+  if /i "%%a"=="uuid" if not defined UUP_PR_UUID set "UUP_PR_UUID=%%b"
+)
+if "!UUP_PR_UUID!"=="" (
+  echo ERROR: the staged manifest carries no uuid meta row - purge refused.
+  exit /b 1
+)
+set "UUP_PR_SPOOL=%WOU_UPGRADE_SPOOL%"
+if "!UUP_PR_SPOOL!"=="" set "UUP_PR_SPOOL=%TEMP%\wou-upgrade-spool"
+set "UUP_PR_SETS=!UUP_PR_SPOOL!\!UUP_PR_CIBLE!-!UUP_PR_ARCHE!-!UUP_PR_LANGUE!"
+if not exist "!UUP_PR_SETS!\" md "!UUP_PR_SETS!"
+rem Archive the current working set under the staged uuid (the spool keeps
+rem exactly the current uuid set per target-lang-arch). The working set is
+rem the spool root's manifest.txt + files\ - moved only when the keep-list
+rem revision dir does not exist yet and the working manifest matches the
+rem staged uuid.
+if not exist "!UUP_PR_SETS!\!UUP_PR_UUID!\" (
+  if exist "!UUP_PR_SPOOL!\manifest.txt" (
+    set "UUP_PR_WUUID="
+    for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("!UUP_PR_SPOOL!\manifest.txt") do (
+      if /i "%%a"=="uuid" if not defined UUP_PR_WUUID set "UUP_PR_WUUID=%%b"
+    )
+    if /i "!UUP_PR_WUUID!"=="!UUP_PR_UUID!" (
+      md "!UUP_PR_SETS!\!UUP_PR_UUID!"
+      move "!UUP_PR_SPOOL!\manifest.txt" "!UUP_PR_SETS!\!UUP_PR_UUID!\manifest.txt" >nul 2>&1
+      if exist "!UUP_PR_SPOOL!\files\" move "!UUP_PR_SPOOL!\files" "!UUP_PR_SETS!\!UUP_PR_UUID!\files" >nul 2>&1
+      echo Info: Working set archived under the staged uuid: !UUP_PR_UUID!
+    )
+  )
+)
+set /a UUP_PR_REMOVED=0
+set /a UUP_PR_KEPT=0
+for /F "delims=" %%d in ('dir /B /AD "!UUP_PR_SETS!" 2^>nul') do (
+  if exist "!UUP_PR_SETS!\%%d\manifest.txt" (
+    set "UUP_PR_DUUID="
+    for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("!UUP_PR_SETS!\%%d\manifest.txt") do (
+      if /i "%%a"=="uuid" if not defined UUP_PR_DUUID set "UUP_PR_DUUID=%%b"
+    )
+    if /i "!UUP_PR_DUUID!"=="!UUP_PR_UUID!" (
+      set /a UUP_PR_KEPT+=1
+    ) else (
+      rd /s /q "!UUP_PR_SETS!\%%d" >nul 2>&1
+      set /a UUP_PR_REMOVED+=1
+      echo Info: Purged stale revision set %%d \(uuid !UUP_PR_DUUID!\)
+    )
+  )
+)
+if !UUP_PR_REMOVED! EQU 0 (
+  echo Info: PURGE: 0 removals - the spool keeps only the staged revision !UUP_PR_UUID! ^(!UUP_PR_KEPT! set^(s^) kept^).
+) else (
+  echo Info: PURGE: !UUP_PR_REMOVED! stale revision set^(s^) removed, !UUP_PR_KEPT! kept - the spool holds only revision !UUP_PR_UUID! for !UUP_PR_CIBLE!-!UUP_PR_ARCHE!-!UUP_PR_LANGUE!.
+)
+exit /b 0

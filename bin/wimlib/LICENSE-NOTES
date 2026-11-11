@@ -1,0 +1,42 @@
+# wimlib-imagex - vendored tool provenance and license notes
+
+Vendored: 2026-11-11 (owner decision of 2026-11-11, plan 33-04 of milestone v5.0)
+Source:   https://wimlib.net/downloads/ (author site, Eric Biggers)
+Version:  wimlib-imagex 1.14.5 (2026-01-29 release)
+Packages: wimlib-1.14.5-windows-x86_64-bin.zip -> x64/
+          wimlib-1.14.5-windows-i686-bin.zip  -> x86/
+
+## What is vendored (runtime set only)
+
+x64/wimlib-imagex.exe + x64/libwim-15.dll   (64-bit CLI + library)
+x86/wimlib-imagex.exe + x86/libwim-15.dll   (32-bit CLI + library)
+
+Not vendored: the .cmd shims, doc/, devel/, NEWS/README (upstream docs stay in the
+release zips). No UPX compression is applied (repo rule: never UPX).
+
+## License
+
+The CLI (wimlib-imagex.exe) is GPLv3+; the library (libwim-15.dll) is LGPLv3+.
+Full license texts are vendored verbatim beside the binaries:
+
+- COPYING.GPLv3.txt            (GNU GPL v3 - covers wimlib-imagex.exe)
+- COPYING.LGPL.txt             (GNU LGPL v3 - covers libwim-15.dll)
+- COPYING.libdivsufsort-lite.txt (bundled libdivsufsort license)
+- COPYING.txt                  (upstream license overview)
+
+## Why vendored (the decision)
+
+In-box DISM cannot assemble sources/install.esd from a UUP metadata ESD
+(CONSIGN-DISM-FAILURE, 33-01 spike: /Export-Image /SourceIndex:3 fails with error
+1812 because the OS image references blob resources in sibling payload files and
+DISM has no reference-resolution option). wimlib-imagex resolves those references
+through --ref globs and is what every reference implementation (uup-dump converter
+v0.7.3) uses. The GPLv3+ vendoring obligations were accepted by the owner decision
+of 2026-11-11 (plan 33-04); this file and the vendored COPYING* texts carry the
+license documentation for the distributed tree.
+
+## Integrity
+
+SHA256SUMS pins every vendored file listed above (sha256sum -c compatible). The
+pipeline verifies the pins fail-closed (certutil on the CMD side) before any
+invocation - a modified or replaced binary is refused loudly, nothing is staged.

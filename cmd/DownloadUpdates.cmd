@@ -1736,6 +1736,20 @@ for /F "tokens=3,4 delims=," %%c in (..\client\static\StaticUpdateIds-BuildUpgra
   )
 )
 
+rem === UUP upgrade payloads Phase 33 ===
+rem Acquisition call site (plan 33-03, ACQ-02 + the sha256 half of ACQ-04):
+rem with a chosen-target selection AND a fu_media=1 upgrades.txt row
+rem (DEC-33-09), cmd\UpgradePayloads.cmd resolves the payload manifest via
+rem the coupled one-shot resolver twin and downloads the DEC-33-14 spool
+rem resume-tuned, then hash-verifies the whole spool fail-closed. The
+rem shared DLDR_* defaults set above are consumed NOWHERE in this region -
+rem the UUP stage carries its own resume-tuned option set, and no 32-bit
+rem arithmetic touches any byte size here. No selection or fu_media 0 =
+rem this region is a byte-level no-op (statu quo).
+if defined TMP_UPG_TARGETS call cmd\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
+rem === end UUP upgrade payloads ===
+
+
 if exist ..\exclude\ExcludeList-superseded-exclude-seconly.txt (
   type ..\exclude\ExcludeList-superseded-exclude-seconly.txt >>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
 )
@@ -2854,6 +2868,14 @@ echo ERROR: Catalog file ..\client\wsus\wsusscn2.cab signature verification fail
 call :Log "Error: Catalog file ..\client\wsus\wsusscn2.cab signature verification failure"
 echo.
 goto Error
+
+:UpgradeError
+echo.
+echo ERROR: UUP upgrade payload acquisition failure - nothing was staged, temp artifacts deleted.
+call :Log "Error: UUP upgrade payload acquisition failure - nothing was staged"
+echo.
+goto Error
+
 
 :Error
 if "%EXIT_ERR%"=="1" (

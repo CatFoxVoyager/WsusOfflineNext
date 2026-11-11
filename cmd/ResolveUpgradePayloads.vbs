@@ -66,7 +66,7 @@
 Option Explicit
 
 Dim objFso, objShell, objEnv
-Dim strTargetBuild, strArch, strLang, strOutManifest, strFixturePath
+Dim strTargetBuild, strArch, strLang, strOutManifest, strFixturePath, strUrlMapPath
 Dim strUpdateName, strUuid, strArchMeta, strBuildMeta
 Dim strTotalBytes, strTotalMib
 
@@ -105,12 +105,20 @@ If strOutManifest = "" Then
 End If
 
 ' Fixture seam (DEC-33-12): the --fixture:<path> option wins over the
-' WOU_UUP_FIXTURE environment variable
+' WOU_UUP_FIXTURE environment variable. The /urlmap:<path> option (plan
+' 33-03) asks for a name-TAB-URL side map for the coupled download - a
+' TEMP runtime artifact (T-33-09): API mode writes one pair per files-map
+' entry AFTER the whole set validates, fixture mode ignores it (a fixture
+' carries no url fields - token material is stripped at authoring).
 strFixturePath = ""
+strUrlMapPath = ""
 Dim i
 For i = 4 To WScript.Arguments.Count - 1
   If Left(WScript.Arguments(i), 10) = "--fixture:" Then
     strFixturePath = Mid(WScript.Arguments(i), 11)
+  End If
+  If Left(WScript.Arguments(i), 8) = "/urlmap:" Then
+    strUrlMapPath = Mid(WScript.Arguments(i), 9)
   End If
 Next
 If strFixturePath = "" Then
@@ -435,7 +443,50 @@ For intI = 0 To intCount - 1
   strContent = strContent & arrNames(intI) & "|" & arrHashes(intI) & "|" & arrSizes(intI) & vbCrLf
 Next
 
+' ---------------------------------------------------------------------
+' The url map for the coupled download (plan 33-03, /urlmap: mode): a
+' name-TAB-url pair per files-map entry, written ONLY in API mode (a
+' fixture carries no url fields) and ONLY after the whole set validated.
+' Every token URL is consumed by this run's download and dies with the
+' TEMP artifact - the manifest above stays url-free (ACQ-01, T-33-09).
+' ---------------------------------------------------------------------
+
+Dim strUrlMapContent
+strUrlMapContent = ""
+If strResolvedUuid <> "" And strUrlMapPath <> "" Then
+  Dim strMapName, oMapEntry, strMapUrl
+  For Each strMapName In oFiles.Keys
+    Set oMapEntry = oFiles.Item(strMapName)
+    If Not oMapEntry.Exists("url") Then
+      WScript.Echo("ERROR: rejected entry (url field missing in API mode): " & strMapName)
+      WScript.Quit(1)
+    End If
+    strMapUrl = CStr(oMapEntry.Item("url"))
+    If strMapUrl = "" Then
+      WScript.Echo("ERROR: rejected entry (empty url field in API mode): " & strMapName)
+      WScript.Quit(1)
+    End If
+    strUrlMapContent = strUrlMapContent & strMapName & vbTab & strMapUrl & vbCrLf
+  Next
+End If
+
 WriteTextFile1252 strOutManifest, strContent
+
+If strUrlMapContent <> "" Then
+  On Error Resume Next
+  WriteTextFile1252 strUrlMapPath, strUrlMapContent
+  If Err.Number <> 0 Then
+    On Error Goto 0
+    ' Fail-closed whole resolve: a url-map write failure must not leave a
+    ' fresh manifest without its coupled download input
+    If objFso.FileExists(strOutManifest) Then
+      objFso.DeleteFile strOutManifest, True
+    End If
+    WScript.Echo("ERROR: could not write the url map: " & strUrlMapPath)
+    WScript.Quit(1)
+  End If
+  On Error Goto 0
+End If
 WScript.Quit(0)
 
 ' ---------------------------------------------------------------------

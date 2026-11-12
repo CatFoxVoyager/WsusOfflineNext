@@ -25,7 +25,17 @@
 #
 # Hygiene (T-33-09): the url map and the downloader list files carry
 # token URL material and are deleted on EVERY exit path - success,
-# failure, or abort.
+# failure, or abort. The downloader run logs (aria2 echoes the full URI
+# of every attempt, wget -nv echoes the full URL of every transfer) land
+# in the SPOOL SCRATCH (aria2-run.log / wget-run.log beside the audited
+# files/ dir), never in the persistent download log (ACQ-01, live-UAT 33
+# finding #5: the 2026-11-12 15:29 run leaked glued token URIs into
+# log/download.log through the wget -a channel). A downloader list shape
+# pin (can-fail) validates the written lists BEFORE any downloader runs:
+# every URI line must match the frozen scheme+charset grammar and every
+# output path must be an indented out= continuation - a glued or
+# multi-token line refuses the acquisition fail-closed with nothing
+# downloaded.
 #
 # Failure discipline: recoverable failures log + increment_error_count
 # and abort the SECTION (the engine continues, the error tally reports
@@ -92,6 +102,8 @@ function uup_download_and_verify ()
     local row_count=0 aria_rows=0 wget_rows=0
     local aria_bin="" aria_opts=()
     local wget_bin="" wget_opts=()
+    local spool_scratch="" aria_run_log="" wget_run_log=""
+    local pin_bad=0 pin_total=0 pin_match=0 pin_expect=0
 
     if [[ ! -s "${manifest}" ]]
     then
@@ -115,6 +127,17 @@ function uup_download_and_verify ()
     : > "${uup_section_aria}"
     : > "${uup_section_aria_http}"
     : > "${uup_section_wget}"
+
+    # The downloader run logs live in the SPOOL SCRATCH (the audited
+    # files/ dir's parent), truncated per acquisition: the LAST run's
+    # downloader output stays available for post-mortem there while the
+    # persistent download log never receives token URL material (ACQ-01,
+    # live-UAT 33 finding #5)
+    spool_scratch="$(dirname "${files_dir}")"
+    aria_run_log="${spool_scratch}/aria2-run.log"
+    wget_run_log="${spool_scratch}/wget-run.log"
+    : > "${aria_run_log}"
+    : > "${wget_run_log}"
 
     # The media budget precedes ANY download (ACQ-05, DEC-33-07: warn
     # only). The figures come verbatim from the manifest meta rows -
@@ -185,6 +208,48 @@ function uup_download_and_verify ()
             printf '%s\n  out=%s\n' "${http_url}" "${sorted_name}" >> "${uup_section_aria_http}"
         done < "${uup_section_join_sorted}"
 
+        # The downloader list shape pin (live-UAT 33 finding #5, can-fail):
+        # the written lists are validated BEFORE any downloader runs. The
+        # aria lists must carry exactly 2 lines per payload - a URI line
+        # matching the frozen scheme+charset grammar (no whitespace, no
+        # backslash, no second token riding the line) and an indented
+        # out= continuation; the wget list exactly 1 name-TAB-URI line per
+        # payload. Any other line shape (a glued mega-URI fragment, a bare
+        # local path) refuses the acquisition fail-closed with NOTHING
+        # downloaded. Diagnostics carry counts only, never line content
+        # (ACQ-01).
+        pin_bad=0
+        pin_expect=$(( aria_rows * 2 ))
+        pin_total="$(wc -l < "${uup_section_aria}")"
+        pin_match="$(grep -cE '^https?://[A-Za-z0-9._~:/?&=%+-]+$' "${uup_section_aria}" || true)"
+        if (( pin_total != pin_expect )) || (( pin_match != aria_rows ))
+        then
+            pin_bad=1
+        fi
+        pin_total="$(wc -l < "${uup_section_aria_http}")"
+        pin_match="$(grep -cE '^https?://[A-Za-z0-9._~:/?&=%+-]+$' "${uup_section_aria_http}" || true)"
+        if (( pin_total != pin_expect )) || (( pin_match != aria_rows ))
+        then
+            pin_bad=1
+        fi
+        pin_match="$(grep -cE '^  out=[A-Za-z0-9._-]+$' "${uup_section_aria}" || true)"
+        if (( pin_match != aria_rows ))
+        then
+            pin_bad=1
+        fi
+        pin_match="$(grep -cE '^  out=[A-Za-z0-9._-]+$' "${uup_section_aria_http}" || true)"
+        if (( pin_match != aria_rows ))
+        then
+            pin_bad=1
+        fi
+        if (( pin_bad == 1 ))
+        then
+            uup_section_cleanup
+            log_error_message "The downloader list shape pin refused the acquisition - a download list carries a line outside the frozen URI/continuation grammar (glued token, bare path, or second URI on one line). Nothing was downloaded."
+            increment_error_count
+            return 1
+        fi
+
         # The big payloads download resume-tuned via aria2 (ACQ-02). The
         # binary must exist: the bash engine's aria2 arrives through the
         # package check (30-check-needed-applications) - there is no
@@ -205,12 +270,12 @@ function uup_download_and_verify ()
         fi
         aria_opts=( "${aria2c_uup_options[@]}" )
         log_info_message "Downloading ${aria_rows} big upgrade payload(s) resume-tuned via aria2..."
-        if ! "${aria_bin}" "${aria_opts[@]}" -i "${uup_section_aria}" -d "${files_dir}"
+        if ! "${aria_bin}" "${aria_opts[@]}" -i "${uup_section_aria}" -d "${files_dir}" > "${aria_run_log}" 2>&1
         then
             # https-first, one bounded http fallback (DEC-33-15,
             # legitimized by the end-to-end sha256 audit below)
             log_info_message "https token URLs failed - falling back to the original http URLs once (DEC-33-15, legitimized by the end-to-end sha256 audit)"
-            if ! "${aria_bin}" "${aria_opts[@]}" -i "${uup_section_aria_http}" -d "${files_dir}"
+            if ! "${aria_bin}" "${aria_opts[@]}" -i "${uup_section_aria_http}" -d "${files_dir}" >> "${aria_run_log}" 2>&1
             then
                 uup_section_cleanup
                 log_error_message "The big UUP payload download failed on both schemes - acquisition aborted"
@@ -220,21 +285,33 @@ function uup_download_and_verify ()
         fi
     fi
 
-    # The small payloads download with wget -c (resumable) and the log
-    # bound to the download log
+    # The small payloads download with wget -c (resumable). The wget list
+    # gets its own shape pin (same grammar; runs before THIS downloader -
+    # a wget-only set still validates) and wget's console output (-nv
+    # echoes the full token URL of every transfer) is confined to the
+    # spool scratch run log, never the persistent download log (ACQ-01,
+    # live-UAT 33 finding #5)
     wget_rows="$(grep -c . "${uup_section_wget}" || true)"
     if (( wget_rows > 0 ))
     then
+        pin_total="$(wc -l < "${uup_section_wget}")"
+        pin_match="$(grep -cE $'^[A-Za-z0-9._-]+\thttps?://[A-Za-z0-9._~:/?&=%+-]+$' "${uup_section_wget}" || true)"
+        if (( pin_total != wget_rows )) || (( pin_match != wget_rows ))
+        then
+            uup_section_cleanup
+            log_error_message "The downloader list shape pin refused the acquisition - the wget list carries a line outside the frozen name-TAB-URI grammar. Nothing was downloaded."
+            increment_error_count
+            return 1
+        fi
         wget_bin="${UUP_WGET_BIN:-wget}"
         wget_opts=( "${wget_uup_options[@]}" )
-        wget_opts+=( "--append-output=${logfile}" )
         while IFS=$'\t' read -r wname wurl
         do
-            if ! "${wget_bin}" "${wget_opts[@]}" -O "${files_dir}/${wname}" "${wurl}"
+            if ! "${wget_bin}" "${wget_opts[@]}" -O "${files_dir}/${wname}" "${wurl}" >> "${wget_run_log}" 2>&1
             then
                 wurl_http="${wurl/https:\/\//http://}"
                 log_info_message "https failed for ${wname} - http fallback (DEC-33-15)"
-                if ! "${wget_bin}" "${wget_opts[@]}" -O "${files_dir}/${wname}" "${wurl_http}"
+                if ! "${wget_bin}" "${wget_opts[@]}" -O "${files_dir}/${wname}" "${wurl_http}" >> "${wget_run_log}" 2>&1
                 then
                     uup_section_cleanup
                     log_error_message "The download of ${wname} failed on both schemes - acquisition aborted"

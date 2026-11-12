@@ -252,6 +252,10 @@ if [[ "${mode}" == "ALWAYS-FAILS" ]]
 then
     exit 1
 fi
+if [[ -n "${STUB_CAPTURE:-}" && -n "${list}" ]]
+then
+    cp "${list}" "${STUB_CAPTURE}"
+fi
 echo "ARIA2-STUB-DOWNLOAD"
 exit 0
 STUB
@@ -442,7 +446,7 @@ else
     exit 1
 fi
 budget_line="$(grep -n 'BUDGET:' "${tmp_dir}/orch.log" | head -1 | cut -d: -f1)"
-stub_line="$(grep -n 'ARIA2-STUB-DOWNLOAD' "${tmp_dir}/orch.log" | head -1 | cut -d: -f1)"
+stub_line="$(grep -n 'resume-tuned via aria2' "${tmp_dir}/orch.log" | head -1 | cut -d: -f1)"
 if [[ -z "${budget_line}" || -z "${stub_line}" ]] || (( budget_line >= stub_line )); then
     printf 'FAIL: the budget line must precede the first downloader invocation\n'
     cat "${tmp_dir}/orch.log"
@@ -450,7 +454,10 @@ if [[ -z "${budget_line}" || -z "${stub_line}" ]] || (( budget_line >= stub_line
 fi
 battery_pass=$(( battery_pass + 1 ))
 expect_contains "${tmp_dir}/orch.log" "Audit passed" "the hash gate runs over the orchestrated spool"
-expect_contains "${tmp_dir}/orch.log" "WGET-STUB-DOWNLOAD" "the small payload list goes through wget"
+# The downloader console markers land in the SPOOL SCRATCH run logs
+# (live-UAT 33 finding #5 token confinement), not in the engine stdout
+expect_contains "${spool_e}/aria2-run.log" "ARIA2-STUB-DOWNLOAD" "the aria2 console output lands in the spool scratch aria2-run.log"
+expect_contains "${spool_e}/wget-run.log" "WGET-STUB-DOWNLOAD" "the small payload list goes through wget (output in the scratch run log)"
 if [[ ! -f "${files_e}/big.esd" || ! -f "${files_e}/small.cab" ]]; then
     printf 'FAIL: the orchestration must not move spool files\n'
     exit 1
@@ -513,6 +520,95 @@ fi
 errors_g=$(( runtime_errors - errors_before_g ))
 assert_eq "${errors_g}" "1" "the both-schemes failure increments exactly one error"
 echo "[G] loud abort, url map deleted on the failure path."
+
+# -----------------------------------------------------------------------
+# G2. Downloader list shape pin can-fail (live-UAT 33 finding #5): a
+#     glued multi-token URL (local paths riding the URI line) must refuse
+#     the acquisition BEFORE any downloader runs, on both list sides.
+# -----------------------------------------------------------------------
+echo "--- Section G2: downloader list shape pin can-fail (aria + wget sides) ---"
+
+export STUB_MODE="OK"
+build_urlmap_hostile_aria() {
+    local out="$1"
+    printf 'small.cab\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000&P2=404&P3=2&P4=sigsmall\n' > "${out}"
+    printf 'big.esd\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000&P2=404&P3=2&P4=sigbig C:\\Users\\x\\AppData\\Local\\Temp\\wou-upgrade-spool\\url-map.tmp C:\\Users\\x\\AppData\\Local\\Temp\\wou-upgrade-spool\\filesd:\n' >> "${out}"
+}
+build_urlmap_hostile_wget() {
+    local out="$1"
+    printf 'small.cab\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000&P2=404&P3=2&P4=sigsmall C:\\Users\\x\\AppData\\Local\\Temp\\wou-upgrade-spool\\filesd:\n' > "${out}"
+    printf 'big.esd\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000&P2=404&P3=2&P4=sigbig\n' >> "${out}"
+}
+
+for hostile_case in aria wget
+do
+    spool_p="${tmp_dir}/spool-pin-${hostile_case}"
+    files_p="${spool_p}/files"
+    mkdir -p "${files_p}"
+    cp "${big_file}" "${files_p}/big.esd"
+    cp "${small_file}" "${files_p}/small.cab"
+    if [[ "${hostile_case}" == "aria" ]]
+    then
+        build_urlmap_hostile_aria "${spool_p}/url-map.tmp"
+    else
+        build_urlmap_hostile_wget "${spool_p}/url-map.tmp"
+    fi
+    errors_before_p="${runtime_errors}"
+    if uup_download_and_verify "${manifest_d}" "${spool_p}/url-map.tmp" "${files_p}" > "${tmp_dir}/orch-pin-${hostile_case}.log" 2>&1
+    then
+        printf 'FAIL: the glued %s-side URL must be refused by the shape pin\n' "${hostile_case}"
+        cat "${tmp_dir}/orch-pin-${hostile_case}.log"
+        exit 1
+    fi
+    battery_pass=$(( battery_pass + 1 ))
+    expect_contains "${tmp_dir}/orch-pin-${hostile_case}.log" "shape pin refused" "the ${hostile_case}-side refusal names the shape pin"
+    expect_absent "${tmp_dir}/orch-pin-${hostile_case}.log" "STUB-DOWNLOAD" "the ${hostile_case}-side pin refuses BEFORE any downloader runs"
+    if [[ -f "${spool_p}/url-map.tmp" ]]; then
+        printf 'FAIL: the pin refusal path must delete the url map too\n'
+        exit 1
+    fi
+    errors_p=$(( runtime_errors - errors_before_p ))
+    assert_eq "${errors_p}" "1" "the ${hostile_case}-side pin refusal increments exactly one error"
+done
+echo "[G2] glued aria-side and wget-side URLs refused fail-closed before any downloader ran."
+
+# -----------------------------------------------------------------------
+# G3. Downloader output confined to the spool scratch + the mandated
+#     list shape (live-UAT 33 finding #5 token hygiene)
+# -----------------------------------------------------------------------
+echo "--- Section G3: downloader output confinement + list shape ---"
+
+spool_t="${tmp_dir}/spool-hygiene"
+files_t="${spool_t}/files"
+mkdir -p "${files_t}"
+cp "${big_file}" "${files_t}/big.esd"
+cp "${small_file}" "${files_t}/small.cab"
+build_urlmap "${spool_t}/url-map.tmp"
+export STUB_CAPTURE="${tmp_dir}/aria-list-capture.txt"
+if uup_download_and_verify "${manifest_d}" "${spool_t}/url-map.tmp" "${files_t}" > "${tmp_dir}/orch-hy.log" 2>&1
+then
+    battery_pass=$(( battery_pass + 1 ))
+else
+    printf 'FAIL: the hygiene case must end green over matching stubs:\n'
+    cat "${tmp_dir}/orch-hy.log"
+    exit 1
+fi
+expect_contains "${spool_t}/aria2-run.log" "ARIA2-STUB-DOWNLOAD" "the aria2 console output lands in the spool scratch aria2-run.log"
+expect_contains "${spool_t}/wget-run.log" "WGET-STUB-DOWNLOAD" "the wget console output lands in the spool scratch wget-run.log"
+expect_absent "${tmp_dir}/orch-hy.log" "P1=" "no token URL material reaches the engine log"
+expect_absent "${tmp_dir}/orch-hy.log" "STUB-DOWNLOAD" "no downloader console output reaches the engine log"
+# The written aria list: URI line + indented out= continuation (the
+# mandated aria2 -i shape, byte-checked here)
+if grep -qE '^https?://[A-Za-z0-9._~:/?&=%+-]+$' "${STUB_CAPTURE}"; then
+    battery_pass=$(( battery_pass + 1 ))
+else
+    printf 'FAIL: the aria list URI line must match the frozen grammar\n'
+    cat "${STUB_CAPTURE}"
+    exit 1
+fi
+expect_contains "${STUB_CAPTURE}" "  out=big.esd" "the aria list carries the indented out= continuation"
+unset STUB_CAPTURE || true
+echo "[G3] downloader output confined to the spool scratch, mandated list shape pinned."
 
 # -----------------------------------------------------------------------
 # H. aria2 unavailable - never a silent downgrade of a multi-GiB payload

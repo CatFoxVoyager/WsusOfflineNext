@@ -91,6 +91,11 @@ wimlib-imagex export "$metadata" 3 ISODIR/sources/install.esd "$editionName" \
 # sources\boot.wim - setup.exe refuses to run without it (0x80070002,
 # live UAT 2026-11-11); --boot marks the exported image bootable
 wimlib-imagex export "$firstMetadata" 1 ISODIR/sources/boot.wim "Windows Setup Media" --boot
+# setup.exe further requires the boot.wim FIRST image to carry the setup
+# flag in its WIM metadata (0x8030002F "reconfigure your boot.wim file to
+# use the flag 9 settings for the first image" - live UAT 2026-11-12);
+# wimlib sets image properties through the info verb (1.14.5)
+wimlib-imagex info ISODIR/sources/boot.wim 1 --image-property FLAGS=9
 ```
 
 `--ref` globs are exactly what DISM lacks - they resolve the external blob references
@@ -99,7 +104,11 @@ the Windows wimlib build's `--ref` IS the glob form (there is no `--ref-glob` th
 its glob rejects `[eE]` character classes and `..` path segments (plain `*.esd`
 patterns against clean absolute paths only - Windows globbing is case-insensitive so
 the .ESD payload files are covered), and component-cab extraction uses the in-box
-`System32\expand.exe` (no cabextract on Windows generators). The assembly needs NO
+`System32\expand.exe` (no cabextract on Windows generators). The flag-set step is
+measured live too: `info WIM 1 --image-property FLAGS=9` prints `Setting the FLAGS
+property of image 1 to "9".`, and the plain `info` census then reports a `Flags: 9`
+line where the flag-less image reported none - the census line is the shipped
+fail-closed verification (assembly refused unless it reads exactly 9). The assembly needs NO
 elevation - the DEC-33-13 targeted-RunAs policy (built for in-box DISM) has no surface
 on the shipped path; its fail-closed refusal discipline is preserved on every
 tool-gate failure.

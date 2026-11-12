@@ -21,7 +21,10 @@ REM   - client\upgrade\26200-x64\en-us\sources\install.esd present:
 REM     sources\setup.exe must exist non-empty, sources\boot.wim must
 REM     exist non-empty and read back a >=1-image wimlib info census
 REM     (the live-UAT 2026-11-11 finding: setup.exe refuses a boot.wim-
-REM     less scaffold with 0x80070002), the staged manifest meta rows
+REM     less scaffold with 0x80070002), the first image must report the
+REM     setup flag as Flags: 9 in the same census (the live-UAT
+REM     2026-11-12 finding: setup.exe refuses a flag-less first image
+REM     with 0x8030002F), the staged manifest meta rows
 REM     must parse (uuid + totals present), and the integrity class file
 REM     must exist (created after staging, ACQ-04)
 REM   - absent: media absence is legitimate ONLY under the consigned
@@ -138,6 +141,18 @@ if exist "%MEDIA%\sources\install.esd" (
     echo FAIL: sources\boot.wim carries !M_BOOTCOUNT! image^(s^), expected at least 1
     goto Fail
   )
+  rem The boot.wim flag-9 leg (the live-UAT 2026-11-12 0x8030002F finding):
+  rem setup.exe requires the FIRST image to carry the setup FLAGS metadata;
+  rem the same wimlib info census reports it as a Flags line (a flag-less
+  rem image reports none - measured live on the staged 26200 media).
+  set "M_BOOTFLAG="
+  for /F "usebackq delims=" %%L in (`""!M_WIMLIB!" info "%MEDIA%\sources\boot.wim" ^| %SystemRoot%\System32\findstr.exe /B /C:"Flags:""`) do (
+    for /F "tokens=2 delims=: " %%z in ("%%L") do set "M_BOOTFLAG=%%z"
+  )
+  if not "!M_BOOTFLAG!"=="9" (
+    echo FAIL: sources\boot.wim first image reports Flags !M_BOOTFLAG!, expected 9 ^(setup.exe dies with 0x8030002F^)
+    goto Fail
+  )
   set "M_UUID="
   set "M_TOTAL_BYTES="
   set "M_TOTAL_MIB="
@@ -167,7 +182,7 @@ if exist "%MEDIA%\sources\install.esd" (
     echo FAIL: the integrity class carries no hashdeep header
     goto Fail
   )
-  echo [MEDIA 4] PASS ^(media uuid !M_UUID!, totals !M_TOTAL_BYTES! bytes / !M_TOTAL_MIB! MiB, boot.wim !M_BOOTCOUNT! image^(s^), db class present^)
+  echo [MEDIA 4] PASS ^(media uuid !M_UUID!, totals !M_TOTAL_BYTES! bytes / !M_TOTAL_MIB! MiB, boot.wim !M_BOOTCOUNT! image^(s^) flag !M_BOOTFLAG!, db class present^)
 ) else (
   echo [MEDIA 4] no staged media - the consigned contingency is the only legitimate absence...
   %SystemRoot%\System32\findstr.exe /C:"CONSIGN-DISM-FAILURE" "%RECORD%" >nul 2>&1

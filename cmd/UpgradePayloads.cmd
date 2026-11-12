@@ -580,6 +580,10 @@ rem   6. wimlib export of metadata ESD index 1 (the setup image) into
 rem      sources\boot.wim with --boot, then its own >=1-image census (the
 rem      live-UAT 2026-11-11 finding: setup.exe refuses a scaffold without
 rem      sources\boot.wim with error 0x80070002)
+rem   7. the boot.wim setup flag: wimlib info --image-property FLAGS=9 on
+rem      index 1, verified by the Flags census (the live-UAT 2026-11-12
+rem      finding: setup.exe refuses a flag-less first image with error
+rem      0x8030002F)
 rem Every failure: loud ERROR line, stage dir cleaned, NOTHING staged.
 set "UUP_AM_PAYLOAD=%~1"
 set "UUP_AM_STAGE=%~2"
@@ -826,9 +830,39 @@ if !UUP_AM_BOOTCOUNT! LSS 1 (
   echo ERROR: boot.wim census - !UUP_AM_BOOTCOUNT! image^(s^), expected at least 1 - assembly refused.
   goto :UpgAssembleFail
 )
+
+rem --- boot.wim setup flag: FLAGS=9 on the first image ---
+rem The live-UAT finding (2026-11-12): setup.exe refuses a boot.wim whose
+rem FIRST image carries no FLAGS metadata with 0x8030002F ("reconfigure
+rem your boot.wim file to use the flag 9 settings for the first image").
+rem The flag lives in the image metadata, not the file layout, so export
+rem --boot alone cannot carry it; the vendored wimlib (1.14.5) sets image
+rem properties through info --image-property (measured live on the staged
+rem 26200 media: "Setting the FLAGS property of image 1 to ""9""." and the
+rem plain info census then reports a "Flags: 9" line where the flag-less
+rem image reported none). Fail-closed: a flag-set refusal and any census
+rem value other than 9 both refuse the assembly, nothing staged.
+echo Info: Setting the setup flag 9 on the boot.wim first image ...
+call "!UUP_AM_WIMLIB!" info "!UUP_AM_STAGE!\sources\boot.wim" 1 --image-property FLAGS=9 >nul
+if errorlevel 1 (
+  echo ERROR: setting the boot.wim setup flag 9 failed - assembly refused, nothing staged.
+  goto :UpgAssembleFail
+)
+set "UUP_AM_BOOTFLAG="
+for /F "usebackq delims=" %%L in (`""!UUP_AM_WIMLIB!" info "!UUP_AM_STAGE!\sources\boot.wim" ^| %SystemRoot%\System32\findstr.exe /B /C:"Flags:""`) do (
+  for /F "tokens=2 delims=: " %%z in ("%%L") do set "UUP_AM_BOOTFLAG=%%z"
+)
+if "!UUP_AM_BOOTFLAG!"=="" (
+  echo ERROR: the census could not read the Flags of sources\boot.wim - assembly refused.
+  goto :UpgAssembleFail
+)
+if not "!UUP_AM_BOOTFLAG!"=="9" (
+  echo ERROR: boot.wim census - the first image reports Flags !UUP_AM_BOOTFLAG!, expected 9 ^(0x8030002F^) - assembly refused.
+  goto :UpgAssembleFail
+)
 del "!UUP_AM_META!" >nul 2>&1
 del "!UUP_AM_META!.srt" >nul 2>&1
-echo Info: Media assembly complete - !UUP_AM_IMAGECOUNT! edition image^(s^) in sources\install.esd + sources\boot.wim with !UUP_AM_BOOTCOUNT! image^(s^), census green.
+echo Info: Media assembly complete - !UUP_AM_IMAGECOUNT! edition image^(s^) in sources\install.esd + sources\boot.wim with !UUP_AM_BOOTCOUNT! image^(s^) flag !UUP_AM_BOOTFLAG!, census green.
 exit /b 0
 
 :UpgAssembleFail

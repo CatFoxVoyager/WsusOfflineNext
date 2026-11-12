@@ -232,11 +232,18 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\wimlib-stub.cmd" echo )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="info" (
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="BOOT-INFO-FAILS" if /i "%%~nx2"=="boot.wim" exit /b 1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%~4"=="--image-property" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     if /i "%%STUB_WIMLIB_MODE%%"=="FLAG-SET-FAILS" exit /b 1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     if not "%%STUB_WIMLIB_MODE%%"=="FLAG-NO-SET" ^>"%%~2.flag9" echo 9
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     echo Setting the FLAGS property of image %%~3 to "9".
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   if "%%~3"=="" (
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     set /a STUB_N=0
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     for /F "usebackq delims=" %%%%L in ("%%~2") do set /a STUB_N+=1
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     echo WIM header
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     echo Image Count: !STUB_N!
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     if exist "%%~2.flag9" echo Flags: 9
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     exit /b 0
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   for /F "delims=_-" %%%%x in ("%%~nx2") do echo Edition ID: %%%%x
@@ -470,6 +477,25 @@ findstr /C:"census could not read the Image Count of sources\boot.wim" "%SB_OUT%
 if errorlevel 1 (echo FAIL: the boot.wim census refusal must be named loudly & type "%SB_OUT%\asm12c.out" & goto Fail)
 set "STUB_WIMLIB_MODE=OK"
 echo PASS: case 12b - boot.wim emission proven can-fail both ways, stage cleaned.
+
+echo --- Case 12c: boot.wim setup flag can-fail pair - flag-set refusal / flag missing from census ---
+set "STUB_WIMLIB_MODE=FLAG-SET-FAILS"
+set "ASM_STAGE=%SANDBOX%\stage12c"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm12d.out" 2>&1
+set "ASM12D_RC=!errorlevel!"
+if "%ASM12D_RC%"=="0" (echo FAIL: a failing boot.wim flag set must refuse the assembly & goto Fail)
+if exist "%ASM_STAGE%" (echo FAIL: the flag-set refusal must clean the stage dir - nothing may linger & goto Fail)
+findstr /C:"setting the boot.wim setup flag 9 failed" "%SB_OUT%\asm12d.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the flag-set refusal must be named loudly & type "%SB_OUT%\asm12d.out" & goto Fail)
+set "STUB_WIMLIB_MODE=FLAG-NO-SET"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm12e.out" 2>&1
+set "ASM12E_RC=!errorlevel!"
+if "%ASM12E_RC%"=="0" (echo FAIL: a flag-less boot.wim census must refuse the assembly & goto Fail)
+if exist "%ASM_STAGE%" (echo FAIL: the flag-census refusal must clean the stage dir - nothing may linger & goto Fail)
+findstr /C:"could not read the Flags of sources\boot.wim" "%SB_OUT%\asm12e.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the flag-census refusal must be named loudly & type "%SB_OUT%\asm12e.out" & goto Fail)
+set "STUB_WIMLIB_MODE=OK"
+echo PASS: case 12c - the boot.wim setup flag proven can-fail both ways, stage cleaned.
 
 echo --- Case 13: :UpgAuthenticodeGate refuse-staging trio ---
 set "AG_STAGE=%SANDBOX%\stage13"

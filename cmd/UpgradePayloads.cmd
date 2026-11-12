@@ -45,8 +45,11 @@ rem             (System32 expand.exe + wimlib capture - the converter v0.7.3
 rem             sequence), applies metadata ESD index 1 into the stage dir
 rem             (media scaffold), exports each edition metadata ESD's index 3
 rem             into sources\install.esd with --ref globs (the step in-box
-rem             DISM provably cannot do: CONSIGN-DISM-FAILURE, 33-01), and
-rem             runs the wimlib info census. NO ELEVATION anywhere: wimlib
+rem             DISM provably cannot do: CONSIGN-DISM-FAILURE, 33-01), exports
+rem             the setup image (index 1) as sources\boot.wim with --boot
+rem             (the live-UAT 2026-11-11 finding: setup.exe refuses a
+rem             boot.wim-less scaffold with 0x80070002), and runs the wimlib
+rem             info censuses. NO ELEVATION anywhere: wimlib
 rem             is a userspace tool, so the DEC-33-13 targeted-elevation
 rem             policy (the RunAs wrapper + owner UAC click the plan built
 rem             around in-box DISM) has NO surface on this path - the
@@ -572,7 +575,11 @@ rem      wimlib capture, the converter v0.7.3 sequence, exclusions kept)
 rem   3. wimlib apply of metadata ESD index 1 (the media scaffold)
 rem   4. wimlib export of each edition metadata ESD index 3 into
 rem      sources\install.esd with --ref globs (appending indexes)
-rem   5. the census (wimlib info Image Count vs the edition count)
+rem   5. the install.esd census (wimlib info Image Count vs the edition count)
+rem   6. wimlib export of metadata ESD index 1 (the setup image) into
+rem      sources\boot.wim with --boot, then its own >=1-image census (the
+rem      live-UAT 2026-11-11 finding: setup.exe refuses a scaffold without
+rem      sources\boot.wim with error 0x80070002)
 rem Every failure: loud ERROR line, stage dir cleaned, NOTHING staged.
 set "UUP_AM_PAYLOAD=%~1"
 set "UUP_AM_STAGE=%~2"
@@ -791,9 +798,37 @@ if !UUP_AM_IMAGECOUNT! NEQ !UUP_AM_EDITIONS! (
   echo ERROR: census mismatch - install.esd carries !UUP_AM_IMAGECOUNT! image^(s^), expected !UUP_AM_EDITIONS! - assembly refused.
   goto :UpgAssembleFail
 )
+
+rem --- boot.wim export: the setup image (index 1) becomes sources\boot.wim ---
+rem The live-UAT finding (2026-11-11): setup.exe refuses a scaffold that
+rem carries no sources\boot.wim (0x80070002 "unable to locate required
+rem installation file [boot.wim]") - real Microsoft media carries the setup
+rem image exactly there. The scaffold apply already proved index 1's
+rem resources are internal to the metadata ESD, so unlike the install.esd
+rem export no --ref globs are needed. --boot marks the exported image
+rem bootable in the new WIM (wimlib export usage line: [--boot]) - the
+rem convention real boot.wim files carry.
+echo Info: Exporting the setup boot image to sources\boot.wim ...
+call "!UUP_AM_WIMLIB!" export "!UUP_AM_PAYLOAD!\!UUP_AM_FIRST!" 1 "!UUP_AM_STAGE!\sources\boot.wim" "Windows Setup Media" --boot >nul
+if errorlevel 1 (
+  echo ERROR: boot.wim export failed - assembly refused, nothing staged.
+  goto :UpgAssembleFail
+)
+set "UUP_AM_BOOTCOUNT="
+for /F "usebackq delims=" %%L in (`""!UUP_AM_WIMLIB!" info "!UUP_AM_STAGE!\sources\boot.wim" ^| %SystemRoot%\System32\findstr.exe /B /C:"Image Count:""`) do (
+  for /F "tokens=3 delims=: " %%z in ("%%L") do set "UUP_AM_BOOTCOUNT=%%z"
+)
+if "!UUP_AM_BOOTCOUNT!"=="" (
+  echo ERROR: the census could not read the Image Count of sources\boot.wim - assembly refused.
+  goto :UpgAssembleFail
+)
+if !UUP_AM_BOOTCOUNT! LSS 1 (
+  echo ERROR: boot.wim census - !UUP_AM_BOOTCOUNT! image^(s^), expected at least 1 - assembly refused.
+  goto :UpgAssembleFail
+)
 del "!UUP_AM_META!" >nul 2>&1
 del "!UUP_AM_META!.srt" >nul 2>&1
-echo Info: Media assembly complete - !UUP_AM_IMAGECOUNT! edition image^(s^) in sources\install.esd, census green.
+echo Info: Media assembly complete - !UUP_AM_IMAGECOUNT! edition image^(s^) in sources\install.esd + sources\boot.wim with !UUP_AM_BOOTCOUNT! image^(s^), census green.
 exit /b 0
 
 :UpgAssembleFail

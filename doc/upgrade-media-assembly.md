@@ -23,10 +23,15 @@ one document-only fallback:
         /Index:1 /ApplyDir:D:\wou-spike\<media-root>
    ```
 
-   This produces the complete setup tree in one step: `setup.exe` at the media root,
+   This produces the setup tree in one step: `setup.exe` at the media root,
    `sources\` with the full setup binary set (setup.exe, setuphost.exe, setupprep.exe,
    setupcore.dll, dism.exe, ...), `boot\`, `efi\`, `support\`, `autorun.inf`,
-   `bootmgr`, `bootmgr.efi`. Authenticode census of the scaffold's executables:
+   `bootmgr`, `bootmgr.efi` - but NOT `sources\boot.wim`. The applied index 1 IS the
+   setup/boot image itself; real Microsoft media additionally carries it EXPORTED as
+   `sources\boot.wim`, and without that file setup.exe refuses to run (0x80070002
+   "unable to locate required installation file [boot.wim]" - measured live in owner
+   UAT, 2026-11-11). The assembly stage therefore emits it by export (wimlib sequence
+   below). Authenticode census of the scaffold's executables:
    207 embedded-signed; the 51 unsigned rows are `.mui` resources plus one
    catalog-signed migration DLL - the normal Microsoft media signing convention.
    Core setup binaries are all embedded-signed (`bin\sigcheck64.exe -accepteula -q
@@ -82,6 +87,10 @@ wimlib-imagex apply "$firstMetadata" 1 ISODIR --no-acls --no-attributes
 # then one export per edition metadata ESD; repeated export appends indexes
 wimlib-imagex export "$metadata" 3 ISODIR/sources/install.esd "$editionName" \
   --solid --ref="$uupDir"/*.esd
+# the setup image (index 1) also IS the media's boot image: emit it as
+# sources\boot.wim - setup.exe refuses to run without it (0x80070002,
+# live UAT 2026-11-11); --boot marks the exported image bootable
+wimlib-imagex export "$firstMetadata" 1 ISODIR/sources/boot.wim "Windows Setup Media" --boot
 ```
 
 `--ref` globs are exactly what DISM lacks - they resolve the external blob references

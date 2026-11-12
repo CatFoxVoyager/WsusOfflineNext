@@ -43,10 +43,15 @@ REM Plan 33-04 cases (assembly + staging + purge), appended, existing
 REM cases untouched:
 REM   Case 10: :UpgAssembleMedia positive - stub wimlib over a 2-edition
 REM           fixture spool, matching SHA256SUMS pins, census + scaffold +
-REM           exclusion-pattern cab skip
+REM           boot.wim + exclusion-pattern cab skip
 REM   Case 11: tampered vendored-tool pin = fail-closed refusal, nothing
 REM           staged (T-33-SC)
 REM   Case 12: failing stub export = loud refusal, stage dir cleaned
+REM   Case 12b: boot.wim emission can-fail pair (the live-UAT 2026-11-11
+REM           finding: setup.exe refuses a boot.wim-less scaffold with
+REM           0x80070002) - a stub refusing the boot.wim export refuses the
+REM           assembly; a stub whose info fails on boot.wim (corrupt
+REM           census) refuses the assembly; stage cleaned both ways
 REM   Case 13: :UpgAuthenticodeGate trio - Signed stub passes, Unsigned
 REM           .exe row refuses, .mui convention row allowed and counted
 REM   Case 14: staging-order - a corrupted spool fails the hash gate
@@ -221,10 +226,12 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\wimlib-stub.cmd" echo )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="export" (
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="EXPORT-FAILS" exit /b 1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="BOOT-EXPORT-FAILS" if "%%~3"=="1" exit /b 1
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   ^>^>"%%~4" echo %%~5
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
 >>"%SB_STUBS%\wimlib-stub.cmd" echo )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="info" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="BOOT-INFO-FAILS" if /i "%%~nx2"=="boot.wim" exit /b 1
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   if "%%~3"=="" (
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     set /a STUB_N=0
 >>"%SB_STUBS%\wimlib-stub.cmd" echo     for /F "usebackq delims=" %%%%L in ("%%~2") do set /a STUB_N+=1
@@ -410,6 +417,7 @@ call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MAN
 if errorlevel 1 (echo FAIL: the stubbed assembly must end green over matching pins & type "%SB_OUT%\asm10.out" & goto Fail)
 if not exist "%ASM_STAGE%\sources\setup.exe" (echo FAIL: the assembly must produce the scaffold sources\setup.exe & type "%SB_OUT%\asm10.out" & goto Fail)
 if not exist "%ASM_STAGE%\sources\install.esd" (echo FAIL: the assembly must produce sources\install.esd & goto Fail)
+if not exist "%ASM_STAGE%\sources\boot.wim" (echo FAIL: the assembly must produce sources\boot.wim - the live-UAT 0x80070002 finding & goto Fail)
 findstr /C:"Media assembly complete - 2 edition image" "%SB_OUT%\asm10.out" >nul 2>&1
 if errorlevel 1 (echo FAIL: the census must report 2 images for the 2-edition fixture & type "%SB_OUT%\asm10.out" & goto Fail)
 findstr /C:"Converted 0 component cab" "%SB_OUT%\asm10.out" >nul 2>&1
@@ -443,6 +451,25 @@ findstr /C:"install.esd export failed" "%SB_OUT%\asm12.out" >nul 2>&1
 if errorlevel 1 (echo FAIL: the export failure must be named loudly & type "%SB_OUT%\asm12.out" & goto Fail)
 set "STUB_WIMLIB_MODE=OK"
 echo PASS: case 12 - failing export refused loudly, stage dir cleaned.
+
+echo --- Case 12b: boot.wim emission can-fail pair - export refusal / unreadable census ---
+set "STUB_WIMLIB_MODE=BOOT-EXPORT-FAILS"
+set "ASM_STAGE=%SANDBOX%\stage12b"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm12b.out" 2>&1
+set "ASM12B_RC=!errorlevel!"
+if "%ASM12B_RC%"=="0" (echo FAIL: a failing boot.wim export must refuse the assembly & goto Fail)
+if exist "%ASM_STAGE%" (echo FAIL: the boot.wim-export refusal must clean the stage dir - nothing may linger & goto Fail)
+findstr /C:"boot.wim export failed" "%SB_OUT%\asm12b.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the boot.wim export refusal must be named loudly & type "%SB_OUT%\asm12b.out" & goto Fail)
+set "STUB_WIMLIB_MODE=BOOT-INFO-FAILS"
+call cmd\UpgradePayloads.cmd :UpgAssembleMedia "%ASM_SPOOL%" "%ASM_STAGE%" "%MANIFEST%" >"%SB_OUT%\asm12c.out" 2>&1
+set "ASM12C_RC=!errorlevel!"
+if "%ASM12C_RC%"=="0" (echo FAIL: an unreadable boot.wim census must refuse the assembly & goto Fail)
+if exist "%ASM_STAGE%" (echo FAIL: the boot.wim-census refusal must clean the stage dir - nothing may linger & goto Fail)
+findstr /C:"census could not read the Image Count of sources\boot.wim" "%SB_OUT%\asm12c.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the boot.wim census refusal must be named loudly & type "%SB_OUT%\asm12c.out" & goto Fail)
+set "STUB_WIMLIB_MODE=OK"
+echo PASS: case 12b - boot.wim emission proven can-fail both ways, stage cleaned.
 
 echo --- Case 13: :UpgAuthenticodeGate refuse-staging trio ---
 set "AG_STAGE=%SANDBOX%\stage13"
@@ -553,7 +580,7 @@ echo PASS: case 17 - media integrity class created with the hashdeep header.
 
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 17 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 18 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

@@ -18,9 +18,12 @@ REM      wimlib GPLv3 note and the exFAT/FAT32 guidance (ACQ-05)
 REM
 REM Branch on the staged media (T-33-11/T-33-12 honesty):
 REM   - client\upgrade\26200-x64\en-us\sources\install.esd present:
-REM     sources\setup.exe must exist non-empty, the staged manifest meta
-REM     rows must parse (uuid + totals present), and the integrity class
-REM     file must exist (created after staging, ACQ-04)
+REM     sources\setup.exe must exist non-empty, sources\boot.wim must
+REM     exist non-empty and read back a >=1-image wimlib info census
+REM     (the live-UAT 2026-11-11 finding: setup.exe refuses a boot.wim-
+REM     less scaffold with 0x80070002), the staged manifest meta rows
+REM     must parse (uuid + totals present), and the integrity class file
+REM     must exist (created after staging, ACQ-04)
 REM   - absent: media absence is legitimate ONLY under the consigned
 REM     contingency - the record must carry the CONSIGN-DISM-FAILURE
 REM     marker; a missing record always fails
@@ -102,6 +105,39 @@ if exist "%MEDIA%\sources\install.esd" (
       goto Fail
     )
   )
+  rem The boot.wim leg (the live-UAT 2026-11-11 finding): setup.exe needs
+  rem sources\boot.wim - the gate refuses its absence fail-closed and runs
+  rem the vendored wimlib info census over it (userspace tool, no elevation).
+  if not exist "%MEDIA%\sources\boot.wim" (
+    echo FAIL: the staged media carries no sources\boot.wim ^(setup.exe would die with 0x80070002^)
+    goto Fail
+  )
+  for /F %%F in ("%MEDIA%\sources\boot.wim") do (
+    if %%~zF EQU 0 (
+      echo FAIL: sources\boot.wim is empty
+      goto Fail
+    )
+  )
+  set "M_WIMLIB="
+  if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set "M_WIMLIB=bin\wimlib\x64\wimlib-imagex.exe") else (
+    if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" (set "M_WIMLIB=bin\wimlib\x64\wimlib-imagex.exe") else (set "M_WIMLIB=bin\wimlib\x86\wimlib-imagex.exe")
+  )
+  if not exist "!M_WIMLIB!" (
+    echo FAIL: the vendored wimlib is missing: !M_WIMLIB!
+    goto Fail
+  )
+  set "M_BOOTCOUNT="
+  for /F "usebackq delims=" %%L in (`""!M_WIMLIB!" info "%MEDIA%\sources\boot.wim" ^| %SystemRoot%\System32\findstr.exe /B /C:"Image Count:""`) do (
+    for /F "tokens=3 delims=: " %%z in ("%%L") do set "M_BOOTCOUNT=%%z"
+  )
+  if "!M_BOOTCOUNT!"=="" (
+    echo FAIL: the wimlib info census could not read sources\boot.wim ^(corrupt or unreadable^)
+    goto Fail
+  )
+  if !M_BOOTCOUNT! LSS 1 (
+    echo FAIL: sources\boot.wim carries !M_BOOTCOUNT! image^(s^), expected at least 1
+    goto Fail
+  )
   set "M_UUID="
   set "M_TOTAL_BYTES="
   set "M_TOTAL_MIB="
@@ -131,7 +167,7 @@ if exist "%MEDIA%\sources\install.esd" (
     echo FAIL: the integrity class carries no hashdeep header
     goto Fail
   )
-  echo [MEDIA 4] PASS ^(media uuid !M_UUID!, totals !M_TOTAL_BYTES! bytes / !M_TOTAL_MIB! MiB, db class present^)
+  echo [MEDIA 4] PASS ^(media uuid !M_UUID!, totals !M_TOTAL_BYTES! bytes / !M_TOTAL_MIB! MiB, boot.wim !M_BOOTCOUNT! image^(s^), db class present^)
 ) else (
   echo [MEDIA 4] no staged media - the consigned contingency is the only legitimate absence...
   %SystemRoot%\System32\findstr.exe /C:"CONSIGN-DISM-FAILURE" "%RECORD%" >nul 2>&1

@@ -1746,7 +1746,21 @@ rem shared DLDR_* defaults set above are consumed NOWHERE in this region -
 rem the UUP stage carries its own resume-tuned option set, and no 32-bit
 rem arithmetic touches any byte size here. No selection or fu_media 0 =
 rem this region is a byte-level no-op (statu quo).
-if defined TMP_UPG_TARGETS call cmd\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
+rem CWD NOTE (live-UAT 2026-11-11 finding): the engine cwd is cmd\ - the
+rem cd /D "%~dp0" near the top of this script - so the acquisition call
+rem below MUST resolve the acquisition module as a SIBLING of this script.
+rem Two resolution rules are load-bearing here: a cmd\-prefixed form would
+rem resolve cmd\cmd\UpgradePayloads.cmd, which does not exist; and a BARE
+rem sibling name must NOT be used either - on hardened hosts
+rem (NoDefaultCurrentDirectoryInExePath=1) cmd does not search the current
+rem directory for command names at all. The explicit .\ form resolves from
+rem the engine cwd under both command-search policies. A call of a missing
+rem path fails SILENTLY on this cmd build (localized "path not found" on
+rem stderr, errorlevel stays 0), so the || UpgradeError guard never fired
+rem on the broken form: the run completed normally with zero acquisition
+rem lines. Pinned from the engine cwd by case 18 of
+rem tests\verify-upgrade-payloads.cmd.
+if defined TMP_UPG_TARGETS call .\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
 rem === end UUP upgrade payloads ===
 
 

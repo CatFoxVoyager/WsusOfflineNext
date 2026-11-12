@@ -64,6 +64,15 @@ REM           pair removed exactly while the staged-uuid keep set survives /
 REM           failed-staging simulation removes nothing
 REM   Case 17: :UpgCreateMediaDb - the staged fixture produces the db file
 REM           carrying the hashdeep header
+REM   Case 18: engine-cwd call-site contract (live-UAT 2026-11-11 finding):
+REM           the acquisition call line in cmd\DownloadUpdates.cmd must
+REM           resolve from the ENGINE cwd (cmd\, set by cd /D "%~dp0"),
+REM           never only from the repo root - the cases above run from the
+REM           root, which is exactly what masked the cmd\-prefixed silent
+REM           no-op. The case extracts the real call token from the engine
+REM           script, proves it resolves from a cmd\-shaped sandbox (a
+REM           sibling stub answers on stdout), and keeps the
+REM           missing-target control as the can-fail bite.
 REM
 REM NOTE (DEC-33-13 supersession): the assembly runs the VENDORED wimlib
 REM (owner decision 2026-11-11), a userspace tool - there is NO elevation
@@ -604,9 +613,83 @@ findstr /B /C:"%%%%" "%DB17%" >nul 2>&1
 if errorlevel 1 (echo FAIL: the db file must carry the hashdeep header & goto Fail)
 echo PASS: case 17 - media integrity class created with the hashdeep header.
 
+echo --- Case 18: engine-cwd call-site contract - the acquisition call must resolve from cmd\, not only from the repo root
+rem Live-UAT 2026-11-11: the engine runs with cwd=cmd\ (cd /D "%~dp0" near
+rem the top of cmd\DownloadUpdates.cmd). Every other case in this battery
+rem drives the acquisition entry from the REPO ROOT, which is exactly what
+rem masked the cmd\-prefixed call path: it resolves from the root, but from
+rem cmd\ it would name cmd\cmd\UpgradePayloads.cmd - and this cmd build's
+rem call of a missing path fails SILENTLY (errorlevel stays 0), so the
+rem engine completed normally with zero acquisition lines. The extracted
+rem token must be an explicit relative path (.\ name), not a bare command
+rem name: under NoDefaultCurrentDirectoryInExePath=1 cmd does not search
+rem the cwd for command names, so a bare form breaks on hardened hosts -
+rem the .\ form resolves from the cwd under both command-search policies.
+rem This case reads the REAL call line from the engine script, extracts
+rem the path token after the call keyword, and proves it resolves from a
+rem cmd\-shaped sandbox cwd. No network, no real acquisition: the sibling
+rem target is a local stub whose stdout marker is the resolution witness.
+set "CS_LINES=0"
+for /F %%c in ('findstr /C:"UpgradePayloads.cmd :UpgSectionEntry" "%REPO_ROOT%\cmd\DownloadUpdates.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "CS_LINES=%%c"
+if not "%CS_LINES%"=="1" (
+  echo FAIL: case 18 - exactly one acquisition call site expected in cmd\DownloadUpdates.cmd, got %CS_LINES%.
+  goto Fail
+)
+set "CS_LINE="
+for /F "delims=" %%L in ('findstr /C:"UpgradePayloads.cmd :UpgSectionEntry" "%REPO_ROOT%\cmd\DownloadUpdates.cmd"') do set "CS_LINE=%%L"
+set "CS_TOKS=!CS_LINE:||=!"
+set "CS_AFTER_CALL=0"
+set "CS_PATH="
+for %%T in (!CS_TOKS!) do (
+  if "!CS_AFTER_CALL!"=="1" if not defined CS_PATH set "CS_PATH=%%T"
+  if /I "%%T"=="call" set "CS_AFTER_CALL=1"
+)
+if not defined CS_PATH (
+  echo FAIL: case 18 - no path token found after the call keyword in the acquisition call line.
+  goto Fail
+)
+if not exist "%REPO_ROOT%\cmd\!CS_PATH!" (
+  echo FAIL: case 18 - the call path token "!CS_PATH!" does not resolve from the engine cwd cmd\ - this is the live-UAT 2026-11-11 silent no-op ^(observed call exit 0 on the missing path^).
+  goto Fail
+)
+set "CS18_DIR=%SANDBOX%\engine-cwd18"
+mkdir "%CS18_DIR%" 2>nul
+>"%CS18_DIR%\UpgradePayloads.cmd" (
+  echo @echo off
+  echo echo CALLSITE-RESOLVED-FROM-ENGINE-CWD
+  echo exit /b 0
+)
+pushd "%CS18_DIR%"
+call !CS_PATH! :UpgSectionEntry >"%SB_OUT%\cs18a.out" 2>&1
+set "CS18A_RC=!errorlevel!"
+popd
+findstr /C:"CALLSITE-RESOLVED-FROM-ENGINE-CWD" "%SB_OUT%\cs18a.out" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: case 18 - the call did not reach the sibling target when issued from the engine-shaped cwd.
+  type "%SB_OUT%\cs18a.out"
+  goto Fail
+)
+echo   ok 18a: sibling stub reached from the engine-shaped cwd ^(rc %CS18A_RC%^).
+rem Bite control: the SAME call with the sibling target deleted must NOT
+rem resolve. On this cmd build the call exits 0 even for a missing path -
+rem the signature is the ABSENT marker, never the errorlevel. This control
+rem is what keeps the 18a assertion able to fail.
+del "%CS18_DIR%\UpgradePayloads.cmd"
+pushd "%CS18_DIR%"
+call !CS_PATH! :UpgSectionEntry >"%SB_OUT%\cs18b.out" 2>&1
+set "CS18B_RC=!errorlevel!"
+popd
+findstr /C:"CALLSITE-RESOLVED-FROM-ENGINE-CWD" "%SB_OUT%\cs18b.out" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: case 18 - the missing-target control unexpectedly resolved; the 18a assertion would be vacuous.
+  goto Fail
+)
+echo   ok 18b: missing-target control stays unresolved ^(observed rc %CS18B_RC% - the silent-call signature^).
+echo PASS: case 18 - acquisition call site resolves from the engine cwd.
+
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 18 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 19 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

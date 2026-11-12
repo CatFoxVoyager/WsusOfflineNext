@@ -82,6 +82,16 @@ REM           fixture seam with the table variable as the only delta:
 REM           wired = target line + BUDGET line + spool manifest; unset =
 REM           byte-level no-op. 19c is the engine source pin (shape,
 REM           exactly-one, ..\ value, precedes the call line).
+REM   Case 20: engine placement pin (live-UAT 2026-11-12 finding #4, owner
+REM           decision): the chosen-target derivation + the table wiring +
+REM           the acquisition call must sit BEFORE both SkipSuperseded
+REM           exits in cmd\DownloadUpdates.cmd - the /skipdynamic jump AND
+REM           the valid-list jump ("Found valid list of superseded
+REM           updates"). Line-order pins over content anchors (no line
+REM           numbers), the derivation-before-shield-feed order, and the
+REM           exactly-one column-0 derivation-site census. Keeps the
+REM           today-failure shape (reuse and /skipdynamic runs silently
+REM           acquired nothing) from regressing.
 REM
 REM NOTE (DEC-33-13 supersession): the assembly runs the VENDORED wimlib
 REM (owner decision 2026-11-11), a userspace tool - there is NO elevation
@@ -789,9 +799,49 @@ if not "%ORDER_OK%"=="1" (
 )
 echo PASS: case 19 - engine table wiring pinned, functional pair proven can-fail.
 
+echo --- Case 20: acquisition block sits ahead of both SkipSuperseded exits (live-UAT 2026-11-12 finding #4)
+rem The real engine runs of 2026-11-12: every pass carrying a valid existing
+rem ExcludeList-superseded list logged "Found valid list of superseded
+rem updates" and jumped to SkipSuperseded PAST the derivation and the
+rem acquisition call - the acquisition was reachable only on fresh-catalog
+rem runs (two silent runs as evidence). Owner decision (finding #4): the
+rem derivation + wiring + call MOVE ahead of BOTH SkipSuperseded exits; the
+rem expensive superseded determination stays skippable behind the valid-list
+rem jump. This case pins the placement in the engine source by line ORDER
+rem over content anchors (no line numbers, so they survive edits). The
+rem first goto SkipSuperseded in the file is the /skipdynamic exit - the
+rem derivation and the call preceding it implies the later valid-list exit
+rem is covered too. Also pinned: the derivation precedes its first
+rem downstream consumer (the shield feed loop), and the move left exactly
+rem one column-0 derivation site behind (no stray duplicate).
+set "DER20="
+set "CALL20="
+set "SKIP20="
+set "FEED20="
+for /F "tokens=1 delims=:" %%i in ('findstr /N /B /C:"set TMP_UPG_TARGETS=" "%REPO_ROOT%\cmd\DownloadUpdates.cmd"') do if not defined DER20 set "DER20=%%i"
+for /F "tokens=1 delims=:" %%i in ('findstr /N /C:"call .\UpgradePayloads.cmd :UpgSectionEntry" "%REPO_ROOT%\cmd\DownloadUpdates.cmd"') do if not defined CALL20 set "CALL20=%%i"
+for /F "tokens=1 delims=:" %%i in ('findstr /N /C:"goto SkipSuperseded" "%REPO_ROOT%\cmd\DownloadUpdates.cmd"') do if not defined SKIP20 set "SKIP20=%%i"
+for /F "tokens=1 delims=:" %%i in ('findstr /N /C:"StaticUpdateIds-BuildUpgrades.txt)" "%REPO_ROOT%\cmd\DownloadUpdates.cmd"') do if not defined FEED20 set "FEED20=%%i"
+if not defined DER20 (echo FAIL: case 20 - the derivation site vanished from the engine & goto Fail)
+if not defined CALL20 (echo FAIL: case 20 - the acquisition call site vanished from the engine & goto Fail)
+if not defined SKIP20 (echo FAIL: case 20 - the SkipSuperseded exits vanished from the engine & goto Fail)
+if not defined FEED20 (echo FAIL: case 20 - the shield feed consumption site vanished from the engine & goto Fail)
+if %DER20% GEQ %SKIP20% (echo FAIL: case 20 - the derivation ^(line %DER20%^) must sit BEFORE the first SkipSuperseded exit ^(line %SKIP20%^) - reuse and /skipdynamic passes otherwise never acquire & goto Fail)
+if %CALL20% GEQ %SKIP20% (echo FAIL: case 20 - the acquisition call ^(line %CALL20%^) must sit BEFORE the first SkipSuperseded exit ^(line %SKIP20%^) & goto Fail)
+if %DER20% GEQ %FEED20% (echo FAIL: case 20 - the derivation ^(line %DER20%^) must precede the shield feed consumption ^(line %FEED20%^) & goto Fail)
+echo   ok 20a: derivation line %DER20% and call line %CALL20% precede the first SkipSuperseded exit line %SKIP20% and the shield feed line %FEED20%.
+set "DER20_COUNT=0"
+for /F %%c in ('findstr /B /C:"set TMP_UPG_TARGETS=" "%REPO_ROOT%\cmd\DownloadUpdates.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "DER20_COUNT=%%c"
+if not "%DER20_COUNT%"=="1" (
+  echo FAIL: case 20 - the move must leave exactly one column-0 derivation site, got %DER20_COUNT%.
+  goto Fail
+)
+echo   ok 20b: exactly one column-0 derivation site.
+echo PASS: case 20 - acquisition block pinned ahead of both SkipSuperseded exits.
+
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 20 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 22 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

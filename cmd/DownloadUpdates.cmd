@@ -1469,6 +1469,80 @@ if "%SECONLY%"=="1" (
 ) else (
   set SUSED_LIST=..\exclude\ExcludeList-superseded.txt
 )
+
+rem *** OS Upgrades chosen-target selection (DEC-32-04, DEC-32-08) ***
+rem Reads ONLY the flat twin sh/os-upgrades.ini - never the sectioned
+rem Windows10Versions.ini (the flat reader would conflate the grammars).
+rem Grammar per line: ^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$ ; ANY
+rem violating line voids the ENTIRE selection (T-32-01, T-26-03 rule) -
+rem invalid means NO selection, never a partial one. Absent file, bad
+rem grammar or empty result all leave TMP_UPG_TARGETS undefined, which
+rem keeps the shield feed byte-identical to the unfiltered statu quo
+rem (owner-locked non-regression). NOTE: the findstr $ anchor matches
+rem CRLF lines as emitted by the canonical .NET writer on Windows hosts;
+rem an LF-only hand-edited file voids to no-selection (fail-closed).
+set TMP_UPG_TARGETS=
+set TMP_UPG_SEL_BAD=
+if exist ..\sh\os-upgrades.ini (
+  findstr /R /V /C:"^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$" /C:"^$" "..\sh\os-upgrades.ini" >nul 2>&1
+  if not errorlevel 1 set TMP_UPG_SEL_BAD=1
+  if not defined TMP_UPG_SEL_BAD (
+    for /F "delims=_ tokens=1" %%i in (..\sh\os-upgrades.ini) do (
+      if "!TMP_UPG_TARGETS!"=="" (
+        set TMP_UPG_TARGETS=%%i
+      ) else (
+        echo "!TMP_UPG_TARGETS!" | find "%%i" >nul 2>&1
+        if errorlevel 1 set TMP_UPG_TARGETS=!TMP_UPG_TARGETS! %%i
+      )
+    )
+  )
+)
+
+rem === UUP upgrade payloads Phase 33 ===
+rem Acquisition call site (plan 33-03, ACQ-02 + the sha256 half of ACQ-04):
+rem with a chosen-target selection AND a fu_media=1 upgrades.txt row
+rem (DEC-33-09), cmd\UpgradePayloads.cmd resolves the payload manifest via
+rem the coupled one-shot resolver twin and downloads the DEC-33-14 spool
+rem resume-tuned, then hash-verifies the whole spool fail-closed. The
+rem shared DLDR_* defaults set above are consumed NOWHERE in this region -
+rem the UUP stage carries its own resume-tuned option set, and no 32-bit
+rem arithmetic touches any byte size here. No selection or fu_media 0 =
+rem this region is a byte-level no-op (statu quo).
+rem CWD NOTE (live-UAT 2026-11-11 finding): the engine cwd is cmd\ - the
+rem cd /D "%~dp0" near the top of this script - so the acquisition call
+rem below MUST resolve the acquisition module as a SIBLING of this script.
+rem Two resolution rules are load-bearing here: a cmd\-prefixed form would
+rem resolve cmd\cmd\UpgradePayloads.cmd, which does not exist; and a BARE
+rem sibling name must NOT be used either - on hardened hosts
+rem (NoDefaultCurrentDirectoryInExePath=1) cmd does not search the current
+rem directory for command names at all. The explicit .\ form resolves from
+rem the engine cwd under both command-search policies. A call of a missing
+rem path fails SILENTLY on this cmd build (localized "path not found" on
+rem stderr, errorlevel stays 0), so the || UpgradeError guard never fired
+rem on the broken form: the run completed normally with zero acquisition
+rem lines. Pinned from the engine cwd by case 18 of
+rem tests\verify-upgrade-payloads.cmd.
+rem WIRING (live-UAT 2026-11-12 finding #3): the acquisition module reads
+rem the upgrade table from this variable at its section entry with no
+rem default there, so pin the table HERE - engine-cwd-relative ..\ form
+rem (cwd is cmd\, the same idiom as the selection default) - because it
+rem feeds the fu_media check that picks the acquisition target. Pinned by
+rem case 19 of tests\verify-upgrade-payloads.cmd (source pin + functional
+rem pair). PLACEMENT (live-UAT 2026-11-12 finding #4, owner decision): this
+rem whole block - the chosen-target derivation directly above INCLUDED -
+rem sits BEFORE both SkipSuperseded exits (the /skipdynamic jump and the
+rem valid-list jump), so the acquisition runs on EVERY qualifying pass:
+rem reuse runs ("Found valid list of superseded updates") and /skipdynamic
+rem runs included, not only fresh-catalog runs - on 2026-11-12 every real
+rem engine run took that jump and silently acquired nothing. The expensive
+rem superseded DETERMINATION itself stays skippable behind the valid-list
+rem jump - this block consumes only the selection twin, the upgrades.txt
+rem table and the fu_media column, never the superseded lists. Pinned by
+rem case 20 of tests\verify-upgrade-payloads.cmd (source-order pins).
+set "WOU_UPGRADE_TABLE=..\client\UpdateTable\upgrades.txt"
+if defined TMP_UPG_TARGETS call .\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
+rem === end UUP upgrade payloads ===
+
 if "%4"=="/skipdynamic" (
   echo Skipping unneeded determination of superseded updates.
   call :Log "Info: Skipped unneeded determination of superseded updates"
@@ -1661,34 +1735,6 @@ del "%TEMP%\BundledUpdateRevisionAndFileIds.txt"
 del "%TEMP%\UpdateCabExeIdsAndLocations.txt"
 del "%TEMP%\existing-bundle-revision-ids.txt"
 
-rem *** OS Upgrades chosen-target selection (DEC-32-04, DEC-32-08) ***
-rem Reads ONLY the flat twin sh/os-upgrades.ini - never the sectioned
-rem Windows10Versions.ini (the flat reader would conflate the grammars).
-rem Grammar per line: ^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$ ; ANY
-rem violating line voids the ENTIRE selection (T-32-01, T-26-03 rule) -
-rem invalid means NO selection, never a partial one. Absent file, bad
-rem grammar or empty result all leave TMP_UPG_TARGETS undefined, which
-rem keeps the shield feed byte-identical to the unfiltered statu quo
-rem (owner-locked non-regression). NOTE: the findstr $ anchor matches
-rem CRLF lines as emitted by the canonical .NET writer on Windows hosts;
-rem an LF-only hand-edited file voids to no-selection (fail-closed).
-set TMP_UPG_TARGETS=
-set TMP_UPG_SEL_BAD=
-if exist ..\sh\os-upgrades.ini (
-  findstr /R /V /C:"^[0-9][0-9]*_[A-Za-z0-9][A-Za-z0-9]*=on$" /C:"^$" "..\sh\os-upgrades.ini" >nul 2>&1
-  if not errorlevel 1 set TMP_UPG_SEL_BAD=1
-  if not defined TMP_UPG_SEL_BAD (
-    for /F "delims=_ tokens=1" %%i in (..\sh\os-upgrades.ini) do (
-      if "!TMP_UPG_TARGETS!"=="" (
-        set TMP_UPG_TARGETS=%%i
-      ) else (
-        echo "!TMP_UPG_TARGETS!" | find "%%i" >nul 2>&1
-        if errorlevel 1 set TMP_UPG_TARGETS=!TMP_UPG_TARGETS! %%i
-      )
-    )
-  )
-)
-
 rem *** Step 5: Apply ExcludeList-superseded-exclude(-seconly).txt [target: ExcludeList-superseded(-seconly).txt] ***
 
 if exist ..\exclude\ExcludeList-superseded-exclude.txt copy /Y ..\exclude\ExcludeList-superseded-exclude.txt "%TEMP%\ExcludeList-superseded-exclude.txt" >nul
@@ -1735,46 +1781,6 @@ for /F "tokens=3,4 delims=," %%c in (..\client\static\StaticUpdateIds-BuildUpgra
     echo windows10.0-%%c>>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"
   )
 )
-
-rem === UUP upgrade payloads Phase 33 ===
-rem Acquisition call site (plan 33-03, ACQ-02 + the sha256 half of ACQ-04):
-rem with a chosen-target selection AND a fu_media=1 upgrades.txt row
-rem (DEC-33-09), cmd\UpgradePayloads.cmd resolves the payload manifest via
-rem the coupled one-shot resolver twin and downloads the DEC-33-14 spool
-rem resume-tuned, then hash-verifies the whole spool fail-closed. The
-rem shared DLDR_* defaults set above are consumed NOWHERE in this region -
-rem the UUP stage carries its own resume-tuned option set, and no 32-bit
-rem arithmetic touches any byte size here. No selection or fu_media 0 =
-rem this region is a byte-level no-op (statu quo).
-rem CWD NOTE (live-UAT 2026-11-11 finding): the engine cwd is cmd\ - the
-rem cd /D "%~dp0" near the top of this script - so the acquisition call
-rem below MUST resolve the acquisition module as a SIBLING of this script.
-rem Two resolution rules are load-bearing here: a cmd\-prefixed form would
-rem resolve cmd\cmd\UpgradePayloads.cmd, which does not exist; and a BARE
-rem sibling name must NOT be used either - on hardened hosts
-rem (NoDefaultCurrentDirectoryInExePath=1) cmd does not search the current
-rem directory for command names at all. The explicit .\ form resolves from
-rem the engine cwd under both command-search policies. A call of a missing
-rem path fails SILENTLY on this cmd build (localized "path not found" on
-rem stderr, errorlevel stays 0), so the || UpgradeError guard never fired
-rem on the broken form: the run completed normally with zero acquisition
-rem lines. Pinned from the engine cwd by case 18 of
-rem tests\verify-upgrade-payloads.cmd.
-rem WIRING (live-UAT 2026-11-12 finding #3): the acquisition module reads
-rem the upgrade table from this variable at its section entry with no
-rem default there, so pin the table HERE - engine-cwd-relative ..\ form
-rem (cwd is cmd\, the same idiom as the selection default) - because it
-rem feeds the fu_media check that picks the acquisition target. Pinned by
-rem case 19 of tests\verify-upgrade-payloads.cmd (source pin + functional
-rem pair). NOTE from the same live UAT: this line only runs when the
-rem superseded determination above runs - a valid existing
-rem ExcludeList-superseded list jumps to SkipSuperseded past this whole
-rem region (no selection derived, no acquisition at all; every real
-rem engine run of 2026-11-12 took that jump).
-set "WOU_UPGRADE_TABLE=..\client\UpdateTable\upgrades.txt"
-if defined TMP_UPG_TARGETS call .\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
-rem === end UUP upgrade payloads ===
-
 
 if exist ..\exclude\ExcludeList-superseded-exclude-seconly.txt (
   type ..\exclude\ExcludeList-superseded-exclude-seconly.txt >>"%TEMP%\ExcludeList-superseded-exclude-seconly.txt"

@@ -26,6 +26,16 @@ rem           < -> wget. STRING compare only (digit-count, then a zero-padded
 rem           lexicographic compare): NEVER signed 32-bit arithmetic on raw
 rem           byte sizes - the measured 10902883408-byte total silently
 rem           wraps set /a (DEC-33-02 extension).
+rem   :UpgPinDownloadLists - the downloader list shape pin (live-UAT 33
+rem           finding #5, can-fail): validates the WRITTEN aria2/aria2-http/
+rem           wget lists BEFORE any downloader runs - every URI line must
+rem           match the frozen scheme+charset grammar (no whitespace, no
+rem           backslash, no second token riding the line) and every output
+rem           path must be an indented "  out=<name>" continuation line.
+rem           A glued mega-URI, a bare local path, or a space-separated
+rem           second URI fails the pin and the acquisition refuses
+rem           fail-closed with NOTHING downloaded. Diagnostics carry line
+rem           counts only, never line content (ACQ-01).
 rem   :UpgHashGate <manifest> <spool_dir> [hashdeep]
 rem           - fail-closed whole-spool audit against a hashdeep expectation
 rem             generated from the manifest in TEMP; ANY mismatch = loud
@@ -208,6 +218,52 @@ if "!UUP_CS_PAD:~-9!" GEQ "104857600" (
 )
 exit /b 0
 
+:UpgPinDownloadLists
+rem === downloader list shape pin (live-UAT 33 finding #5, can-fail) ===
+rem Validates the WRITTEN downloader lists before any downloader runs:
+rem   aria2 lists (2 lines per payload): a URI line matching the frozen
+rem     scheme+charset grammar - http(s):// followed ONLY by
+rem     [A-Za-z0-9._~:/?&=%%+-] (no whitespace, no backslash, no second
+rem     token riding the line) - and an indented "  out=<name>" continuation;
+rem   wget list (1 line per payload): "name<TAB>URI" with the same grammar.
+rem The whole-line counts must equal the classified row counts: any other
+rem line (a glued mega-URI fragment, a bare local path, a space-separated
+rem second URI) means the input construction is broken and the acquisition
+rem refuses BEFORE any download - nothing lands in the spool (fail-closed).
+rem Diagnostics carry line counts only, never line content (ACQ-01: the
+rem lists carry token URL material).
+set /a UUP_PIN_BAD=0
+rem Line counting goes through the FULL System32 find.exe path: a
+rem POSIX-spawned session (the sandbox batteries, MSYS dev shells) resolves
+rem bare find to GNU find, which reads /c as a PATH and scans the drive -
+rem the same shadowing hazard frozen for sort.exe in :UpgAcquire (32-01).
+if !UUP_AQ_ARIA_ROWS! GTR 0 (
+  set /a UUP_PIN_EXPECT=!UUP_AQ_ARIA_ROWS! * 2
+  for /F %%C in ('%SystemRoot%\System32\find.exe /c /v "" ^<"!UUP_AQ_ARIA!"') do set /a UUP_PIN_TOTAL=%%C
+  for /F %%C in ('findstr /R /C:"^https*://[A-Za-z0-9._~:/?&=%%+-]*$" "!UUP_AQ_ARIA!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_TOTAL! NEQ !UUP_PIN_EXPECT! set /a UUP_PIN_BAD+=1
+  if !UUP_PIN_MATCH! NEQ !UUP_AQ_ARIA_ROWS! set /a UUP_PIN_BAD+=1
+  for /F %%C in ('%SystemRoot%\System32\find.exe /c /v "" ^<"!UUP_AQ_ARIA_HTTP!"') do set /a UUP_PIN_TOTAL=%%C
+  for /F %%C in ('findstr /R /C:"^https*://[A-Za-z0-9._~:/?&=%%+-]*$" "!UUP_AQ_ARIA_HTTP!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_TOTAL! NEQ !UUP_PIN_EXPECT! set /a UUP_PIN_BAD+=1
+  if !UUP_PIN_MATCH! NEQ !UUP_AQ_ARIA_ROWS! set /a UUP_PIN_BAD+=1
+  for /F %%C in ('findstr /R /C:"^  out=[A-Za-z0-9._-][A-Za-z0-9._-]*$" "!UUP_AQ_ARIA!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_MATCH! NEQ !UUP_AQ_ARIA_ROWS! set /a UUP_PIN_BAD+=1
+  for /F %%C in ('findstr /R /C:"^  out=[A-Za-z0-9._-][A-Za-z0-9._-]*$" "!UUP_AQ_ARIA_HTTP!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_MATCH! NEQ !UUP_AQ_ARIA_ROWS! set /a UUP_PIN_BAD+=1
+)
+if !UUP_AQ_WGET_ROWS! GTR 0 (
+  for /F %%C in ('%SystemRoot%\System32\find.exe /c /v "" ^<"!UUP_AQ_WGET!"') do set /a UUP_PIN_TOTAL=%%C
+  for /F %%C in ('findstr /R /C:"^[A-Za-z0-9._-][A-Za-z0-9._-]*	https*://[A-Za-z0-9._~:/?&=%%+-]*$" "!UUP_AQ_WGET!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_TOTAL! NEQ !UUP_AQ_WGET_ROWS! set /a UUP_PIN_BAD+=1
+  if !UUP_PIN_MATCH! NEQ !UUP_AQ_WGET_ROWS! set /a UUP_PIN_BAD+=1
+)
+if !UUP_PIN_BAD! GTR 0 (
+  echo ERROR: the downloader list shape pin refused the acquisition - a download list carries a line outside the frozen URI/continuation grammar ^(glued token, bare path, or second URI on one line^). Nothing was downloaded; the acquisition fails closed.
+  exit /b 1
+)
+exit /b 0
+
 :UpgHashGate
 rem %1 = manifest, %2 = spool directory with the downloaded payloads,
 rem %3 = optional hashdeep binary override (default ..\client\bin\hashdeep
@@ -361,8 +417,13 @@ set "UUP_DLDR_COPT=--continue -x8 -s8 -j4 -k1M --file-allocation=none --max-trie
 set "UUP_DLDR_IOPT=-i"
 set "UUP_DLDR_POPT=-d"
 set "UUP_WGET_COPT=-c -nv"
-set "UUP_WGET_LOGOPT="
-if defined DOWNLOAD_LOGFILE set UUP_WGET_LOGOPT=-a "!DOWNLOAD_LOGFILE!"
+rem Token confinement (ACQ-01, live-UAT 33 finding #5): the UUP section
+rem NEVER wires wget's -a log at the persistent DOWNLOAD_LOGFILE - wget -nv
+rem echoes full token URLs (P1=..P4= material) into it (the 2026-11-12
+rem 15:29 live run leaked the glued token URIs into log\download.log
+rem through exactly that channel). The wget console is redirected into the
+rem spool scratch per call below; the aria2 console (which echoes the full
+rem URI of every attempt) is redirected into the same scratch.
 
 rem TEMP artifacts of this run - all carry token URL material and are
 rem deleted on every exit path below (T-33-09)
@@ -376,6 +437,12 @@ type nul >"!UUP_AQ_JOINSRT!"
 type nul >"!UUP_AQ_ARIA!"
 type nul >"!UUP_AQ_ARIA_HTTP!"
 type nul >"!UUP_AQ_WGET!"
+rem The downloader run logs live in the SPOOL SCRATCH (the audited files\
+rem dir's parent), truncated per acquisition: the LAST run's downloader
+rem output stays available for post-mortem there, while log\download.log
+rem (a persistent file) never receives token URL material (ACQ-01).
+type nul >"!UUP_AQ_SPOOL!\..\aria2-run.log"
+type nul >"!UUP_AQ_SPOOL!\..\wget-run.log"
 
 rem Index the url map: one variable per payload name. The names were
 rem validated against the frozen grammar by the resolver, so they are safe
@@ -431,6 +498,13 @@ if !UUP_AQ_ARIA_ROWS! GTR 0 (
   )
 )
 
+rem The downloader list shape pin (live-UAT 33 finding #5, can-fail): the
+rem written lists are validated BEFORE any downloader runs - a glued or
+rem multi-token line refuses the acquisition fail-closed with nothing
+rem downloaded, instead of feeding fake URIs to aria2/wget.
+call :UpgPinDownloadLists
+if errorlevel 1 goto :UpgAcquireFail
+
 if !UUP_AQ_ARIA_ROWS! GTR 0 (
   rem Ensure the aria2 binary: fetch through the EXISTING audited activation
   rem path when absent (T-33-SC). The sandbox battery pre-places a stub and
@@ -444,10 +518,10 @@ if !UUP_AQ_ARIA_ROWS! GTR 0 (
     goto :UpgAcquireFail
   )
   echo Info: Downloading !UUP_AQ_ARIA_ROWS! big upgrade payload^(s^) resume-tuned via aria2...
-  call "%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
+  >"!UUP_AQ_SPOOL!\..\aria2-run.log" 2>&1 call "%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
   if errorlevel 1 (
     echo Info: https token URLs failed - falling back to the original http URLs once ^(DEC-33-15, legitimized by the end-to-end sha256 audit^).
-    call "%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA_HTTP!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
+    >>"!UUP_AQ_SPOOL!\..\aria2-run.log" 2>&1 call "%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA_HTTP!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
     if errorlevel 1 goto :UpgAcquireFail
   )
 )
@@ -459,12 +533,12 @@ if !UUP_AQ_WGET_ROWS! GTR 0 (
   )
   echo Info: Downloading !UUP_AQ_WGET_ROWS! small upgrade payload^(s^) with wget -c...
   for /F "usebackq tokens=1-2 delims=	" %%w in ("!UUP_AQ_WGET!") do (
-    call "%UUP_WGET_BIN%" !UUP_WGET_COPT! !UUP_WGET_LOGOPT! -O "!UUP_AQ_SPOOL!\%%w" "%%x"
+    >>"!UUP_AQ_SPOOL!\..\wget-run.log" 2>&1 call "%UUP_WGET_BIN%" !UUP_WGET_COPT! -O "!UUP_AQ_SPOOL!\%%w" "%%x"
     if errorlevel 1 (
       set "UUP_AQ_WURL=%%x"
       set "UUP_AQ_WURL=!UUP_AQ_WURL:https://=http://!"
       echo Info: https failed for %%w - http fallback ^(DEC-33-15^).
-      call "%UUP_WGET_BIN%" !UUP_WGET_COPT! !UUP_WGET_LOGOPT! -O "!UUP_AQ_SPOOL!\%%w" "!UUP_AQ_WURL!"
+      >>"!UUP_AQ_SPOOL!\..\wget-run.log" 2>&1 call "%UUP_WGET_BIN%" !UUP_WGET_COPT! -O "!UUP_AQ_SPOOL!\%%w" "!UUP_AQ_WURL!"
       if errorlevel 1 goto :UpgAcquireFail
     )
   )

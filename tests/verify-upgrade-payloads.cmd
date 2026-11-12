@@ -213,6 +213,7 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\aria2-stub.cmd" echo if defined STUB_LIST if exist "!STUB_LIST!" findstr /C:"https://" "!STUB_LIST!" ^>nul 2^>^&1
 >>"%SB_STUBS%\aria2-stub.cmd" echo if not errorlevel 1 if /i "%%STUB_MODE%%"=="HTTPS-FAILS" exit /b 1
 >>"%SB_STUBS%\aria2-stub.cmd" echo if /i "%%STUB_MODE%%"=="ALWAYS-FAILS" exit /b 1
+>>"%SB_STUBS%\aria2-stub.cmd" echo if defined STUB_CAPTURE if defined STUB_LIST copy /y "!STUB_LIST!" "%%STUB_CAPTURE%%" ^>nul 2^>^&1
 >>"%SB_STUBS%\aria2-stub.cmd" echo echo ARIA2-STUB-DOWNLOAD
 >>"%SB_STUBS%\aria2-stub.cmd" echo exit /b 0
 >"%SB_STUBS%\wget-stub.cmd" echo @echo off
@@ -391,11 +392,15 @@ copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
 call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%SB_SPOOL%\url-map.tmp" "%SB_SPOOL%\files" >"%SB_OUT%\aq.out" 2>&1
 set "AQ_RC=!errorlevel!"
 if not "%AQ_RC%"=="0" (echo FAIL: the orchestration case must end green over matching stubs & type "%SB_OUT%\aq.out" & goto Fail)
-call :OrderOf "BUDGET:" "ARIA2-STUB-DOWNLOAD" "%SB_OUT%\aq.out"
+call :OrderOf "BUDGET:" "Info: Downloading" "%SB_OUT%\aq.out"
 if not "%ORDER_OK%"=="1" (echo FAIL: the budget line must precede the first downloader invocation & goto Fail)
 findstr /C:"Audit passed" "%SB_OUT%\aq.out" >nul 2>&1
 if errorlevel 1 (echo FAIL: the hash gate must run over the orchestrated spool & goto Fail)
-findstr /C:"WGET-STUB-DOWNLOAD" "%SB_OUT%\aq.out" >nul 2>&1
+rem The downloader console markers now land in the SPOOL SCRATCH run logs
+rem (live-UAT 33 finding #5 token confinement), not in the engine stdout.
+findstr /C:"ARIA2-STUB-DOWNLOAD" "%SB_SPOOL%\aria2-run.log" >nul 2>&1
+if errorlevel 1 (echo FAIL: the aria2 console output must land in the spool scratch aria2-run.log & goto Fail)
+findstr /C:"WGET-STUB-DOWNLOAD" "%SB_SPOOL%\wget-run.log" >nul 2>&1
 if errorlevel 1 (echo FAIL: the small payload list must go through wget & goto Fail)
 if not exist "%SB_SPOOL%\files\big.esd" (echo FAIL: the orchestration must not move spool files & goto Fail)
 if not exist "%SB_SPOOL%\files\small.cab" (echo FAIL: the orchestration must not move spool files & goto Fail)
@@ -436,6 +441,81 @@ if exist "%SB_SPOOL%\url-map.tmp" (echo FAIL: the failure path must delete the u
 call :TempArtifactCount
 if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: TEMP artifact count %TEMP_COUNT% differs from the baseline %TEMP_BASELINE% - the failure path leaked artifacts & goto Fail)
 echo PASS: case 9 - loud abort, url map deleted on the failure path.
+
+echo --- Case 9b: downloader list shape pin can-fail (aria side, live-UAT #5) ---
+set "STUB_MODE=OK"
+set "SB_SPOOL=%SANDBOX%\spool9b"
+mkdir "%SB_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
+set "URLMAP9B=%SB_FIX%\url-map-9b.tmp"
+>"%URLMAP9B%" echo small.cab!TAB!https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000^&P2=404^&P3=2^&P4=sigsmall
+>>"%URLMAP9B%" echo big.esd!TAB!https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000^&P2=404^&P3=2^&P4=sigbig C:\Users\x\AppData\Local\Temp\wou-upgrade-spool\url-map.tmp C:\Users\x\AppData\Local\Temp\wou-upgrade-spool\filesd:
+call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%URLMAP9B%" "%SB_SPOOL%\files" >"%SB_OUT%\aq9b.out" 2>&1
+set "AQ9B_RC=!errorlevel!"
+if "%AQ9B_RC%"=="0" (echo FAIL: a glued multi-token aria URL must be refused by the shape pin & goto Fail)
+findstr /C:"shape pin refused" "%SB_OUT%\aq9b.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the refusal must name the shape pin & type "%SB_OUT%\aq9b.out" & goto Fail)
+findstr /C:"STUB-DOWNLOAD" "%SB_OUT%\aq9b.out" >nul 2>&1
+if not errorlevel 1 (echo FAIL: the pin must refuse BEFORE any downloader runs & goto Fail)
+if exist "%URLMAP9B%" del "%URLMAP9B%" >nul 2>&1
+call :TempArtifactCount
+if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: the pin refusal path leaked TEMP artifacts & goto Fail)
+echo PASS: case 9b - glued aria URL refused by the shape pin before any downloader ran.
+
+echo --- Case 9c: downloader list shape pin can-fail (wget side) ---
+set "STUB_MODE=OK"
+set "SB_SPOOL=%SANDBOX%\spool9c"
+mkdir "%SB_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
+set "URLMAP9C=%SB_FIX%\url-map-9c.tmp"
+>"%URLMAP9C%" echo small.cab!TAB!https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000^&P2=404^&P3=2^&P4=sigsmall C:\Users\x\AppData\Local\Temp\wou-upgrade-spool\filesd:
+>>"%URLMAP9C%" echo big.esd!TAB!https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000^&P2=404^&P3=2^&P4=sigbig
+call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%URLMAP9C%" "%SB_SPOOL%\files" >"%SB_OUT%\aq9c.out" 2>&1
+set "AQ9C_RC=!errorlevel!"
+if "%AQ9C_RC%"=="0" (echo FAIL: a glued multi-token wget URL must be refused by the shape pin & goto Fail)
+findstr /C:"shape pin refused" "%SB_OUT%\aq9c.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the refusal must name the shape pin & type "%SB_OUT%\aq9c.out" & goto Fail)
+findstr /C:"STUB-DOWNLOAD" "%SB_OUT%\aq9c.out" >nul 2>&1
+if not errorlevel 1 (echo FAIL: the pin must refuse BEFORE any downloader runs & goto Fail)
+if exist "%URLMAP9C%" del "%URLMAP9C%" >nul 2>&1
+call :TempArtifactCount
+if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: the pin refusal path leaked TEMP artifacts & goto Fail)
+echo PASS: case 9c - glued wget URL refused by the shape pin before any downloader ran.
+
+echo --- Case 9d: downloader output confined to the spool scratch + list shape (live-UAT #5) ---
+set "STUB_MODE=OK"
+set "STUB_CAPTURE=%SB_OUT%\aria-list-capture.txt"
+set "SB_SPOOL=%SANDBOX%\spool9d"
+mkdir "%SB_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
+copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
+set "SIMLOG=%SB_FIX%\download-sim.log"
+>"%SIMLOG%" type nul
+set "DOWNLOAD_LOGFILE=%SIMLOG%"
+call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%SB_SPOOL%\url-map.tmp" "%SB_SPOOL%\files" >"%SB_OUT%\aq9d.out" 2>&1
+set "AQ9D_RC=!errorlevel!"
+if not "%AQ9D_RC%"=="0" (echo FAIL: the hygiene case must end green & type "%SB_OUT%\aq9d.out" & goto Fail)
+findstr /C:"ARIA2-STUB-DOWNLOAD" "%SB_SPOOL%\aria2-run.log" >nul 2>&1
+if errorlevel 1 (echo FAIL: the aria2 console output must land in the spool scratch aria2-run.log & goto Fail)
+findstr /C:"WGET-STUB-DOWNLOAD" "%SB_SPOOL%\wget-run.log" >nul 2>&1
+if errorlevel 1 (echo FAIL: the wget console output must land in the spool scratch wget-run.log & goto Fail)
+rem The DOWNLOAD_LOGFILE channel (persistent log) must carry NO downloader
+rem output and NO token URL material (P1=): the UUP section never wires it.
+findstr /C:"P1=" "%SIMLOG%" >nul 2>&1
+if not errorlevel 1 (echo FAIL: token material leaked into the DOWNLOAD_LOGFILE channel & goto Fail)
+findstr /C:"STUB-DOWNLOAD" "%SIMLOG%" >nul 2>&1
+if not errorlevel 1 (echo FAIL: downloader console output leaked into the DOWNLOAD_LOGFILE channel & goto Fail)
+rem The written aria list must be URI line + indented out= continuation.
+findstr /R /C:"^https*://[A-Za-z0-9._~:/?&=%%+-]*$" "%STUB_CAPTURE%" >nul 2>&1
+if errorlevel 1 (echo FAIL: the aria list URI line must match the frozen grammar & goto Fail)
+findstr /C:"  out=big.esd" "%STUB_CAPTURE%" >nul 2>&1
+if errorlevel 1 (echo FAIL: the aria list must carry the indented out= continuation & goto Fail)
+set "STUB_CAPTURE="
+set "DOWNLOAD_LOGFILE="
+echo PASS: case 9d - downloader output confined to the spool scratch, mandated list shape pinned.
 
 echo --- Case 10: :UpgAssembleMedia positive - stub wimlib, matching pins ---
 set "STUB_WIMLIB_MODE=OK"

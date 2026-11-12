@@ -1760,6 +1760,18 @@ rem stderr, errorlevel stays 0), so the || UpgradeError guard never fired
 rem on the broken form: the run completed normally with zero acquisition
 rem lines. Pinned from the engine cwd by case 18 of
 rem tests\verify-upgrade-payloads.cmd.
+rem WIRING (live-UAT 2026-11-12 finding #3): the acquisition module reads
+rem the upgrade table from this variable at its section entry with no
+rem default there, so pin the table HERE - engine-cwd-relative ..\ form
+rem (cwd is cmd\, the same idiom as the selection default) - because it
+rem feeds the fu_media check that picks the acquisition target. Pinned by
+rem case 19 of tests\verify-upgrade-payloads.cmd (source pin + functional
+rem pair). NOTE from the same live UAT: this line only runs when the
+rem superseded determination above runs - a valid existing
+rem ExcludeList-superseded list jumps to SkipSuperseded past this whole
+rem region (no selection derived, no acquisition at all; every real
+rem engine run of 2026-11-12 took that jump).
+set "WOU_UPGRADE_TABLE=..\client\UpdateTable\upgrades.txt"
 if defined TMP_UPG_TARGETS call .\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
 rem === end UUP upgrade payloads ===
 

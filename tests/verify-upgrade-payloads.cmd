@@ -73,6 +73,15 @@ REM           no-op. The case extracts the real call token from the engine
 REM           script, proves it resolves from a cmd\-shaped sandbox (a
 REM           sibling stub answers on stdout), and keeps the
 REM           missing-target control as the can-fail bite.
+REM   Case 19: engine wiring of the upgrade table (live-UAT 2026-11-12
+REM           finding #3): the engine's Phase-33 region must carry the
+REM           table wiring itself - cwd-correct ..\ form, ahead of the
+REM           acquisition call line. The functional pair (19a/19b) drives
+REM           the REAL acquisition entry from THIS battery over the golden
+REM           fixture seam with the table variable as the only delta:
+REM           wired = target line + BUDGET line + spool manifest; unset =
+REM           byte-level no-op. 19c is the engine source pin (shape,
+REM           exactly-one, ..\ value, precedes the call line).
 REM
 REM NOTE (DEC-33-13 supersession): the assembly runs the VENDORED wimlib
 REM (owner decision 2026-11-11), a userspace tool - there is NO elevation
@@ -687,9 +696,102 @@ if not errorlevel 1 (
 echo   ok 18b: missing-target control stays unresolved ^(observed rc %CS18B_RC% - the silent-call signature^).
 echo PASS: case 18 - acquisition call site resolves from the engine cwd.
 
+echo --- Case 19: engine wiring of the upgrade table (live-UAT 2026-11-12 finding #3)
+rem Two executed corrections shape this case:
+rem   1. From the engine cwd (cmd\) the acquisition chain FIRES even with
+rem      the table variable unset - the fu_media reader carries its own
+rem      cwd-relative fallback that resolves against the committed table
+rem      (probed on the pre-fix tree, 2026-11-12). The wiring is therefore
+rem      pinned as the engine-side contract - the table must be explicit
+rem      at the call site, not inherited from a reader fallback - not as
+rem      a silence fix.
+rem   2. The real engine runs of 2026-11-12 never reached the acquisition
+rem      call line at all: every pass logged "Found valid list of
+rem      superseded updates" and jumped past this whole region. That
+rem      placement question is an owner decision, escalated separately -
+rem      this case pins the wiring contract only.
+rem 19a/19b are a controlled pair over the SAME cwd: the table variable
+rem is the only delta between them. 19c is the engine source pin.
+set "SEL19=%SB_FIX%\sel-case19.ini"
+echo 26200_x64=on>"%SEL19%"
+set "SPOOL19A=%SANDBOX%\spool19a"
+set "SPOOL19B=%SANDBOX%\spool19b"
+set "WOU_UPGRADE_SEL=%SEL19%"
+set "WOU_UPGRADE_SPOOL=%SPOOL19A%"
+set "TMP_UPG_TARGETS=26200"
+set "WOU_UUP_FIXTURE=%REPO_ROOT%\tests\fixtures\uup-get-26200-en-us-multiedition.json"
+if not exist "%WOU_UUP_FIXTURE%" (
+  echo ERROR: the golden fixture is missing at "%WOU_UUP_FIXTURE%".
+  goto Fail
+)
+rem --- 19a: table wired (sandbox copy of the committed upgrades.txt) ---
+set "WOU_UPGRADE_TABLE=%UPGTAB%"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_OUT%\upg19a.out" 2>&1
+findstr /C:"acquisition target: 26200-x64 lang en-us" "%SB_OUT%\upg19a.out" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: case 19a - the fu_media chain never picked the target; the section must emit its target line ^(with the en-us default^) for a wired table.
+  type "%SB_OUT%\upg19a.out"
+  goto Fail
+)
+findstr /C:"BUDGET:" "%SB_OUT%\upg19a.out" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: case 19a - the BUDGET line must appear when the table is wired.
+  type "%SB_OUT%\upg19a.out"
+  goto Fail
+)
+if not exist "%SPOOL19A%\manifest.txt" (
+  echo FAIL: case 19a - the wired run must resolve the manifest into the spool.
+  type "%SB_OUT%\upg19a.out"
+  goto Fail
+)
+echo   ok 19a: wired table - target line + BUDGET line + spool manifest.
+rem --- 19b: the absence control - table unset (var is the only delta) ---
+set "WOU_UPGRADE_TABLE="
+set "WOU_UPGRADE_SPOOL=%SPOOL19B%"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_OUT%\upg19b.out" 2>&1
+set "U19B_RC=!errorlevel!"
+if not "%U19B_RC%"=="0" (
+  echo FAIL: case 19b - with the table unset the section must exit 0 silently, got %U19B_RC%.
+  type "%SB_OUT%\upg19b.out"
+  goto Fail
+)
+for /F %%c in ('type "%SB_OUT%\upg19b.out" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "U19B_LINES=%%c"
+if not "%U19B_LINES%"=="0" (
+  echo FAIL: case 19b - with the table unset the section must be a byte-level no-op ^(got %U19B_LINES% lines^).
+  type "%SB_OUT%\upg19b.out"
+  goto Fail
+)
+if exist "%SPOOL19B%" (
+  echo FAIL: case 19b - the no-op run must not create its spool.
+  goto Fail
+)
+echo   ok 19b: table unset - rc 0, zero lines, no spool ^(the 19a flip control^).
+set "WOU_UPGRADE_SEL="
+set "WOU_UPGRADE_TABLE="
+set "WOU_UPGRADE_SPOOL="
+set "TMP_UPG_TARGETS="
+set "WOU_UUP_FIXTURE="
+rem --- 19c: the engine source pin - the wiring must exist in the engine ---
+for /F %%c in ('findstr /C:"WOU_UPGRADE_TABLE=" "%REPO_ROOT%\cmd\DownloadUpdates.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "U19C_COUNT=%%c"
+if not "%U19C_COUNT%"=="1" (
+  echo FAIL: case 19c - the engine must carry exactly one table wiring assignment ^(got %U19C_COUNT%^).
+  goto Fail
+)
+findstr /C:"WOU_UPGRADE_TABLE=..\client\UpdateTable\upgrades.txt" "%REPO_ROOT%\cmd\DownloadUpdates.cmd" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: case 19c - the wiring must use the engine-cwd-relative ..\ form ^(cwd is cmd\^) pointing at the committed table.
+  goto Fail
+)
+call :OrderOf "WOU_UPGRADE_TABLE=..\client" "call .\UpgradePayloads.cmd :UpgSectionEntry" "%REPO_ROOT%\cmd\DownloadUpdates.cmd"
+if not "%ORDER_OK%"=="1" (
+  echo FAIL: case 19c - the wiring must precede the acquisition call line; a wiring after the call is dead code.
+  goto Fail
+)
+echo PASS: case 19 - engine table wiring pinned, functional pair proven can-fail.
+
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 19 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 20 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

@@ -12,6 +12,12 @@ REM   2. Clean Endpoint Simulation (0 Missing Updates, Up-to-date Result)
 REM   3. Non-destructive Verification (Zero System State Mutations)
 REM   4. Office Click-to-Run (C2R) Staged Manifest Classification
 REM   5. Write-Protected Log Directory Fallback to SystemRoot
+REM   6. Audit + chosen upgrade target (/upgradeos + /auditonly): the run
+REM      carries BOTH arguments and stages NO upgrade media - audit mode
+REM      never probes, never refuses, never launches, so the run's
+REM      UPDATE_LOGFILE must carry ZERO FULLUPGRADE- lines (Phase 34 seam
+REM      regression: the audit gate routes to the update search, never into
+REM      the full-FU lane)
 REM =======================================================================
 
 pushd "%~dp0.."
@@ -294,6 +300,71 @@ if errorlevel 1 (
 
 set "WOU_MISSING_LOG_FALLBACK="
 echo [PASS] Scenario 5: Write-protected log fallback successfully verified.
+
+REM -----------------------------------------------------------------------
+REM Scenario 6: Audit With A Chosen Upgrade Target (/upgradeos + /auditonly)
+REM -----------------------------------------------------------------------
+echo [Scenario 6/6] Verifying audit mode with a chosen target never reaches the full-FU lane...
+
+if exist "%TEMP%\UpdatesToInstall.txt" del "%TEMP%\UpdatesToInstall.txt"
+if exist "%REPORT_FILE%" del "%REPORT_FILE%"
+
+REM Scenario 5 turned the log directory into a read-only file - restore a
+REM writable log directory for this case's UPDATE_LOGFILE and report target
+attrib -r "%SANDBOX_ROOT%\log" 2>nul
+if exist "%SANDBOX_ROOT%\log" del "%SANDBOX_ROOT%\log" 2>nul
+if not exist "%SANDBOX_ROOT%\log" mkdir "%SANDBOX_ROOT%\log" 2>nul
+
+REM The run carries BOTH arguments beside the file's established drive form
+REM (the :WriteMissingUpdatesReport entry - non-privileged, like every case
+REM in this battery). The audit sandbox stages NO upgrade media and no
+REM StaticUpdateIds tree: even with target 26200 chosen, no full-FU decision
+REM may be emitted anywhere in the run's UPDATE_LOGFILE.
+set "AUDIT_ONLY=1"
+set "WOU_UPGRADE_TARGET=26200"
+
+pushd "%SANDBOX_ROOT%\client\cmd"
+call .\DoUpdate.cmd :WriteMissingUpdatesReport /auditonly /upgradeos:26200 > "%SANDBOX_ROOT%\log\scen6_audit_stdout.log" 2>&1
+popd
+set "SCEN6_EXIT=!errorlevel!"
+set "AUDIT_ONLY="
+set "WOU_UPGRADE_TARGET="
+
+if "!SCEN6_EXIT!" NEQ "0" (
+  echo FAIL Scenario 6: expected the audit-case exit convention 0, got !SCEN6_EXIT!.
+  type "%SANDBOX_ROOT%\log\scen6_audit_stdout.log"
+  goto Fail
+)
+
+if not exist "%REPORT_FILE%" (
+  echo FAIL Scenario 6: MissingUpdates.txt was not created for the audit + target case.
+  type "%SANDBOX_ROOT%\log\scen6_audit_stdout.log"
+  goto Fail
+)
+
+REM the audit report is generated as the existing cases assert it (clean queue)
+%ORIG_SYSROOT%\System32\findstr.exe /I /C:"Total Missing Items:     0" "%REPORT_FILE%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL Scenario 6: the audit report did not report the clean queue.
+  type "%REPORT_FILE%"
+  goto Fail
+)
+%ORIG_SYSROOT%\System32\findstr.exe /I /C:"Audit Only [/auditonly - Zero System Modifications]" "%REPORT_FILE%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL Scenario 6: the audit report header is missing.
+  type "%REPORT_FILE%"
+  goto Fail
+)
+
+REM the Phase 34 seam regression: a run carrying the chosen target in audit
+REM mode must never emit a single full-FU line into its UPDATE_LOGFILE
+%ORIG_SYSROOT%\System32\findstr.exe /C:"FULLUPGRADE-" "%UPDATE_LOGFILE%" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL Scenario 6: a FULLUPGRADE- line was emitted in audit mode - the audit gate no longer bypasses the seam.
+  goto Fail
+)
+
+echo [PASS] Scenario 6: audit + /upgradeos:26200 produced the report, zero FULLUPGRADE- lines (exit 0).
 
 REM -----------------------------------------------------------------------
 REM Cleanup and Success

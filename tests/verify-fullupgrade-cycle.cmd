@@ -42,6 +42,30 @@ REM              "failed with undecoded exit code 0xC1900199" +
 REM              FULLUPGRADE-FAIL -> 0
 REM   State S13: normalization: SCAN_RC=-1047526912 (signed-decimal twin of
 REM              0xC1900200) -> the SAME TPM/CPU refusal as state S8 -> 0
+REM   State S14: attempts stall (DEC-34-06): seeded count 1 at build 26100 ->
+REM              run 1 advances the record to 2 -> run 2 reads 2, computes 3,
+REM              HALTS with the stall literal + FULLUPGRADE-STALL-HALT, exit 0,
+REM              record deleted, launch site NOT reached
+REM   State S15: advancement clear (a): record at build 26100, run at 26200
+REM              target 26999 -> guard cleared, record rewritten fresh (count 1),
+REM              launch proceeds; (b) convergence fires FIRST: the pre-existing
+REM              record is purged by the converged delete lines, no launch
+REM   State S16: audit inert (mirror of the 34-01 audit case, instrument kept
+REM              independent): /auditonly + /upgradeos:26200 over the report
+REM              entry -> zero FULLUPGRADE- lines, attempts record untouched
+REM   State S17: EKB fall-through (DEC-34-05): the EKB lane refuses the chosen
+REM              target (enablement payload absent - its own frozen literal)
+REM              and the full-FU lane then runs the media probe and stages the
+REM              same target - both lanes observable in ONE run
+REM   Parity lock: the PARITY_LIT_* list (24 entries, byte-identical with the
+REM              bash twin's census_literals array in sh\tests\verify-fullupgrade-
+REM              cycle.bash) is findstr'd against the REAL engine + a count assert.
+REM
+REM Attempts-record lifecycle (DEC-34-06): the record counts ACROSS runs - the
+REM battery seeds it before state S4 and asserts it SURVIVES every refusal pass
+REM (S4-S8), gets INCREMENTED by the staged run (S9), and is reset between
+REM independent launch states (S10-S13): each battery state simulates an
+REM independent machine.
 REM
 REM Can-fail proofs (recorded run notes - perform in a scratch copy, never
 REM leave the mutation behind):
@@ -51,6 +75,9 @@ REM       named FAIL; delete the scratch afterwards.
 REM   (b) copy client\cmd\DoUpdate.cmd to a scratch, strip the EULA flag from
 REM       the launch line, run the census findstr against the scratch ->
 REM       zero hits proves the census can fail; delete the scratch.
+REM   (c) copy this battery to %TEMP%, flip the S14 expected stall literal,
+REM       run the scratch -> it must exit non-zero with a named FAIL at
+REM       State S14; delete the scratch afterwards.
 REM
 REM Mock media trees (NEVER the real 2.5 GB media, DEC-34-07):
 REM   %SANDBOX_ROOT%\upgrade\26200-x64\en-us\setup.exe + sources\install.esd
@@ -146,7 +173,7 @@ if exist "%UPDATE_LOGFILE%" del "%UPDATE_LOGFILE%" 2>nul
 REM -----------------------------------------------------------------------
 REM Census: the frozen flag-set on the REAL engine file
 REM -----------------------------------------------------------------------
-echo [Test 1/14] Census: frozen flag-set == 2 call sites, zero bypass tokens...
+echo [Test 1/19] Census: frozen flag-set == 2 call sites, zero bypass tokens...
 set "CENSUS_FLAGSET="
 for /f %%a in ('findstr /C:"/auto upgrade /quiet /noreboot /eula accept /dynamicupdate disable" "%REPO_ROOT%\client\cmd\DoUpdate.cmd" ^| "%SystemRoot%\System32\find.exe" /c /v ""') do set "CENSUS_FLAGSET=%%a"
 if not "!CENSUS_FLAGSET!"=="2" (
@@ -174,7 +201,7 @@ echo [PASS] Census: flag-set pinned at 2 call sites, scanonly at 1, zero bypass 
 REM -----------------------------------------------------------------------
 REM State S1: No Target - the full-FU lane is a silent no-op
 REM -----------------------------------------------------------------------
-echo [Test 2/14] State S1: no /upgradeos target - zero FULLUPGRADE- lines...
+echo [Test 2/19] State S1: no /upgradeos target - zero FULLUPGRADE- lines...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -199,7 +226,7 @@ echo [PASS] State S1: no-target run emitted no full-FU line (silent no-op, exit 
 REM -----------------------------------------------------------------------
 REM State S2: LTSB/LTSC skip
 REM -----------------------------------------------------------------------
-echo [Test 3/14] State S2: LTSB/LTSC edition detected - named skip...
+echo [Test 3/19] State S2: LTSB/LTSC edition detected - named skip...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -242,7 +269,7 @@ echo [PASS] State S2: LTSC skip reported verbatim with sentinel (exit 0).
 REM -----------------------------------------------------------------------
 REM State S3: Convergence (observed build == target)
 REM -----------------------------------------------------------------------
-echo [Test 4/14] State S3: observed convergence - jump complete + purge...
+echo [Test 4/19] State S3: observed convergence - jump complete + purge...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26200"
@@ -299,7 +326,7 @@ echo [PASS] State S3: convergence reported, full-FU attempts record purged, no m
 REM -----------------------------------------------------------------------
 REM State S4: Media missing (target 26999 has no staged tree)
 REM -----------------------------------------------------------------------
-echo [Test 5/14] State S4: no media staged for the target - named refusal...
+echo [Test 5/19] State S4: no media staged for the target - named refusal...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -310,6 +337,10 @@ set "OS_EDITIONID=Professional"
 set "WOU_FU_TEST_SCAN_RC="
 set "WOU_FU_TEST_LAUNCH_RC="
 if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+REM Attempts-record lifecycle (DEC-34-06): seed the record here - every
+REM refusal pass through S4-S8 must preserve it untouched
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+echo 1,1000,26100,full>"%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt"
 
 call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26999 >"%MOCK_TEMP%\s4_out.txt" 2>&1
 set "S4_EXIT=!errorlevel!"
@@ -331,12 +362,17 @@ if errorlevel 1 (
   type "%MOCK_TEMP%\s4_out.txt"
   goto Fail
 )
-echo [PASS] State S4: media-missing refusal fired verbatim (exit 0).
+findstr /C:"1,1000,26100,full" "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S4 expected the pre-seeded attempts record to SURVIVE the refusal pass.
+  goto Fail
+)
+echo [PASS] State S4: media-missing refusal fired verbatim, record survived (exit 0).
 
 REM -----------------------------------------------------------------------
 REM State S5: Media incomplete (sources\install.esd absent)
 REM -----------------------------------------------------------------------
-echo [Test 6/14] State S5: media incomplete - names the missing file...
+echo [Test 6/19] State S5: media incomplete - names the missing file...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -379,7 +415,7 @@ echo [PASS] State S5: media-incomplete refusal fired naming sources\install.esd 
 REM -----------------------------------------------------------------------
 REM State S6: Media ambiguous (two language directories staged)
 REM -----------------------------------------------------------------------
-echo [Test 7/14] State S6: ambiguous multi-language media tree...
+echo [Test 7/19] State S6: ambiguous multi-language media tree...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -423,7 +459,7 @@ echo [PASS] State S6: media-ambiguous refusal fired verbatim (exit 0).
 REM -----------------------------------------------------------------------
 REM State S7: Language mismatch (en-us media vs fr-fr system)
 REM -----------------------------------------------------------------------
-echo [Test 8/14] State S7: media language differs from system language...
+echo [Test 8/19] State S7: media language differs from system language...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -466,7 +502,7 @@ echo [PASS] State S7: language refusal fired naming both tokens, nothing staged 
 REM -----------------------------------------------------------------------
 REM State S8: Scan refusals via the mock-RC hook (hex forms)
 REM -----------------------------------------------------------------------
-echo [Test 9/14] State S8a: scan refusal 0xC1900200 - TPM/CPU eligibility...
+echo [Test 9/19] State S8a: scan refusal 0xC1900200 - TPM/CPU eligibility...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -506,7 +542,7 @@ if not errorlevel 1 (
 )
 echo [PASS] State S8a: scan refusal 0xC1900200 decoded to the TPM/CPU cause (exit 0, no launch).
 
-echo [Test 10/14] State S8b: scan refusal 0xC190020E - disk space...
+echo [Test 10/19] State S8b: scan refusal 0xC190020E - disk space...
 set "WOU_FU_TEST_SCAN_RC=0xC190020E"
 if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
 
@@ -530,12 +566,18 @@ if errorlevel 1 (
   type "%MOCK_TEMP%\s8b_out.txt"
   goto Fail
 )
-echo [PASS] State S8b: scan refusal 0xC190020E decoded to the disk-space cause (exit 0).
+REM The seeded record survived the whole refusal family (S4-S8) untouched
+findstr /C:"1,1000,26100,full" "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S8b expected the pre-seeded attempts record to survive S4-S8.
+  goto Fail
+)
+echo [PASS] State S8b: scan refusal 0xC190020E decoded to the disk-space cause, record survived (exit 0).
 
 REM -----------------------------------------------------------------------
 REM State S9: Staged termination (scan passes, launch reports 3010)
 REM -----------------------------------------------------------------------
-echo [Test 11/14] State S9: staged upgrade terminates the pass before the security pass...
+echo [Test 11/19] State S9: staged upgrade terminates the pass before the security pass...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -578,12 +620,20 @@ if not errorlevel 1 (
   type "%MOCK_TEMP%\s9_out.txt"
   goto Fail
 )
-echo [PASS] State S9: staged termination proven (exit 3011, Updates pending, WUA never reached).
+REM Write-before-launch lifecycle: the seeded count-1 record was read, incremented
+REM in memory, and REWRITTEN before the launch - and it survived the Installed
+REM ladder (the staged exit never deletes it)
+findstr /C:"2,1000,26100,full" "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S9 expected the attempts record incremented to 2,1000,26100,full by the write-before-launch.
+  goto Fail
+)
+echo [PASS] State S9: staged termination proven, record incremented to 2 by the write-before-launch (exit 3011).
 
 REM -----------------------------------------------------------------------
 REM State S10: Suspect - exit 0 without an observed build change
 REM -----------------------------------------------------------------------
-echo [Test 12/14] State S10: launch exit 0 without build change is the suspect row...
+echo [Test 12/19] State S10: launch exit 0 without build change is the suspect row...
 REM The attempts guard counts across runs (DEC-34-06): each battery state
 REM simulates an independent machine - reset the record between launch states.
 if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
@@ -629,7 +679,7 @@ echo [PASS] State S10: suspect row fired with the never-success wording (exit 0)
 REM -----------------------------------------------------------------------
 REM State S11: Rollback (0xC1900101)
 REM -----------------------------------------------------------------------
-echo [Test 13/14] State S11: launch exit 0xC1900101 - rollback row...
+echo [Test 13/19] State S11: launch exit 0xC1900101 - rollback row...
 REM Independent-machine reset (see State S10 note)
 if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
 set "OS_VER_MAJOR=10"
@@ -668,7 +718,7 @@ echo [PASS] State S11: rollback row fired verbatim (exit 0).
 REM -----------------------------------------------------------------------
 REM State S12: Undecoded code (0xC1900199 -> catch-all row)
 REM -----------------------------------------------------------------------
-echo [Test 14/14] State S12 and S13: undecoded code + signed-decimal normalization...
+echo [Test 14/19] State S12 and S13: undecoded code + signed-decimal normalization...
 REM Independent-machine reset (see State S10 note) - S13 reuses the state below
 if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
 set "OS_VER_MAJOR=10"
@@ -742,11 +792,285 @@ if errorlevel 1 (
 echo [PASS] State S13: signed-decimal -1047526912 normalized to the 0xC1900200 row (exit 0).
 
 REM -----------------------------------------------------------------------
+REM State S14: Attempts stall (three stagnant launches at build 26100)
+REM -----------------------------------------------------------------------
+echo [Test 15/19] State S14: attempts stall - the third stagnant attempt halts...
+set "OS_VER_MAJOR=10"
+set "OS_VER_MINOR=0"
+set "OS_VER_BUILD=26100"
+set "OS_VER_BUILD_INTERNAL=26100"
+set "OS_VER_REVIS=1000"
+set "OS_LANG_EXT=en-us"
+set "OS_EDITIONID=Professional"
+set "WOU_FU_TEST_SCAN_RC=0xC1900210"
+set "WOU_FU_TEST_LAUNCH_RC=3010"
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+echo 1,1000,26100,full>"%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt"
+REM Run 1: seeded count 1 at the same build - the write-before-launch leaves count 2
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\s14a_out.txt" 2>&1
+set "S14A_EXIT=!errorlevel!"
+if "!S14A_EXIT!" NEQ "3011" (
+  echo FAIL: State S14 run 1 expected exit code 3011 ^(stall not yet reached^), got !S14A_EXIT!.
+  type "%MOCK_TEMP%\s14a_out.txt"
+  goto Fail
+)
+findstr /C:"2,1000,26100,full" "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S14 run 1 expected the record advanced to 2,1000,26100,full.
+  goto Fail
+)
+REM Run 2: reads count 2 at the same build, computes 3, GTR 2 - the halt
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\s14b_out.txt" 2>&1
+set "S14B_EXIT=!errorlevel!"
+if "!S14B_EXIT!" NEQ "0" (
+  echo FAIL: State S14 run 2 expected exit code 0 [halted loop], got !S14B_EXIT!.
+  type "%MOCK_TEMP%\s14b_out.txt"
+  goto Fail
+)
+findstr /C:"Warning: Full upgrade did not advance the OS build (still 26100) - halting to prevent infinite reboot loop" "%MOCK_TEMP%\s14b_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S14 run 2 expected the full-FU stall literal verbatim.
+  type "%MOCK_TEMP%\s14b_out.txt"
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-STALL-HALT" "%MOCK_TEMP%\s14b_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S14 run 2 expected the FULLUPGRADE-STALL-HALT sentinel.
+  type "%MOCK_TEMP%\s14b_out.txt"
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-STAGED" "%MOCK_TEMP%\s14b_out.txt" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: State S14 run 2 must never reach the launch site past the stall halt.
+  type "%MOCK_TEMP%\s14b_out.txt"
+  goto Fail
+)
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" (
+  echo FAIL: State S14 run 2 expected the record DELETED by the halt ^(the consumed window^).
+  goto Fail
+)
+echo [PASS] State S14: third stagnant attempt halted verbatim, record deleted, no launch (exit 0).
+
+REM -----------------------------------------------------------------------
+REM State S15: Advancement clear + convergence-first purge
+REM -----------------------------------------------------------------------
+echo [Test 16/19] State S15: advancement clears the guard; convergence purges first...
+set "OS_VER_BUILD=26200"
+set "OS_VER_BUILD_INTERNAL=26200"
+set "OS_VER_REVIS=5074"
+set "OS_LANG_EXT=en-us"
+set "OS_EDITIONID=Professional"
+set "WOU_FU_TEST_SCAN_RC=0xC1900210"
+set "WOU_FU_TEST_LAUNCH_RC=3010"
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+echo 1,1000,26100,full>"%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt"
+mkdir "%MOCK_UPGRADE%\26999-x64\en-us\sources" 2>nul
+type nul >"%MOCK_UPGRADE%\26999-x64\en-us\setup.exe"
+type nul >"%MOCK_UPGRADE%\26999-x64\en-us\sources\install.esd"
+REM (a) record at build 26100, run at 26200 with target 26999: the guard clears
+REM (in-memory), the record is rewritten fresh, the launch proceeds
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26999 >"%MOCK_TEMP%\s15a_out.txt" 2>&1
+set "S15A_EXIT=!errorlevel!"
+if "!S15A_EXIT!" NEQ "3011" (
+  echo FAIL: State S15a expected exit code 3011 ^(advancement must proceed^), got !S15A_EXIT!.
+  type "%MOCK_TEMP%\s15a_out.txt"
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-STAGED" "%MOCK_TEMP%\s15a_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S15a expected the launch to proceed after the advancement clear.
+  type "%MOCK_TEMP%\s15a_out.txt"
+  goto Fail
+)
+findstr /C:"1,5074,26200,full" "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S15a expected the record rewritten fresh at the new build ^(count 1^).
+  goto Fail
+)
+findstr /C:"Warning: Chosen upgrade target 26999 has no upgrade path from build 26200" "%MOCK_TEMP%\s15a_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S15a expected the EKB lane to refuse the unmatchable target first.
+  type "%MOCK_TEMP%\s15a_out.txt"
+  goto Fail
+)
+rmdir /s /q "%MOCK_UPGRADE%\26999-x64" 2>nul
+REM (b) convergence fires FIRST: a pre-existing record is purged by the converged
+REM delete lines, before any launch consideration
+set "WOU_FU_TEST_SCAN_RC="
+set "WOU_FU_TEST_LAUNCH_RC="
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+echo 1,1000,26100,full>"%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt"
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\s15b_out.txt" 2>&1
+set "S15B_EXIT=!errorlevel!"
+if "!S15B_EXIT!" NEQ "0" (
+  echo FAIL: State S15b expected exit code 0, got !S15B_EXIT!.
+  type "%MOCK_TEMP%\s15b_out.txt"
+  goto Fail
+)
+findstr /C:"Info: Full upgrade target build 26200 already observed - jump complete" "%MOCK_TEMP%\s15b_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S15b expected the convergence literal to fire FIRST.
+  type "%MOCK_TEMP%\s15b_out.txt"
+  goto Fail
+)
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" (
+  echo FAIL: State S15b expected the pre-existing record purged by the converged delete lines.
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-STAGED" "%MOCK_TEMP%\s15b_out.txt" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: State S15b must not launch - convergence precedes any launch consideration.
+  type "%MOCK_TEMP%\s15b_out.txt"
+  goto Fail
+)
+echo [PASS] State S15: advancement cleared and relaunched fresh; convergence purged before any launch.
+
+REM -----------------------------------------------------------------------
+REM State S16: Audit inert (mirror of the 34-01 audit case, instrument kept
+REM independent inside this battery)
+REM -----------------------------------------------------------------------
+echo [Test 17/19] State S16: audit mode with a chosen target never reaches the lane...
+REM Fresh log: the zero-FULLUPGRADE- assert must ride THIS run only
+if exist "%UPDATE_LOGFILE%" del "%UPDATE_LOGFILE%" >nul 2>&1
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+echo 1,1000,26100,full>"%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt"
+REM The drive form mirrors tests\verify-offline-audit.cmd Scenario 6: the
+REM non-privileged :WriteMissingUpdatesReport entry with both arguments beside
+REM it; the structural 445-gate bypass is pinned there + by the seam census.
+REM A nested engine copy (client\cmd) keeps the report's ..\..\log target
+REM INSIDE the sandbox.
+mkdir "%SANDBOX_ROOT%\client\cmd" 2>nul
+mkdir "%SANDBOX_ROOT%\log" 2>nul
+copy /y "%REPO_ROOT%\client\cmd\DoUpdate.cmd" "%SANDBOX_ROOT%\client\cmd\DoUpdate.cmd" >nul 2>&1
+set "AUDIT_ONLY=1"
+set "WOU_UPGRADE_TARGET=26200"
+pushd "%SANDBOX_ROOT%\client\cmd"
+call .\DoUpdate.cmd :WriteMissingUpdatesReport /auditonly /upgradeos:26200 > "%SANDBOX_ROOT%\log\s16_audit_stdout.log" 2>&1
+popd
+set "S16_EXIT=!errorlevel!"
+set "AUDIT_ONLY="
+set "WOU_UPGRADE_TARGET="
+if "!S16_EXIT!" NEQ "0" (
+  echo FAIL: State S16 expected exit code 0, got !S16_EXIT!.
+  type "%SANDBOX_ROOT%\log\s16_audit_stdout.log"
+  goto Fail
+)
+if not exist "%SANDBOX_ROOT%\log\MissingUpdates.txt" (
+  echo FAIL: State S16 expected the audit report to be created by the drive.
+  type "%SANDBOX_ROOT%\log\s16_audit_stdout.log"
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-" "%UPDATE_LOGFILE%" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: State S16 a FULLUPGRADE- line was emitted in audit mode - the audit gate no longer bypasses the seam.
+  type "%UPDATE_LOGFILE%"
+  goto Fail
+)
+findstr /C:"1,1000,26100,full" "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S16 expected the attempts record untouched by the audit drive.
+  goto Fail
+)
+echo [PASS] State S16: audit drive emitted zero full-FU lines, report created, record untouched (exit 0).
+
+REM -----------------------------------------------------------------------
+REM State S17: EKB fall-through (DEC-34-05) - both lanes in ONE run
+REM -----------------------------------------------------------------------
+echo [Test 18/19] State S17: EKB refusal falls through to the full-FU media probe...
+set "OS_VER_BUILD=26100"
+set "OS_VER_BUILD_INTERNAL=26100"
+set "OS_VER_REVIS=1000"
+set "OS_LANG_EXT=en-us"
+set "OS_EDITIONID=Professional"
+set "WOU_FU_TEST_SCAN_RC=0xC1900210"
+set "WOU_FU_TEST_LAUNCH_RC=3010"
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
+REM The EKB payloads stay stashed (fu_stash_*) - the chosen-row EKB probe fails
+REM and the EKB lane refuses with its own frozen literal; the flow then falls
+REM through into :FullUpgrade, which stages the SAME target via the media
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\s17_out.txt" 2>&1
+set "S17_EXIT=!errorlevel!"
+if "!S17_EXIT!" NEQ "3011" (
+  echo FAIL: State S17 expected exit code 3011 ^(the full-FU lane staged the target^), got !S17_EXIT!.
+  type "%MOCK_TEMP%\s17_out.txt"
+  goto Fail
+)
+findstr /C:"Warning: Chosen upgrade target 26200 blocked: enablement package kb5054156 missing from medium" "%MOCK_TEMP%\s17_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S17 expected the EKB lane's own missing-enablement refusal literal verbatim.
+  type "%MOCK_TEMP%\s17_out.txt"
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-SCAN-PASS" "%MOCK_TEMP%\s17_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S17 expected the full-FU lane to run the media probe ^(SCAN-PASS missing^).
+  type "%MOCK_TEMP%\s17_out.txt"
+  goto Fail
+)
+findstr /C:"FULLUPGRADE-STAGED" "%MOCK_TEMP%\s17_out.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State S17 expected the full-FU lane to stage the same target ^(STAGED missing^).
+  type "%MOCK_TEMP%\s17_out.txt"
+  goto Fail
+)
+echo [PASS] State S17: EKB enablement refusal AND full-FU SCAN-PASS + STAGED in one run (fall-through proven).
+
+REM -----------------------------------------------------------------------
+REM Parity lock: byte-identical literal list with the bash twin's
+REM census_literals array (sh\tests\verify-fullupgrade-cycle.bash) - 24
+REM entries, each findstr'd against the REAL engine + a count assert
+REM -----------------------------------------------------------------------
+echo [Test 19/19] Parity lock: 24 pinned literals present in the REAL engine...
+set "PARITY_LIT_01=Skipping full upgrade as a LTSB-/LTSC-SKU has been detected"
+set "PARITY_LIT_02=already observed - jump complete"
+set "PARITY_LIT_03=blocked: no full upgrade media staged for"
+set "PARITY_LIT_04=blocked: multiple media language directories staged for"
+set "PARITY_LIT_05=blocked: full upgrade media incomplete -"
+set "PARITY_LIT_06=blocked: media language"
+set "PARITY_LIT_07=differs from system language"
+set "PARITY_LIT_08=Full upgrade compatibility scan found no concerns - eligible"
+set "PARITY_LIT_09=Full upgrade refused: actionable compatibility issue (app or driver) - see $Windows.~BT\Sources\Panther"
+set "PARITY_LIT_10=Full upgrade refused: migration choice not available (edition crossing not supported by setup)"
+set "PARITY_LIT_11=Full upgrade refused: system requirements not met (TPM/CPU eligibility)"
+set "PARITY_LIT_12=Full upgrade refused: not enough free disk space"
+set "PARITY_LIT_13=Full upgrade refused: EULA acceptance required - flag-set invariant, /eula accept must always be present"
+set "PARITY_LIT_14=Full upgrade refused: no matching install image for this edition (quiet mode)"
+set "PARITY_LIT_15=Full upgrade refused: finalize resume failure - state machine invariant, must never fire in the v1 flag-set"
+set "PARITY_LIT_16=Full upgrade rolled back (driver compatibility in most cases) - rollback logs under $Windows.~BT\Sources\Rollback"
+set "PARITY_LIT_17=Full upgrade staged - reboot required; success is decided on the next pass by the observed build"
+set "PARITY_LIT_18=Full upgrade exited 0 without an observed build change - never reported as success; verify Panther logs"
+set "PARITY_LIT_19=Full upgrade failed with undecoded exit code"
+set "PARITY_LIT_20=Full upgrade did not advance the OS build"
+set "PARITY_LIT_21=blocked: enablement package"
+set "PARITY_LIT_22=FULLUPGRADE-STALL-HALT"
+set "PARITY_LIT_23=FULLUPGRADE-SCAN-PASS"
+set "PARITY_LIT_24=FULLUPGRADE-STAGED"
+set /a PARITY_COUNT=0
+for /f "tokens=1* delims==" %%a in ('set PARITY_LIT_') do (
+  "%SystemRoot%\System32\findstr.exe" /C:"%%b" "%REPO_ROOT%\client\cmd\DoUpdate.cmd" >nul 2>&1
+  if errorlevel 1 (
+    echo FAIL: parity literal missing from the real engine: %%b
+    goto Fail
+  )
+  set /a PARITY_COUNT+=1
+)
+if not "!PARITY_COUNT!"=="24" (
+  echo FAIL: parity list drifted - expected 24 literals, got !PARITY_COUNT!.
+  goto Fail
+)
+echo [PASS] Parity lock: 24 literals present in the engine, list in lockstep with the bash twin.
+
+REM -----------------------------------------------------------------------
 REM All Passed
 REM -----------------------------------------------------------------------
 echo.
 echo =======================================================================
-echo SUCCESS: Full upgrade cycle battery passed - census + states S1-S13.
+echo SUCCESS: Full upgrade cycle battery passed - census + states S1-S17 + parity lock.
 echo =======================================================================
 echo FULLUPGRADE-CYCLE-PASS
 call :Cleanup

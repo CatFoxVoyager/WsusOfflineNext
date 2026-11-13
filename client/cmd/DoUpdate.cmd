@@ -1133,6 +1133,10 @@ set "WOU_FU_RC="
 set "WOU_FU_CLASS="
 set "WOU_FU_SCAN_RC_RAW="
 set "WOU_FU_LAUNCH_RC_RAW="
+set "WOU_FU_COUNT="
+set "WOU_FU_PREV_COUNT="
+set "WOU_FU_PREV_BUILD="
+set "WOU_FU_PREV_LEG="
 rem no chosen target: the lane is a silent no-op (statu quo for the no-selection case)
 if not defined WOU_UPGRADE_TARGET goto FullUpgradeSkip
 if "%OS_VER_MAJOR%"=="" goto FullUpgradeSkip
@@ -1209,6 +1213,37 @@ call :NormalizeFuRc %WOU_FU_SCAN_RC_RAW%
 call :DecodeFullUpgradeExit %WOU_FU_RC%
 rem a refused scan routes to the skip - the launch site is unreachable past a refusal
 if not "%WOU_FU_CLASS%"=="scan-pass" goto FullUpgradeSkip
+rem Full-FU attempts guard (DEC-34-06): the dedicated record counts launch attempts
+rem ACROSS runs - the stall window spans setup.exe's own reboot chain, so it never
+rem joins the fresh-run deletion class; its only legitimate deaths are the converged
+rem routing above and the halt below (never on refusal passes, never in :Cleanup).
+rem Dual-path read mirrors the purge discipline of the convergence branch above.
+set WOU_FU_COUNT=1
+set "WOU_FU_PREV_COUNT="
+set "WOU_FU_PREV_BUILD="
+set "WOU_FU_PREV_LEG="
+if exist %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt for /f "usebackq tokens=1,3,4 delims=," %%i in ("%WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt") do (set "WOU_FU_PREV_COUNT=%%i" & set "WOU_FU_PREV_BUILD=%%j" & set "WOU_FU_PREV_LEG=%%k")
+if not defined WOU_FU_PREV_COUNT if exist %SystemRoot%\Temp\wou_fullupgrade_attempts.txt for /f "usebackq tokens=1,3,4 delims=," %%i in ("%SystemRoot%\Temp\wou_fullupgrade_attempts.txt") do (set "WOU_FU_PREV_COUNT=%%i" & set "WOU_FU_PREV_BUILD=%%j" & set "WOU_FU_PREV_LEG=%%k")
+rem Build-keyed stall check (mirrors the EKB perform-leg rule): a leg=full record at
+rem the SAME build means the OS did not advance since the last launch attempt - the
+rem third stagnant attempt halts. A missing, foreign, stale-leg or advanced record
+rem leaves the fresh count 1 (per-leg freshness and the advancement clear are
+rem in-memory here - the stale record is overwritten by the write below).
+if defined WOU_FU_PREV_COUNT if "!WOU_FU_PREV_LEG!"=="full" if "!WOU_FU_PREV_BUILD!"=="%OS_VER_BUILD%" (
+  set /a WOU_FU_COUNT=!WOU_FU_PREV_COUNT!+1
+  if !WOU_FU_COUNT! GTR 2 (
+    echo Warning: Full upgrade did not advance the OS build ^(still %OS_VER_BUILD%^) - halting to prevent infinite reboot loop
+    call :Log "Warning: Full upgrade did not advance the OS build (still %OS_VER_BUILD%) - halting to prevent infinite reboot loop"
+    echo FULLUPGRADE-STALL-HALT
+    call :Log "FULLUPGRADE-STALL-HALT"
+    if exist %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt
+    if exist %SystemRoot%\Temp\wou_fullupgrade_attempts.txt del %SystemRoot%\Temp\wou_fullupgrade_attempts.txt
+    goto FullUpgradeSkip
+  )
+)
+rem Write the attempt record BEFORE the launch - under test mode and real mode
+rem alike - because a reboot during the setup invocation must not lose the count
+echo %WOU_FU_COUNT%,%OS_VER_REVIS%,%OS_VER_BUILD%,full>%WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt
 rem Launch (APPLY-01): the frozen flag-set with NO additional flags - the launch
 rem terminates the pass unconditionally (DEC-34-01/04), whatever setup reports
 if "%WOU_TEST_MODE%"=="1" goto FullUpgradeLaunchMock
@@ -1358,6 +1393,10 @@ set "WOU_FU_RC="
 set "WOU_FU_CLASS="
 set "WOU_FU_SCAN_RC_RAW="
 set "WOU_FU_LAUNCH_RC_RAW="
+set "WOU_FU_COUNT="
+set "WOU_FU_PREV_COUNT="
+set "WOU_FU_PREV_BUILD="
+set "WOU_FU_PREV_LEG="
 if "%WOU_TEST_MODE%"=="1" goto EoF
 
 rem *** Update Windows Update Agent ***

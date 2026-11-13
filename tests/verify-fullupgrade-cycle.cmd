@@ -584,6 +584,9 @@ REM -----------------------------------------------------------------------
 REM State S10: Suspect - exit 0 without an observed build change
 REM -----------------------------------------------------------------------
 echo [Test 12/14] State S10: launch exit 0 without build change is the suspect row...
+REM The attempts guard counts across runs (DEC-34-06): each battery state
+REM simulates an independent machine - reset the record between launch states.
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -627,6 +630,8 @@ REM -----------------------------------------------------------------------
 REM State S11: Rollback (0xC1900101)
 REM -----------------------------------------------------------------------
 echo [Test 13/14] State S11: launch exit 0xC1900101 - rollback row...
+REM Independent-machine reset (see State S10 note)
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"
@@ -664,6 +669,8 @@ REM -----------------------------------------------------------------------
 REM State S12: Undecoded code (0xC1900199 -> catch-all row)
 REM -----------------------------------------------------------------------
 echo [Test 14/14] State S12 and S13: undecoded code + signed-decimal normalization...
+REM Independent-machine reset (see State S10 note) - S13 reuses the state below
+if exist "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" del "%MOCK_SYS_TEMP%\wou_fullupgrade_attempts.txt" >nul 2>&1
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 set "OS_VER_BUILD=26100"

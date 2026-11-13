@@ -1117,6 +1117,247 @@ if exist %WOU_TEMP_DIR%\wou_buildupgrade_tried.txt del %WOU_TEMP_DIR%\wou_buildu
 if exist %SystemRoot%\Temp\wou_buildupgrade_tried.txt del %SystemRoot%\Temp\wou_buildupgrade_tried.txt
 if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
 if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
+
+rem *** Full upgrade via the staged media setup.exe (Phase 34, APPLY-01..04) ****
+rem *** Mono-pass v1 (DEC-34-01): /noreboot commits and suppresses only the   ***
+rem *** first reboot - the launch handshake TERMINATES the pass; setup.exe    ***
+rem *** owns the offline-phase reboots and Phase 35 owns the re-entry.        ***
+:FullUpgrade
+rem session temporaries: set-clear before use (mirrors the purge discipline above)
+set "WOU_FU_MEDIA="
+set "WOU_FU_MEDIA_BASE="
+set "WOU_FU_MEDIA_LANG="
+set "WOU_FU_MEDIA_COUNT="
+set "WOU_FU_MISSING_FILE="
+set "WOU_FU_RC="
+set "WOU_FU_CLASS="
+set "WOU_FU_SCAN_RC_RAW="
+set "WOU_FU_LAUNCH_RC_RAW="
+rem no chosen target: the lane is a silent no-op (statu quo for the no-selection case)
+if not defined WOU_UPGRADE_TARGET goto FullUpgradeSkip
+if "%OS_VER_MAJOR%"=="" goto FullUpgradeSkip
+if %OS_VER_MAJOR% LSS 10 goto FullUpgradeSkip
+if "!OS_EDITIONID:~0,11!"=="EnterpriseS" (
+  echo Info: Skipping full upgrade as a LTSB-/LTSC-SKU has been detected
+  call :Log "Info: Skipping full upgrade as a LTSB-/LTSC-SKU has been detected"
+  echo FULLUPGRADE-SKIP-LTSC
+  call :Log "FULLUPGRADE-SKIP-LTSC"
+  goto FullUpgradeSkip
+)
+rem Chosen-target convergence on the OBSERVED build (APPLY-03): the only success
+rem claim in the lane - a setup.exe exit code never reports success (T-34-01)
+if defined WOU_UPGRADE_TARGET if "%OS_VER_BUILD%"=="%WOU_UPGRADE_TARGET%" (
+  echo Info: Full upgrade target build %WOU_UPGRADE_TARGET% already observed - jump complete
+  call :Log "Info: Full upgrade target build %WOU_UPGRADE_TARGET% already observed - jump complete"
+  echo FULLUPGRADE-CONVERGED
+  call :Log "FULLUPGRADE-CONVERGED"
+  if exist %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt
+  if exist %SystemRoot%\Temp\wou_fullupgrade_attempts.txt del %SystemRoot%\Temp\wou_fullupgrade_attempts.txt
+  goto FullUpgradeSkip
+)
+rem Physical media probe (DEC-34-02/03): enumerate the staged language directories -
+rem zero is missing, several is ambiguous, the one must carry launcher and image
+set "WOU_FU_MEDIA_BASE=..\upgrade\%WOU_UPGRADE_TARGET%-%OS_ARCH%"
+set /a WOU_FU_MEDIA_COUNT=0
+for /d %%L in ("%WOU_FU_MEDIA_BASE%\*") do (
+  set /a WOU_FU_MEDIA_COUNT+=1
+  set "WOU_FU_MEDIA_LANG=%%~nxL"
+)
+if %WOU_FU_MEDIA_COUNT% EQU 0 (
+  echo Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: no full upgrade media staged for %OS_ARCH%
+  call :Log "Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: no full upgrade media staged for %OS_ARCH%"
+  echo FULLUPGRADE-MEDIA-MISSING
+  call :Log "FULLUPGRADE-MEDIA-MISSING"
+  goto FullUpgradeSkip
+)
+if %WOU_FU_MEDIA_COUNT% GTR 1 (
+  echo Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: multiple media language directories staged for %OS_ARCH%
+  call :Log "Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: multiple media language directories staged for %OS_ARCH%"
+  echo FULLUPGRADE-MEDIA-AMBIGUOUS
+  call :Log "FULLUPGRADE-MEDIA-AMBIGUOUS"
+  goto FullUpgradeSkip
+)
+set "WOU_FU_MEDIA=%WOU_FU_MEDIA_BASE%\%WOU_FU_MEDIA_LANG%"
+if not exist "%WOU_FU_MEDIA%\setup.exe" set "WOU_FU_MISSING_FILE=setup.exe"
+if not exist "%WOU_FU_MEDIA%\sources\install.esd" set "WOU_FU_MISSING_FILE=sources\install.esd"
+if defined WOU_FU_MISSING_FILE (
+  echo Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: full upgrade media incomplete - %WOU_FU_MISSING_FILE% missing
+  call :Log "Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: full upgrade media incomplete - %WOU_FU_MISSING_FILE% missing"
+  echo FULLUPGRADE-MEDIA-INCOMPLETE
+  call :Log "FULLUPGRADE-MEDIA-INCOMPLETE"
+  goto FullUpgradeSkip
+)
+rem Language pre-flight (DEC-34-03): the 22H2+ rule requires the media System
+rem Default UI Language to match the device - refuse BEFORE any setup invocation
+if /i not "%WOU_FU_MEDIA_LANG%"=="%OS_LANG_EXT%" (
+  echo Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: media language %WOU_FU_MEDIA_LANG% differs from system language %OS_LANG_EXT%
+  call :Log "Warning: Chosen upgrade target %WOU_UPGRADE_TARGET% blocked: media language %WOU_FU_MEDIA_LANG% differs from system language %OS_LANG_EXT%"
+  echo FULLUPGRADE-LANG-REFUSED
+  call :Log "FULLUPGRADE-LANG-REFUSED"
+  goto FullUpgradeSkip
+)
+rem Eligibility scan (APPLY-02): the documented probe shape, frozen flag-set
+if "%WOU_TEST_MODE%"=="1" goto FullUpgradeScanMock
+"%WOU_FU_MEDIA%\setup.exe" /auto upgrade /quiet /noreboot /eula accept /dynamicupdate disable /compat scanonly
+set "WOU_FU_SCAN_RC_RAW=!errorlevel!"
+goto FullUpgradeScanDecoded
+:FullUpgradeScanMock
+if not defined WOU_FU_TEST_SCAN_RC set "WOU_FU_TEST_SCAN_RC=0"
+set "WOU_FU_SCAN_RC_RAW=%WOU_FU_TEST_SCAN_RC%"
+:FullUpgradeScanDecoded
+call :NormalizeFuRc %WOU_FU_SCAN_RC_RAW%
+call :DecodeFullUpgradeExit %WOU_FU_RC%
+rem a refused scan routes to the skip - the launch site is unreachable past a refusal
+if not "%WOU_FU_CLASS%"=="scan-pass" goto FullUpgradeSkip
+rem Launch (APPLY-01): the frozen flag-set with NO additional flags - the launch
+rem terminates the pass unconditionally (DEC-34-01/04), whatever setup reports
+if "%WOU_TEST_MODE%"=="1" goto FullUpgradeLaunchMock
+"%WOU_FU_MEDIA%\setup.exe" /auto upgrade /quiet /noreboot /eula accept /dynamicupdate disable
+set "WOU_FU_LAUNCH_RC_RAW=!errorlevel!"
+goto FullUpgradeLaunchDecoded
+:FullUpgradeLaunchMock
+if not defined WOU_FU_TEST_LAUNCH_RC set "WOU_FU_TEST_LAUNCH_RC=0"
+set "WOU_FU_LAUNCH_RC_RAW=%WOU_FU_TEST_LAUNCH_RC%"
+:FullUpgradeLaunchDecoded
+call :NormalizeFuRc %WOU_FU_LAUNCH_RC_RAW%
+call :DecodeFullUpgradeExit %WOU_FU_RC%
+if "%WOU_FU_RC%"=="3010" set REBOOT_REQUIRED=1
+if "%REBOOT_REQUIRED%"=="1" (
+  if "%RECALL_REQUIRED%" NEQ "1" set "RECALL_REQUIRED=1"
+)
+goto Installed
+
+:NormalizeFuRc
+rem Map the signed-decimal errorlevel display form of the documented setup.exe
+rem codes to their hex forms (signed-32-bit twins node-verified 2026-11-13;
+rem the 34-03 scanonly probe validates the live representation). Passthrough
+rem for everything else (3010, 0, hex strings, unknown decimals).
+set "WOU_FU_RC=%~1"
+if "%~1"=="-1047526896" set "WOU_FU_RC=0xC1900210"
+if "%~1"=="-1047526904" set "WOU_FU_RC=0xC1900208"
+if "%~1"=="-1047526908" set "WOU_FU_RC=0xC1900204"
+if "%~1"=="-1047526912" set "WOU_FU_RC=0xC1900200"
+if "%~1"=="-1047526898" set "WOU_FU_RC=0xC190020E"
+if "%~1"=="-1047527154" set "WOU_FU_RC=0xC190010E"
+if "%~1"=="-1047526891" set "WOU_FU_RC=0xC1900215"
+if "%~1"=="-1047527118" set "WOU_FU_RC=0xC1900132"
+if "%~1"=="-1047527167" set "WOU_FU_RC=0xC1900101"
+goto :eof
+
+:DecodeFullUpgradeExit
+rem One decoder serving BOTH setup.exe call sites (scanonly + launch).
+rem 12 frozen rows: outcome class + readable cause + machine sentinel - no row
+rem claims success. Goto-flow rows: the literals carry parentheses, so the
+rem rows must never be wrapped in parenthesized blocks.
+set "WOU_FU_CLASS=fail"
+if "%~1"=="0xC1900210" goto DfuC1900210
+if "%~1"=="0xC1900208" goto DfuC1900208
+if "%~1"=="0xC1900204" goto DfuC1900204
+if "%~1"=="0xC1900200" goto DfuC1900200
+if "%~1"=="0xC190020E" goto DfuC190020E
+if "%~1"=="0xC190010E" goto DfuC190010E
+if "%~1"=="0xC1900215" goto DfuC1900215
+if "%~1"=="0xC1900132" goto DfuC1900132
+if "%~1"=="0xC1900101" goto DfuC1900101
+if "%~1"=="3010" goto DfuC3010
+if "%~1"=="0" goto DfuC0
+goto DfuCatchAll
+:DfuC1900210
+set "WOU_FU_CLASS=scan-pass"
+echo Info: Full upgrade compatibility scan found no concerns - eligible
+call :Log "Info: Full upgrade compatibility scan found no concerns - eligible"
+echo FULLUPGRADE-SCAN-PASS
+call :Log "FULLUPGRADE-SCAN-PASS"
+goto :eof
+:DfuC1900208
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: actionable compatibility issue (app or driver) - see $Windows.~BT\Sources\Panther
+call :Log "Warning: Full upgrade refused: actionable compatibility issue (app or driver) - see $Windows.~BT\Sources\Panther"
+echo FULLUPGRADE-REFUSED-COMPAT
+call :Log "FULLUPGRADE-REFUSED-COMPAT"
+goto :eof
+:DfuC1900204
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: migration choice not available (edition crossing not supported by setup)
+call :Log "Warning: Full upgrade refused: migration choice not available (edition crossing not supported by setup)"
+echo FULLUPGRADE-REFUSED-MIGCHOICE
+call :Log "FULLUPGRADE-REFUSED-MIGCHOICE"
+goto :eof
+:DfuC1900200
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: system requirements not met (TPM/CPU eligibility)
+call :Log "Warning: Full upgrade refused: system requirements not met (TPM/CPU eligibility)"
+echo FULLUPGRADE-REFUSED-SYSREQ
+call :Log "FULLUPGRADE-REFUSED-SYSREQ"
+goto :eof
+:DfuC190020E
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: not enough free disk space
+call :Log "Warning: Full upgrade refused: not enough free disk space"
+echo FULLUPGRADE-REFUSED-DISKSPACE
+call :Log "FULLUPGRADE-REFUSED-DISKSPACE"
+goto :eof
+:DfuC190010E
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: EULA acceptance required - flag-set invariant, /eula accept must always be present
+call :Log "Warning: Full upgrade refused: EULA acceptance required - flag-set invariant, /eula accept must always be present"
+echo FULLUPGRADE-REFUSED-EULA
+call :Log "FULLUPGRADE-REFUSED-EULA"
+goto :eof
+:DfuC1900215
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: no matching install image for this edition (quiet mode)
+call :Log "Warning: Full upgrade refused: no matching install image for this edition (quiet mode)"
+echo FULLUPGRADE-REFUSED-IMAGE
+call :Log "FULLUPGRADE-REFUSED-IMAGE"
+goto :eof
+:DfuC1900132
+set "WOU_FU_CLASS=refuse"
+echo Warning: Full upgrade refused: finalize resume failure - state machine invariant, must never fire in the v1 flag-set
+call :Log "Warning: Full upgrade refused: finalize resume failure - state machine invariant, must never fire in the v1 flag-set"
+echo FULLUPGRADE-REFUSED-FINALIZE
+call :Log "FULLUPGRADE-REFUSED-FINALIZE"
+goto :eof
+:DfuC1900101
+set "WOU_FU_CLASS=fail-rollback"
+echo Warning: Full upgrade rolled back (driver compatibility in most cases) - rollback logs under $Windows.~BT\Sources\Rollback
+call :Log "Warning: Full upgrade rolled back (driver compatibility in most cases) - rollback logs under $Windows.~BT\Sources\Rollback"
+echo FULLUPGRADE-ROLLBACK
+call :Log "FULLUPGRADE-ROLLBACK"
+goto :eof
+:DfuC3010
+set "WOU_FU_CLASS=staged"
+echo Info: Full upgrade staged - reboot required; success is decided on the next pass by the observed build
+call :Log "Info: Full upgrade staged - reboot required; success is decided on the next pass by the observed build"
+echo FULLUPGRADE-STAGED
+call :Log "FULLUPGRADE-STAGED"
+goto :eof
+:DfuC0
+set "WOU_FU_CLASS=suspect"
+echo Warning: Full upgrade exited 0 without an observed build change - never reported as success; verify Panther logs
+call :Log "Warning: Full upgrade exited 0 without an observed build change - never reported as success; verify Panther logs"
+echo FULLUPGRADE-SUSPECT
+call :Log "FULLUPGRADE-SUSPECT"
+goto :eof
+:DfuCatchAll
+set "WOU_FU_CLASS=fail"
+echo Warning: Full upgrade failed with undecoded exit code %~1
+call :Log "Warning: Full upgrade failed with undecoded exit code %~1"
+echo FULLUPGRADE-FAIL
+call :Log "FULLUPGRADE-FAIL"
+goto :eof
+
+:FullUpgradeSkip
+rem purge the full-FU session temporaries so no state leaks across runs
+set "WOU_FU_MEDIA="
+set "WOU_FU_MEDIA_BASE="
+set "WOU_FU_MEDIA_LANG="
+set "WOU_FU_MEDIA_COUNT="
+set "WOU_FU_MISSING_FILE="
+set "WOU_FU_RC="
+set "WOU_FU_CLASS="
+set "WOU_FU_SCAN_RC_RAW="
+set "WOU_FU_LAUNCH_RC_RAW="
 if "%WOU_TEST_MODE%"=="1" goto EoF
 
 rem *** Update Windows Update Agent ***

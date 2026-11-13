@@ -103,7 +103,7 @@ function uup_download_and_verify ()
     local aria_bin="" aria_opts=()
     local wget_bin="" wget_opts=()
     local spool_scratch="" aria_run_log="" wget_run_log=""
-    local pin_bad=0 pin_total=0 pin_match=0 pin_expect=0
+    local pin_bad=0 pin_total=0 pin_match=0 pin_expect=0 pin_glue=0
 
     if [[ ! -s "${manifest}" ]]
     then
@@ -242,6 +242,22 @@ function uup_download_and_verify ()
         then
             pin_bad=1
         fi
+        # Live-UAT 33 finding #6 twin: an URL-encoded backslash (%5C)
+        # passes the frozen charset (% is a legal URL byte) and is exactly
+        # the wget-normalized shape of a local path glued into a token URL
+        # - the live 403 mega-URL rendered the glue as %5C. Any list line
+        # carrying the sequence refuses the acquisition like a literal
+        # backslash does.
+        pin_glue="$(grep -c '%5C' "${uup_section_aria}" || true)"
+        if (( pin_glue > 0 ))
+        then
+            pin_bad=1
+        fi
+        pin_glue="$(grep -c '%5C' "${uup_section_aria_http}" || true)"
+        if (( pin_glue > 0 ))
+        then
+            pin_bad=1
+        fi
         if (( pin_bad == 1 ))
         then
             uup_section_cleanup
@@ -296,10 +312,11 @@ function uup_download_and_verify ()
     then
         pin_total="$(wc -l < "${uup_section_wget}")"
         pin_match="$(grep -cE $'^[A-Za-z0-9._-]+\thttps?://[A-Za-z0-9._~:/?&=%+-]+$' "${uup_section_wget}" || true)"
-        if (( pin_total != wget_rows )) || (( pin_match != wget_rows ))
+        pin_glue="$(grep -c '%5C' "${uup_section_wget}" || true)"
+        if (( pin_total != wget_rows )) || (( pin_match != wget_rows )) || (( pin_glue > 0 ))
         then
             uup_section_cleanup
-            log_error_message "The downloader list shape pin refused the acquisition - the wget list carries a line outside the frozen name-TAB-URI grammar. Nothing was downloaded."
+            log_error_message "The downloader list shape pin refused the acquisition - the wget list carries a line outside the frozen name-TAB-URI grammar (glued token, URL-encoded backslash). Nothing was downloaded."
             increment_error_count
             return 1
         fi

@@ -93,6 +93,26 @@ REM           exactly-one column-0 derivation-site census. Keeps the
 REM           today-failure shape (reuse and /skipdynamic runs silently
 REM           acquired nothing) from regressing.
 REM
+REM Live-UAT 33 finding #6 cases (2026-11-12 17:41 run), appended, existing
+REM cases untouched:
+REM   Case 21: form-gated downloader invocation source pin - the token-URL
+REM           argument must never ride the `call` argument re-parse (the
+REM           re-parse expands %N against this script's call arguments and
+REM           shredded every live token: %2b/%2f/%3d/%3A became
+REM           <url-map-path>/<files-dir>-glued material). An .exe
+REM           downloader (production) invokes directly; a batch-shaped
+REM           stub keeps the call form. Gate assignment/condition/use
+REM           counts + gate-before-use order.
+REM   Case 22: the call re-parse mechanism bite pair - a call-shaped
+REM           invocation shreds %N inside a percent-encoded token URL,
+REM           a direct invocation delivers it byte-intact
+REM   Case 23: a %5C-encoded backslash glue (the wget-normalized shape of
+REM           the live 403 mega-URL; % is charset-legal so the frozen
+REM           grammar alone misses it) refused by the shape pin BEFORE any
+REM           downloader runs. Case 9d additionally pins the token
+REM           confinement of the acquisition stdout channel (the channel
+REM           that carried the raw P1= lines of the live 15:34 runs).
+REM
 REM NOTE (DEC-33-13 supersession): the assembly runs the VENDORED wimlib
 REM (owner decision 2026-11-11), a userspace tool - there is NO elevation
 REM and NO RunAs prompt anywhere in this pipeline. The fail-closed refusal
@@ -218,6 +238,12 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\aria2-stub.cmd" echo exit /b 0
 >"%SB_STUBS%\wget-stub.cmd" echo @echo off
 >>"%SB_STUBS%\wget-stub.cmd" echo setlocal enabledelayedexpansion
+rem The -nv-parity URL echo: the real wget -nv writes the full requested
+rem URL (P1= token material) to its console on every transfer attempt.
+rem The stub reproduces that so the confinement assertions (case 9d) have
+rem something real to stay clean of. Quoted so the raw & tokens survive
+rem both the generator and the stub's own parser.
+>>"%SB_STUBS%\wget-stub.cmd" echo echo "https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000&P2=404&P3=2&P4=sigsmall"
 >>"%SB_STUBS%\wget-stub.cmd" echo set "STUB_HAS_HTTPS=0"
 >>"%SB_STUBS%\wget-stub.cmd" echo :stub_loop
 >>"%SB_STUBS%\wget-stub.cmd" echo if "%%~1"=="" goto stub_decide
@@ -508,6 +534,14 @@ findstr /C:"P1=" "%SIMLOG%" >nul 2>&1
 if not errorlevel 1 (echo FAIL: token material leaked into the DOWNLOAD_LOGFILE channel & goto Fail)
 findstr /C:"STUB-DOWNLOAD" "%SIMLOG%" >nul 2>&1
 if not errorlevel 1 (echo FAIL: downloader console output leaked into the DOWNLOAD_LOGFILE channel & goto Fail)
+rem The acquisition STDOUT (the engine-visible channel that became the raw
+rem P1= lines of the live 15:34 runs) must carry no token material either:
+rem the stub's -nv-shaped P1= URL echo may land ONLY in the spool scratch.
+rem The paired presence check keeps this assertion able to fail.
+findstr /C:"P1=" "%SB_OUT%\aq9d.out" >nul 2>&1
+if not errorlevel 1 (echo FAIL: token material leaked into the acquisition stdout channel & goto Fail)
+findstr /C:"P1=" "%SB_SPOOL%\wget-run.log" >nul 2>&1
+if errorlevel 1 (echo FAIL: the stub URL echo is missing from the confined spool scratch - the stdout-confinement assertion would be vacuous & goto Fail)
 rem The written aria list must be URI line + indented out= continuation.
 findstr /R /C:"^https*://[A-Za-z0-9._~:/?&=%%+-]*$" "%STUB_CAPTURE%" >nul 2>&1
 if errorlevel 1 (echo FAIL: the aria list URI line must match the frozen grammar & goto Fail)
@@ -919,9 +953,125 @@ if not "%DER20_COUNT%"=="1" (
 echo   ok 20b: exactly one column-0 derivation site.
 echo PASS: case 20 - acquisition block pinned ahead of both SkipSuperseded exits.
 
+echo --- Case 21: form-gated downloader invocation source pin (live-UAT 33 finding #6)
+rem The 2026-11-12 17:41 live run failed the wget small-payload leg on a
+rem glued mega-URL: the token's percent-encodings (%2b +, %2f /, %3d =,
+rem %3A :) were expanded by the `call` argument re-parse against THIS
+rem script's own call arguments (%2 = the url map path, %3 = the spool
+rem files dir), so ...P4=...%2b...%3d%3d reached wget as
+rem ...P4=...C:\...\url-map.tmpb...C:\...\filesd... The written list and
+rem the url map were proven byte-clean; the bite is the call re-parse.
+rem The fix gates the invocation form on the binary extension: an .exe
+rem downloader (the production shape) is invoked DIRECTLY - no re-parse -
+rem while a batch-shaped battery stub keeps the call form (a batch file
+rem invoked without call terminates the caller). Counts pin the gate
+rem assignment, the gate condition and exactly the two gated wget legs
+rem plus the two gated aria2 legs; the order pin keeps the gate ahead of
+rem its first use. Can-fail: the pre-fix source carries no gate at all
+rem (counts 0 instead of 2).
+rem The whole block runs with delayed expansion DISABLED: the anchors
+rem carry ! characters and the battery must pass them to findstr as
+rem inert text (an undefined !VAR! collapses to EMPTY inside a for /F
+rem command clause, which once turned the pattern into a missing-argument
+rem /C:). Same idiom as the stub-generation blocks above.
+setlocal disabledelayedexpansion
+set "WCALL_SET=0"
+set "WCALL_GATE=0"
+set "WCALL_USE=0"
+set "DCALL_SET=0"
+set "DCALL_USE=0"
+set "GATE21=0"
+set "USE21=0"
+for /F %%c in ('findstr /C:"UUP_AQ_WCALL=call" "%REPO_ROOT%\cmd\UpgradePayloads.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "WCALL_SET=%%c"
+if not "%WCALL_SET%"=="1" (echo FAIL: case 21 - the wget invocation form-gate assignment is missing or duplicated, got %WCALL_SET% & goto Fail)
+for /F %%c in ('findstr /C:":~-4" "%REPO_ROOT%\cmd\UpgradePayloads.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "WCALL_GATE=%%c"
+if not "%WCALL_GATE%"=="2" (echo FAIL: case 21 - exactly two .exe form-gate conditions expected ^(wget + aria2^), got %WCALL_GATE% & goto Fail)
+for /F %%c in ('findstr /C:"!UUP_AQ_WCALL!" "%REPO_ROOT%\cmd\UpgradePayloads.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "WCALL_USE=%%c"
+if not "%WCALL_USE%"=="2" (echo FAIL: case 21 - both wget legs must invoke through the form gate, got %WCALL_USE% & goto Fail)
+for /F %%c in ('findstr /C:"UUP_DLDR_CALL=call" "%REPO_ROOT%\cmd\UpgradePayloads.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "DCALL_SET=%%c"
+if not "%DCALL_SET%"=="1" (echo FAIL: case 21 - the aria2 invocation form-gate assignment is missing or duplicated, got %DCALL_SET% & goto Fail)
+for /F %%c in ('findstr /C:"!UUP_DLDR_CALL!" "%REPO_ROOT%\cmd\UpgradePayloads.cmd" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "DCALL_USE=%%c"
+if not "%DCALL_USE%"=="2" (echo FAIL: case 21 - both aria2 legs must invoke through the form gate, got %DCALL_USE% & goto Fail)
+for /F "tokens=1 delims=:" %%i in ('findstr /N /C:"UUP_AQ_WCALL=call" "%REPO_ROOT%\cmd\UpgradePayloads.cmd"') do if "%GATE21%"=="0" set "GATE21=%%i"
+for /F "tokens=1 delims=:" %%i in ('findstr /N /C:"!UUP_AQ_WCALL!" "%REPO_ROOT%\cmd\UpgradePayloads.cmd"') do if "%USE21%"=="0" set "USE21=%%i"
+if %GATE21% GEQ %USE21% (echo FAIL: case 21 - the form gate ^(line %GATE21%^) must precede its first use ^(line %USE21%^) & goto Fail)
+endlocal
+echo PASS: case 21 - downloader invocation form-gated: .exe direct, batch stub via call.
+
+echo --- Case 22: call re-parse mechanism bite pair (the semantics the gate relies on)
+rem Asserts BOTH cmd semantics the fix rests on, inside the battery so a
+rem runtime change can never silently invalidate the gate: (a) a
+rem call-shaped invocation EXPANDS %N inside a percent-encoded token URL
+rem (the shred that glued the live mega-URL - here %2/%3 are the empty
+rem battery arguments, so the shred is %2b -> b, %3d -> d); (b) a direct
+rem invocation delivers the token byte-intact. The direct probe runs in a
+rem throwaway `cmd /c` child because a batch file invoked without call
+rem chain-transfers control - exactly the reason the production gate
+rem exists. Can-fail: the shred side fails if a future cmd build stops
+rem expanding %N in call arguments, the intact side fails if percent
+rem material ever needs the call form again.
+set "MC22=%SANDBOX%\mech22"
+mkdir "%MC22%" 2>nul
+> "%MC22%\child.cmd" (
+  echo @echo off
+  echo set "OUT=%%~dp0argv.txt"
+  echo :loop
+  echo if "%%~1"=="" goto done
+  echo ^>^>"%%OUT%%" echo ARG=[%%1]
+  echo shift
+  echo goto loop
+  echo :done
+  echo ^>^>"%%OUT%%" echo ----
+  echo exit /b 0
+)
+> "%MC22%\direct.cmd" (
+  echo @echo off
+  echo rem Direct-invocation probe: %1 is a batch child - invoking it
+  echo rem without call chain-transfers control by design; this probe runs
+  echo rem in a throwaway `cmd /c` process so the battery survives.
+  echo %%1 "-c" "-nv" %%2
+)
+> "%MC22%\token.txt" echo https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000^&P2=404^&P3=2^&P4=sig%%2bsmall%%3d%%3d
+set "URL22="
+for /F "usebackq delims=" %%L in ("%MC22%\token.txt") do set "URL22=%%L"
+type nul > "%MC22%\argv.txt"
+call "%MC22%\child.cmd" "-c" "-nv" "!URL22!"
+findstr /C:"P4=sig%%2bsmall%%3d%%3d" "%MC22%\argv.txt" >nul 2>&1
+if not errorlevel 1 (echo FAIL: case 22 - the call-shaped invocation delivered the percent-encoded token intact; the shred semantics the gate relies on are gone & goto Fail)
+cmd /c ""%MC22%\direct.cmd" "%MC22%\child.cmd" "!URL22!"" >nul 2>&1
+findstr /C:"P4=sig%%2bsmall%%3d%%3d" "%MC22%\argv.txt" >nul 2>&1
+if errorlevel 1 (echo FAIL: case 22 - the direct invocation did not deliver the percent-encoded token byte-intact & goto Fail)
+echo PASS: case 22 - call shreds %%N inside the token URL, direct invocation delivers it intact.
+
+echo --- Case 23: URL-encoded backslash glue refused by the shape pin (live-UAT 33 finding #6)
+rem The wget-normalized rendering of the live 403 mega-URL was %5C: the
+rem glued local paths ride the frozen URI charset because % is a legal
+rem URL byte. The pin must refuse the sequence on every list side BEFORE
+rem any downloader runs. Can-fail: the pre-fix pin passes the %5C line
+rem (charset-legal), the stubs run and the acquisition ends green.
+set "STUB_MODE=OK"
+set "SB_SPOOL=%SANDBOX%\spool23"
+mkdir "%SB_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
+set "URLMAP23=%SB_FIX%\url-map-23.tmp"
+>"%URLMAP23%" echo small.cab!TAB!https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000^&P2=404^&P3=2^&P4=sig%%5CUsers%%5Cx%%5Curl-map.tmpbGZGr8GQ9bEd7
+>>"%URLMAP23%" echo big.esd!TAB!https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000^&P2=404^&P3=2^&P4=sigbig
+call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%URLMAP23%" "%SB_SPOOL%\files" >"%SB_OUT%\aq23.out" 2>&1
+set "AQ23_RC=!errorlevel!"
+if "%AQ23_RC%"=="0" (echo FAIL: a %5C-glued token URL must be refused by the shape pin - it rides the frozen charset & goto Fail)
+findstr /C:"shape pin refused" "%SB_OUT%\aq23.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the %5C refusal must name the shape pin & type "%SB_OUT%\aq23.out" & goto Fail)
+findstr /C:"STUB-DOWNLOAD" "%SB_OUT%\aq23.out" >nul 2>&1
+if not errorlevel 1 (echo FAIL: the %5C pin must refuse BEFORE any downloader runs & goto Fail)
+if exist "%URLMAP23%" del "%URLMAP23%" >nul 2>&1
+call :TempArtifactCount
+if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: the %5C refusal path leaked TEMP artifacts & goto Fail)
+echo PASS: case 23 - URL-encoded backslash glue refused before any downloader ran.
+
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 22 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 28 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

@@ -251,15 +251,27 @@ if !UUP_AQ_ARIA_ROWS! GTR 0 (
   if !UUP_PIN_MATCH! NEQ !UUP_AQ_ARIA_ROWS! set /a UUP_PIN_BAD+=1
   for /F %%C in ('findstr /R /C:"^  out=[A-Za-z0-9._-][A-Za-z0-9._-]*$" "!UUP_AQ_ARIA_HTTP!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
   if !UUP_PIN_MATCH! NEQ !UUP_AQ_ARIA_ROWS! set /a UUP_PIN_BAD+=1
+  rem Live-UAT 33 finding #6 extension: an URL-encoded backslash (%5C)
+  rem passes the frozen charset (% is a legal URL byte) and is exactly
+  rem the wget-normalized shape of a local path glued into a token URL -
+  rem the live 403 mega-URL rendered the glue as %5C. Any list line
+  rem carrying the sequence refuses the acquisition like a literal
+  rem backslash does.
+  for /F %%C in ('findstr /L /C:"%%5C" "!UUP_AQ_ARIA!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_MATCH! GTR 0 set /a UUP_PIN_BAD+=1
+  for /F %%C in ('findstr /L /C:"%%5C" "!UUP_AQ_ARIA_HTTP!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_MATCH! GTR 0 set /a UUP_PIN_BAD+=1
 )
 if !UUP_AQ_WGET_ROWS! GTR 0 (
   for /F %%C in ('%SystemRoot%\System32\find.exe /c /v "" ^<"!UUP_AQ_WGET!"') do set /a UUP_PIN_TOTAL=%%C
   for /F %%C in ('findstr /R /C:"^[A-Za-z0-9._-][A-Za-z0-9._-]*	https*://[A-Za-z0-9._~:/?&=%%+-]*$" "!UUP_AQ_WGET!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
   if !UUP_PIN_TOTAL! NEQ !UUP_AQ_WGET_ROWS! set /a UUP_PIN_BAD+=1
   if !UUP_PIN_MATCH! NEQ !UUP_AQ_WGET_ROWS! set /a UUP_PIN_BAD+=1
+  for /F %%C in ('findstr /L /C:"%%5C" "!UUP_AQ_WGET!" ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_PIN_MATCH=%%C
+  if !UUP_PIN_MATCH! GTR 0 set /a UUP_PIN_BAD+=1
 )
 if !UUP_PIN_BAD! GTR 0 (
-  echo ERROR: the downloader list shape pin refused the acquisition - a download list carries a line outside the frozen URI/continuation grammar ^(glued token, bare path, or second URI on one line^). Nothing was downloaded; the acquisition fails closed.
+  echo ERROR: the downloader list shape pin refused the acquisition - a download list carries a line outside the frozen URI/continuation grammar ^(glued token, bare path, URL-encoded backslash, or second URI on one line^). Nothing was downloaded; the acquisition fails closed.
   exit /b 1
 )
 exit /b 0
@@ -417,6 +429,26 @@ set "UUP_DLDR_COPT=--continue -x8 -s8 -j4 -k1M --file-allocation=none --max-trie
 set "UUP_DLDR_IOPT=-i"
 set "UUP_DLDR_POPT=-d"
 set "UUP_WGET_COPT=-c -nv"
+rem === live-UAT 33 finding #6 (2026-11-12 17:41 run): form-gated call ===
+rem `call` re-parses its arguments and expands %N against THIS script's
+rem own call arguments (%1..%3 = the manifest, the url map, the spool
+rem files dir). The UUP token URLs are percent-encoded (%2b = +, %2f = /,
+rem %3d = =, %3A = :), so the call-shaped wget invocation shredded every
+rem token: ...P4=...%2b...%3d%3d reached wget as
+rem ...P4=...<url-map-path>b...<files-dir>d<files-dir>d: - the glued
+rem mega-URL behind the live 403s. The written list and the url map were
+rem proven byte-clean (offline bite + the resolver twins); the bite is
+rem the call re-parse. An .exe downloader - the production shape - is
+rem invoked DIRECTLY: no re-parse, the URL reaches the binary
+rem byte-intact. A batch-shaped battery stub still needs the call form
+rem (a batch file invoked without call terminates the caller), so the
+rem form switches on the binary extension. The aria2 leg takes the same
+rem gate for the one-rule shape; its arguments are library-built paths
+rem with no percent material today.
+set "UUP_DLDR_CALL=call "
+if /i "!UUP_DLDR_PATH:~-4!"==".exe" set "UUP_DLDR_CALL="
+set "UUP_AQ_WCALL=call "
+if /i "!UUP_WGET_BIN:~-4!"==".exe" set "UUP_AQ_WCALL="
 rem Token confinement (ACQ-01, live-UAT 33 finding #5): the UUP section
 rem NEVER wires wget's -a log at the persistent DOWNLOAD_LOGFILE - wget -nv
 rem echoes full token URLs (P1=..P4= material) into it (the 2026-11-12
@@ -518,10 +550,10 @@ if !UUP_AQ_ARIA_ROWS! GTR 0 (
     goto :UpgAcquireFail
   )
   echo Info: Downloading !UUP_AQ_ARIA_ROWS! big upgrade payload^(s^) resume-tuned via aria2...
-  >"!UUP_AQ_SPOOL!\..\aria2-run.log" 2>&1 call "%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
+  >"!UUP_AQ_SPOOL!\..\aria2-run.log" 2>&1 !UUP_DLDR_CALL!"%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
   if errorlevel 1 (
     echo Info: https token URLs failed - falling back to the original http URLs once ^(DEC-33-15, legitimized by the end-to-end sha256 audit^).
-    >>"!UUP_AQ_SPOOL!\..\aria2-run.log" 2>&1 call "%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA_HTTP!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
+    >>"!UUP_AQ_SPOOL!\..\aria2-run.log" 2>&1 !UUP_DLDR_CALL!"%UUP_DLDR_PATH%" !UUP_DLDR_COPT! !UUP_DLDR_IOPT! "!UUP_AQ_ARIA_HTTP!" !UUP_DLDR_POPT! "!UUP_AQ_SPOOL!"
     if errorlevel 1 goto :UpgAcquireFail
   )
 )
@@ -533,12 +565,15 @@ if !UUP_AQ_WGET_ROWS! GTR 0 (
   )
   echo Info: Downloading !UUP_AQ_WGET_ROWS! small upgrade payload^(s^) with wget -c...
   for /F "usebackq tokens=1-2 delims=	" %%w in ("!UUP_AQ_WGET!") do (
-    >>"!UUP_AQ_SPOOL!\..\wget-run.log" 2>&1 call "%UUP_WGET_BIN%" !UUP_WGET_COPT! -O "!UUP_AQ_SPOOL!\%%w" "%%x"
+    rem Form-gated invocation (live-UAT 33 finding #6): the token URL
+    rem argument must never ride through a call re-parse - see the gate
+    rem block at the option variables above.
+    >>"!UUP_AQ_SPOOL!\..\wget-run.log" 2>&1 !UUP_AQ_WCALL!"%UUP_WGET_BIN%" !UUP_WGET_COPT! -O "!UUP_AQ_SPOOL!\%%w" "%%x"
     if errorlevel 1 (
       set "UUP_AQ_WURL=%%x"
       set "UUP_AQ_WURL=!UUP_AQ_WURL:https://=http://!"
       echo Info: https failed for %%w - http fallback ^(DEC-33-15^).
-      >>"!UUP_AQ_SPOOL!\..\wget-run.log" 2>&1 call "%UUP_WGET_BIN%" !UUP_WGET_COPT! -O "!UUP_AQ_SPOOL!\%%w" "!UUP_AQ_WURL!"
+      >>"!UUP_AQ_SPOOL!\..\wget-run.log" 2>&1 !UUP_AQ_WCALL!"%UUP_WGET_BIN%" !UUP_WGET_COPT! -O "!UUP_AQ_SPOOL!\%%w" "!UUP_AQ_WURL!"
       if errorlevel 1 goto :UpgAcquireFail
     )
   )

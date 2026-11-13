@@ -540,7 +540,16 @@ build_urlmap_hostile_wget() {
     printf 'big.esd\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000&P2=404&P3=2&P4=sigbig\n' >> "${out}"
 }
 
-for hostile_case in aria wget
+# Live-UAT 33 finding #6: the wget-normalized glue shape - %5C rides the
+# frozen URI charset (% is a legal URL byte), so the grammar alone misses
+# it; the pin refuses the sequence on its own terms.
+build_urlmap_hostile_wget_5c() {
+    local out="$1"
+    printf 'small.cab\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000&P2=404&P3=2&P4=sigsmall%%5CUsers%%5Cx%%5Curl-map.tmpbGZGr8GQ9bEd7\n' > "${out}"
+    printf 'big.esd\thttps://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/22222222-2222-2222-2222-222222222222?P1=1794420000&P2=404&P3=2&P4=sigbig\n' >> "${out}"
+}
+
+for hostile_case in aria wget wget-pct5c
 do
     spool_p="${tmp_dir}/spool-pin-${hostile_case}"
     files_p="${spool_p}/files"
@@ -550,6 +559,9 @@ do
     if [[ "${hostile_case}" == "aria" ]]
     then
         build_urlmap_hostile_aria "${spool_p}/url-map.tmp"
+    elif [[ "${hostile_case}" == "wget-pct5c" ]]
+    then
+        build_urlmap_hostile_wget_5c "${spool_p}/url-map.tmp"
     else
         build_urlmap_hostile_wget "${spool_p}/url-map.tmp"
     fi
@@ -570,7 +582,7 @@ do
     errors_p=$(( runtime_errors - errors_before_p ))
     assert_eq "${errors_p}" "1" "the ${hostile_case}-side pin refusal increments exactly one error"
 done
-echo "[G2] glued aria-side and wget-side URLs refused fail-closed before any downloader ran."
+echo "[G2] glued aria-side, wget-side and %5C-encoded wget URLs refused fail-closed before any downloader ran."
 
 # -----------------------------------------------------------------------
 # G3. Downloader output confined to the spool scratch + the mandated

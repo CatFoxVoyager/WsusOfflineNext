@@ -45,7 +45,11 @@ rem   :UpgAcquire <manifest> <url_map> <spool_dir> - orchestrator: budget
 rem           line FIRST, size-descending (big-first) split download (aria2
 rem           resume-tuned / wget -c), hash gate, TEMP-artifact cleanup on
 rem           EVERY exit path (T-33-09: the url map and the downloader lists
-rem           carry token URL material and never persist)
+rem           carry token URL material and never persist). A pre-download
+rem           short-circuit (live-UAT 33 finding #8): a spool whose file
+rem           count already equals the manifest rows is audited FIRST and,
+rem           if green, skips both download legs - the wget leg cannot
+rem           survive a token-service refusal on an already-complete spool.
 rem   :UpgAssembleMedia <payload_dir> <media_stage_dir> <manifest>
 rem           - the media assembly stage (plan 33-04, ACQ-03): verifies the
 rem             vendored wimlib fail-closed against bin\wimlib\SHA256SUMS
@@ -96,7 +100,9 @@ rem           target-lang-arch whose manifest uuid differs (keep-list =
 rem           staged uuid). Zero matching siblings = zero deletions. This
 rem           stage NEVER touches client\upgrade\ content and never
 rem           registers the subtree with the existing cleanup walk.
-rem   :UpgSectionEntry - the engine gate: no TMP_UPG_TARGETS selection or no
+rem   :UpgSectionEntry - the engine gate: no TMP_UPG_TARGETS selection, no
+rem           carrying scope token (w100/w100-x64 whose arch matches the
+rem           picked row - the scope gate, live-UAT 33 finding #7b), or no
 rem           fu_media=1 row = absolute no-op (statu quo, DEC-33-09); with a
 rem           qualifying target: acquire, assemble, stage gate-ordered,
 rem           create the media db, purge revisions post-success.
@@ -123,7 +129,7 @@ goto %UUP_ENTRY%
 
 :UpgUsage
 echo Usage: %~n0 ^<subroutine^> [args...]
-echo Subroutines: :UpgReadFuMedia :UpgBudgetLine :UpgClassifySize :UpgHashGate :UpgAcquire :UpgSectionEntry :UpgAssembleMedia :UpgAuthenticodeGate :UpgStageMedia :UpgCreateMediaDb :UpgPurgeRevisions
+echo Subroutines: :UpgReadFuMedia :UpgBudgetLine :UpgClassifySize :UpgHashGate :UpgAcquire :UpgSectionEntry :UpgAssembleMedia :UpgAuthenticodeGate :UpgMoveTree :UpgStageMedia :UpgCreateMediaDb :UpgPurgeRevisions
 exit /b 1
 
 :UpgReadFuMedia
@@ -537,6 +543,35 @@ rem downloaded, instead of feeding fake URIs to aria2/wget.
 call :UpgPinDownloadLists
 if errorlevel 1 goto :UpgAcquireFail
 
+rem === Verify-before-download short-circuit (live-UAT 33 finding #8) ===
+rem On an already-complete spool the aria2 leg completes network-free
+rem ("Download has already completed", measured live 2026-11-12 20:44)
+rem while the wget leg still contacts the token service for every small
+rem payload - and the token service refuses post-bulk-download requests
+rem (the live 20:44 wget-run.log carries exactly two localized
+rem access-denied lines: https try + http fallback on the FIRST small
+rem file). The acquisition then dies with nothing wrong on disk and the
+rem staging that follows never runs. So: when the working files\ dir
+rem already carries exactly the manifest's payload file count, audit it
+rem FIRST - a green audit skips both download legs entirely; anything
+rem else (missing, extra, or corrupted file) falls through to the legs
+rem exactly as before, and the unconditional final hash gate below keeps
+rem the fail-closed contract. The count equality is load-bearing, not
+rem cosmetic: hashdeep's audit mode reports known-but-absent files in its
+rem summary without failing the audit.
+set /a UUP_AQ_ROWS=!UUP_AQ_ARIA_ROWS! + !UUP_AQ_WGET_ROWS!
+set /a UUP_AQ_HAVE=0
+for /F %%c in ('dir /B "!UUP_AQ_SPOOL!" 2^>nul ^| %SystemRoot%\System32\find.exe /c /v ""') do set /a UUP_AQ_HAVE=%%c
+if !UUP_AQ_HAVE! EQU !UUP_AQ_ROWS! if !UUP_AQ_ROWS! GTR 0 (
+  echo Info: the spool already carries all !UUP_AQ_ROWS! payload file^(s^) - auditing before any download...
+  call :UpgHashGate "!UUP_AQ_MANIFEST!" "!UUP_AQ_SPOOL!"
+  if not errorlevel 1 (
+    echo Info: pre-verified spool accepted - skipping the download legs ^(nothing to download^).
+    goto :UpgAcquireEnd
+  )
+  echo Info: the pre-download audit refused the spool - falling through to the download legs.
+)
+
 if !UUP_AQ_ARIA_ROWS! GTR 0 (
   rem Ensure the aria2 binary: fetch through the EXISTING audited activation
   rem path when absent (T-33-SC). The sandbox battery pre-places a stub and
@@ -614,6 +649,24 @@ rem no-op: zero output, zero side effects (DEC-33-09 statu quo). With one
 rem qualifying target: resolve (coupled, one-shot) into the DEC-33-14 spool,
 rem then :UpgAcquire.
 if not defined TMP_UPG_TARGETS exit /b 0
+rem === Scope gate (live-UAT 33 finding #7b) ===
+rem The selection twin (sh\os-upgrades.ini) and the upgrade table are
+rem GLOBAL - every scope invocation of the engine saw the same fu_media=1
+rem row and fired the acquisition, so the 2026-11-12 20:14 GUI run
+rem produced one real acquisition (the w100-x64 invocation) plus nine
+rem redundant resolves whose download legs the token service refused
+rem (403) - ten UpgradeErrors total, nine of them pure waste. The upgrade
+rem payloads are a w100-family product: only the invocation whose OWN
+rem target token carries the picked row's arch may acquire - the
+rem engine-side equivalent of the generator's Win10/11-x64 job gate
+rem (job.HasWin11Or10x64). The scope token rides in the subroutine's %1
+rem (w100 / w100-x64 / ...), forwarded by the call site after the
+rem dispatcher shift; an absent token (battery or manual call) stays an
+rem absolute no-op - fail-closed to the statu quo. Non-carrying scopes:
+rem zero output, zero side effects (the DEC-33-09 discipline).
+set "UUP_SCOPE=%~1"
+if "!UUP_SCOPE!"=="" exit /b 0
+if /i "!UUP_SCOPE!"=="w100" (set "UUP_SCOPE_ARCH=x86") else if /i "!UUP_SCOPE!"=="w100-x64" (set "UUP_SCOPE_ARCH=x64") else exit /b 0
 set "UUP_SEL_FILE=%WOU_UPGRADE_SEL%"
 if "!UUP_SEL_FILE!"=="" set "UUP_SEL_FILE=..\sh\os-upgrades.ini"
 if not exist "!UUP_SEL_FILE!" exit /b 0
@@ -626,21 +679,25 @@ if "!UUP_LANG!"=="" set "UUP_LANG=en-us"
 set "UUP_SPOOL=%WOU_UPGRADE_SPOOL%"
 if "!UUP_SPOOL!"=="" set "UUP_SPOOL=%TEMP%\wou-upgrade-spool"
 set "UUP_TABLE=%WOU_UPGRADE_TABLE%"
-rem First selected build_arch key whose upgrades.txt row carries fu_media=1
-rem (DEC-33-09). The key grammar is <build>_<arch>=on - the delims walk
-rem splits on BOTH the underscore and the equals sign, so %%b carries the
-rem build part and %%c the bare arch. One full-FU target per medium: the
-rem first qualifying key wins; further keys would be consumed by a later
-rem run.
+rem First selected build_arch key whose upgrades.txt row carries
+rem fu_media=1 (DEC-33-09) AND whose arch matches this invocation's scope
+rem arch (the scope gate above) - each scope acquires only what it
+rem carries. The key grammar is
+rem <build>_<arch>=on - the delims walk splits on BOTH the underscore and
+rem the equals sign, so %%b carries the build part and %%c the bare arch.
+rem One full-FU target per medium: the first qualifying key wins; further
+rem keys would be consumed by a later run.
 set "UUP_TGT_BUILD="
 set "UUP_TGT_ARCH="
 for /F "usebackq eol=# tokens=1-2 delims=_=" %%b in ("!UUP_SEL_FILE!") do (
   if "!UUP_TGT_BUILD!"=="" (
-    rem the internal caller reads UUP_FM_VALUE; the value echo is redirected
-    call :UpgReadFuMedia %%b %%c "!UUP_TABLE!" >nul
-    if "!UUP_FM_VALUE!"=="1" (
-      set "UUP_TGT_BUILD=%%b"
-      set "UUP_TGT_ARCH=%%c"
+    if /i "%%c"=="!UUP_SCOPE_ARCH!" (
+      rem the internal caller reads UUP_FM_VALUE; the value echo is redirected
+      call :UpgReadFuMedia %%b %%c "!UUP_TABLE!" >nul
+      if "!UUP_FM_VALUE!"=="1" (
+        set "UUP_TGT_BUILD=%%b"
+        set "UUP_TGT_ARCH=%%c"
+      )
     )
   )
 )
@@ -1110,6 +1167,52 @@ if !UUP_AG_BAD! GTR 0 (
 echo Info: Authenticode gate passed - !UUP_AG_SIGNED! signed row^(s^), !UUP_AG_ALLOWED! allowed convention row^(s^) ^(.mui resources / catalog-signed migration DLLs^), !UUP_AG_ROWS! rows scanned.
 exit /b 0
 
+:UpgMoveTree
+rem === cross-volume whole-tree move (live-UAT 33 finding #7a) ===
+rem %1 = source dir, %2 = destination dir (must NOT exist; the callers
+rem clear the way first). cmd's internal `move` cannot move a DIRECTORY
+rem across volumes - measured 2026-11-12: same-volume dir move rc=0,
+rem cross-volume rc=1 "Access denied", cross-volume FILE move rc=0 - and
+rem the engine geometry is cross-volume by construction: the spool lives
+rem in %TEMP% (C: on the live deployment) while the client tree lives
+rem beside this script (D:). The staging refresh never fired there - the
+rem sandbox batteries place spool, stage and client root under one %TEMP%
+rem volume, so the defect was invisible to every gate until the live run.
+rem robocopy (System32, no new dependency) implements the move as
+rem copy+delete with preserved file and directory timestamps
+rem (/COPY:DAT /DCOPY:DAT - the staged scaffold must keep its media
+rem timestamps), bounded retries, and the robocopy exit convention:
+rem 0-7 are success classes, >= 8 is a failure. A mid-copy failure
+rem leaves the source partially consumed (each file is deleted only
+rem after its copy) - the callers own the rollback, through this same
+rem helper for the cross-volume direction. The bash twin needs no
+rem counterpart: `mv` handles cross-device moves natively.
+set "UUP_MT_SRC=%~1"
+set "UUP_MT_DST=%~2"
+if "!UUP_MT_SRC!"=="" (
+  echo ERROR: source directory argument missing for :UpgMoveTree.
+  exit /b 1
+)
+if "!UUP_MT_DST!"=="" (
+  echo ERROR: destination directory argument missing for :UpgMoveTree.
+  exit /b 1
+)
+if not exist "!UUP_MT_SRC!\" (
+  echo ERROR: source directory not found: !UUP_MT_SRC!
+  exit /b 1
+)
+if exist "!UUP_MT_DST!\" (
+  echo ERROR: destination directory already exists - refusing to merge: !UUP_MT_DST!
+  exit /b 1
+)
+"%SystemRoot%\System32\robocopy.exe" "!UUP_MT_SRC!" "!UUP_MT_DST!" /E /MOVE /COPY:DAT /DCOPY:DAT /R:1 /W:1 /NFL /NDL /NP /NJH >nul 2>&1
+set "UUP_MT_RC=!errorlevel!"
+if !UUP_MT_RC! GEQ 8 (
+  echo ERROR: the whole-tree move failed ^(robocopy exit class !UUP_MT_RC!^): "!UUP_MT_SRC!" -^> "!UUP_MT_DST!"
+  exit /b 1
+)
+exit /b 0
+
 :UpgStageMedia
 rem === gate-ordered whole-tree staging (T-33-12) ===
 rem %1 = assembled media stage dir, %2 = the spool acquisition manifest,
@@ -1184,7 +1287,7 @@ set "UUP_SM_ASIDE="
 if exist "!UUP_SM_TARGET!\" (
   set "UUP_SM_ASIDE=!UUP_SM_SPOOL!\replaced-!UUP_SM_UUID!-%RANDOM%"
   echo Info: Existing media found - moving the old tree aside ^(delete-after-success^): !UUP_SM_ASIDE!
-  move "!UUP_SM_TARGET!" "!UUP_SM_ASIDE!" >nul
+  call :UpgMoveTree "!UUP_SM_TARGET!" "!UUP_SM_ASIDE!"
   if errorlevel 1 (
     echo ERROR: could not move the existing media aside - staging refused, the old revision stays untouched.
     set "UUP_SM_ASIDE="
@@ -1192,18 +1295,30 @@ if exist "!UUP_SM_TARGET!\" (
   )
 )
 rem The move: the whole assembled tree lands in the target in one movement
+rem (cross-volume safe - the spool and the client tree typically sit on
+rem different volumes, where cmd's internal move refuses directories)
 if not exist "!UUP_SM_CLIENT!\upgrade\!UUP_SM_CIBLE!-!UUP_SM_ARCHE!\" md "!UUP_SM_CLIENT!\upgrade\!UUP_SM_CIBLE!-!UUP_SM_ARCHE!"
-move "!UUP_SM_STAGE!" "!UUP_SM_TARGET!" >nul
+call :UpgMoveTree "!UUP_SM_STAGE!" "!UUP_SM_TARGET!"
 if errorlevel 1 (
   echo ERROR: the media move failed - staging refused.
-  if defined UUP_SM_ASIDE move "!UUP_SM_ASIDE!" "!UUP_SM_TARGET!" >nul
+  if defined UUP_SM_ASIDE (
+    rem A failed robocopy move may leave a PARTIAL target behind - clear
+    rem it before the old revision can move back in
+    rd /s /q "!UUP_SM_TARGET!" >nul 2>&1
+    call :UpgMoveTree "!UUP_SM_ASIDE!" "!UUP_SM_TARGET!"
+    if errorlevel 1 echo ERROR: the old revision could not be restored from the aside - recover it manually from: !UUP_SM_ASIDE!
+  )
   exit /b 1
 )
 rem The acquisition manifest lands beside the media
 copy /y "!UUP_SM_MANIFEST!" "!UUP_SM_TARGET!\manifest.txt" >nul
 if errorlevel 1 (
   echo ERROR: staging the manifest beside the media failed.
-  if defined UUP_SM_ASIDE move "!UUP_SM_ASIDE!" "!UUP_SM_TARGET!" >nul
+  if defined UUP_SM_ASIDE (
+    rd /s /q "!UUP_SM_TARGET!" >nul 2>&1
+    call :UpgMoveTree "!UUP_SM_ASIDE!" "!UUP_SM_TARGET!"
+    if errorlevel 1 echo ERROR: the old revision could not be restored from the aside - recover it manually from: !UUP_SM_ASIDE!
+  )
   exit /b 1
 )
 rem Delete-after-success: the new media must be staged AND its manifest

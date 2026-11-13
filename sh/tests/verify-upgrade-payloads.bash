@@ -74,10 +74,18 @@ echo "======================================================================="
 tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t 'wou_upg_test')"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-# Sandbox hygiene: a previous battery run (or a real engine run) may have
-# left the default DEC-33-14 spool root behind - Section B asserts its
-# absence, so start from the known state
-rm -rf "${TMPDIR:-/tmp}/wou-upgrade-spool" /tmp/wou-upgrade-spool
+# Sandbox containment (live-UAT 2026-11-12 finding #9): TMPDIR is pointed
+# INSIDE the battery sandbox so every sourced-code default that resolves
+# through "${TMPDIR:-/tmp}" (the DEC-33-14 spool root included) lands in
+# scratch this battery owns. The previous hygiene line pre-deleted the
+# default spool root "${TMPDIR:-/tmp}/wou-upgrade-spool" - on Git Bash
+# for Windows /tmp IS the Windows %TEMP%, so that delete destroyed the
+# CMD engine's LIVE acquisition spool (the DEC-33-14 resume state, the
+# 2026-11-12 20:14 real run's 196 verified payload files) on every
+# battery / phase-gate run. A test instrument never owns production
+# state: contain the defaults, never delete outside the sandbox. Section
+# B's default-location assertion reads the contained path.
+export TMPDIR="${tmp_dir}"
 
 sb_sh="${tmp_dir}/sh"
 sb_fix="${tmp_dir}/fixtures"
@@ -306,7 +314,7 @@ echo "[A] classification boundaries green, invalid size refused."
 echo "--- Section B: no-selection no-op (real task 62 sourced) ---"
 assert_eq "$(cat "${tmp_dir}/task-setup.log")" "" "task 62 with no selection file produces zero output"
 assert_eq "${runtime_errors}" "0" "the no-op increments no errors"
-if [[ -d "${HOME}/wou-upgrade-spool" || -d "/tmp/wou-upgrade-spool" ]]; then
+if [[ -d "${HOME}/wou-upgrade-spool" || -d "${TMPDIR}/wou-upgrade-spool" ]]; then
     printf 'FAIL: the no-selection run must not create the default spool\n'
     exit 1
 fi

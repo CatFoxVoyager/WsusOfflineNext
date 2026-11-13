@@ -113,6 +113,30 @@ REM           downloader runs. Case 9d additionally pins the token
 REM           confinement of the acquisition stdout channel (the channel
 REM           that carried the raw P1= lines of the live 15:34 runs).
 REM
+REM Live-UAT 33 finding #7/#8 cases (2026-11-12 20:14 run), appended,
+REM existing cases untouched:
+REM   Case 16b: the staging move is cross-volume safe - cmd `move` cannot
+REM           move directories across volumes and the live geometry is
+REM           spool in %TEMP% (C:) vs client tree on D:; the case stages
+REM           onto a second volume with an existing same-uuid target (the
+REM           aside path). Single-volume hosts skip loudly.
+REM   Case 24: the pre-download short-circuit - a count-complete spool is
+REM           audited FIRST and a green audit skips both download legs
+REM           (the live 20:44 wget-leg 403 death on a complete spool).
+REM   Case 25: the scope gate - only the w100/w100-x64 scope whose arch
+REM           matches the picked row's arch acquires; non-carrying scopes
+REM           and an absent scope token are byte-level no-ops (the twin is
+REM           global; without the gate ten scope invocations all fired).
+REM   Case 26: staging refresh over the REAL complete spool copy (guarded:
+REM           skipped loudly when %TEMP%\wou-upgrade-spool or a second
+REM           volume is absent) - the full :UpgStageMedia with the real
+REM           hashdeep + real vendored sigcheck over the real payload set.
+REM
+REM Case 7/8/9d fixture note: their spools start EMPTY since finding #8 -
+REM a complete spool is now a legitimate skip-the-legs state, so the leg
+REM behavior those cases test needs the stubs to DELIVER the payload
+REM fixtures (STUB_DELIVER_DIR) into their download targets.
+REM
 REM NOTE (DEC-33-13 supersession): the assembly runs the VENDORED wimlib
 REM (owner decision 2026-11-11), a userspace tool - there is NO elevation
 REM and NO RunAs prompt anywhere in this pipeline. The fail-closed refusal
@@ -176,6 +200,15 @@ if not "%SMALL_SIZE%"=="102" (
   echo ERROR: small.cab fixture size is %SMALL_SIZE%, expected 102.
   goto Fail
 )
+rem The stub deliver dir (case 7/8/9d): the downloader stubs "download"
+rem by copying payload fixtures into their -d/-O targets. It carries the
+rem payload files ONLY - the stubs copy the whole dir for the aria2 leg,
+rem and stray non-payload files would break the acquisition's
+rem pre-download count-equality check (finding #8 short-circuit).
+set "SB_DELIVER=%SB_FIX%\deliver"
+mkdir "%SB_DELIVER%" 2>nul
+copy /y "%BIG%" "%SB_DELIVER%\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SB_DELIVER%\small.cab" >nul 2>&1
 
 rem Fixture manifest (DEC-33-02 shape): 2 payload rows, self-consistent
 rem totals (104857600 + 102 = 104857702 bytes; int(104857702/1048576) = 99)
@@ -222,10 +255,12 @@ setlocal disabledelayedexpansion
 >"%SB_STUBS%\aria2-stub.cmd" echo @echo off
 >>"%SB_STUBS%\aria2-stub.cmd" echo setlocal enabledelayedexpansion
 >>"%SB_STUBS%\aria2-stub.cmd" echo set "STUB_LIST="
+>>"%SB_STUBS%\aria2-stub.cmd" echo set "STUB_DIR="
 >>"%SB_STUBS%\aria2-stub.cmd" echo set "PREV="
 >>"%SB_STUBS%\aria2-stub.cmd" echo :stub_loop
 >>"%SB_STUBS%\aria2-stub.cmd" echo if "%%~1"=="" goto stub_decide
 >>"%SB_STUBS%\aria2-stub.cmd" echo if "%%PREV%%"=="-i" set "STUB_LIST=%%~1"
+>>"%SB_STUBS%\aria2-stub.cmd" echo if "%%PREV%%"=="-d" set "STUB_DIR=%%~f1"
 >>"%SB_STUBS%\aria2-stub.cmd" echo set "PREV=%%~1"
 >>"%SB_STUBS%\aria2-stub.cmd" echo shift
 >>"%SB_STUBS%\aria2-stub.cmd" echo goto stub_loop
@@ -233,6 +268,7 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\aria2-stub.cmd" echo if defined STUB_LIST if exist "!STUB_LIST!" findstr /C:"https://" "!STUB_LIST!" ^>nul 2^>^&1
 >>"%SB_STUBS%\aria2-stub.cmd" echo if not errorlevel 1 if /i "%%STUB_MODE%%"=="HTTPS-FAILS" exit /b 1
 >>"%SB_STUBS%\aria2-stub.cmd" echo if /i "%%STUB_MODE%%"=="ALWAYS-FAILS" exit /b 1
+>>"%SB_STUBS%\aria2-stub.cmd" echo if defined STUB_DELIVER_DIR if defined STUB_DIR copy /y "!STUB_DELIVER_DIR!\*" "!STUB_DIR!\" ^>nul 2^>^&1
 >>"%SB_STUBS%\aria2-stub.cmd" echo if defined STUB_CAPTURE if defined STUB_LIST copy /y "!STUB_LIST!" "%%STUB_CAPTURE%%" ^>nul 2^>^&1
 >>"%SB_STUBS%\aria2-stub.cmd" echo echo ARIA2-STUB-DOWNLOAD
 >>"%SB_STUBS%\aria2-stub.cmd" echo exit /b 0
@@ -245,15 +281,22 @@ rem something real to stay clean of. Quoted so the raw & tokens survive
 rem both the generator and the stub's own parser.
 >>"%SB_STUBS%\wget-stub.cmd" echo echo "https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/11111111-1111-1111-1111-111111111111?P1=1794420000&P2=404&P3=2&P4=sigsmall"
 >>"%SB_STUBS%\wget-stub.cmd" echo set "STUB_HAS_HTTPS=0"
+>>"%SB_STUBS%\wget-stub.cmd" echo set "PREV="
+>>"%SB_STUBS%\wget-stub.cmd" echo set "STUB_OUTFILE="
+>>"%SB_STUBS%\wget-stub.cmd" echo set "STUB_OUTNAME="
 >>"%SB_STUBS%\wget-stub.cmd" echo :stub_loop
 >>"%SB_STUBS%\wget-stub.cmd" echo if "%%~1"=="" goto stub_decide
 >>"%SB_STUBS%\wget-stub.cmd" echo set "STUB_ARG=%%~1"
+>>"%SB_STUBS%\wget-stub.cmd" echo if "%%PREV%%"=="-O" set "STUB_OUTFILE=%%~f1"
+>>"%SB_STUBS%\wget-stub.cmd" echo if "%%PREV%%"=="-O" set "STUB_OUTNAME=%%~nx1"
 >>"%SB_STUBS%\wget-stub.cmd" echo if not "!STUB_ARG!"=="!STUB_ARG:https://=!" set "STUB_HAS_HTTPS=1"
+>>"%SB_STUBS%\wget-stub.cmd" echo set "PREV=%%~1"
 >>"%SB_STUBS%\wget-stub.cmd" echo shift
 >>"%SB_STUBS%\wget-stub.cmd" echo goto stub_loop
 >>"%SB_STUBS%\wget-stub.cmd" echo :stub_decide
 >>"%SB_STUBS%\wget-stub.cmd" echo if "!STUB_HAS_HTTPS!"=="1" if /i "%%STUB_MODE%%"=="HTTPS-FAILS" exit /b 1
 >>"%SB_STUBS%\wget-stub.cmd" echo if /i "%%STUB_MODE%%"=="ALWAYS-FAILS" exit /b 1
+>>"%SB_STUBS%\wget-stub.cmd" echo if defined STUB_DELIVER_DIR if defined STUB_OUTFILE if not exist "!STUB_OUTFILE!" copy /y "!STUB_DELIVER_DIR!\!STUB_OUTNAME!" "!STUB_OUTFILE!" ^>nul 2^>^&1
 >>"%SB_STUBS%\wget-stub.cmd" echo echo WGET-STUB-DOWNLOAD
 >>"%SB_STUBS%\wget-stub.cmd" echo exit /b 0
 endlocal
@@ -409,13 +452,16 @@ if "%HG_TR_RC%"=="0" (echo FAIL: a truncated payload must be refused even though
 echo PASS: case 6 - truncated spool refused.
 
 echo --- Case 7: :UpgAcquire orchestration over fixture url map + stubs ---
+rem The spool starts EMPTY: since finding #8 a complete spool is a valid
+rem skip-the-legs state, and this case must exercise the download legs -
+rem the stubs deliver the payload fixtures into their -d/-O targets.
 set "STUB_MODE=OK"
+set "STUB_DELIVER_DIR=%SB_DELIVER%"
 set "SB_SPOOL=%SANDBOX%\spool7"
 mkdir "%SB_SPOOL%\files" 2>nul
-copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
-copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
 copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
 call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%SB_SPOOL%\url-map.tmp" "%SB_SPOOL%\files" >"%SB_OUT%\aq.out" 2>&1
+set "STUB_DELIVER_DIR="
 set "AQ_RC=!errorlevel!"
 if not "%AQ_RC%"=="0" (echo FAIL: the orchestration case must end green over matching stubs & type "%SB_OUT%\aq.out" & goto Fail)
 call :OrderOf "BUDGET:" "Info: Downloading" "%SB_OUT%\aq.out"
@@ -436,13 +482,16 @@ if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: TEMP artifact count %TEMP_C
 echo PASS: case 7 - budget-first order, hash gate ran, spool intact, temp artifacts deleted.
 
 echo --- Case 8: https-first / http-fallback (DEC-33-15) ---
+rem Empty spool + delivering stubs: the legs must run for the fallback
+rem shapes to exist (see case 7 - finding #8 made a complete spool a
+rem legitimate skip state).
 set "STUB_MODE=HTTPS-FAILS"
+set "STUB_DELIVER_DIR=%SB_DELIVER%"
 set "SB_SPOOL=%SANDBOX%\spool8"
 mkdir "%SB_SPOOL%\files" 2>nul
-copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
-copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
 copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
 call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%SB_SPOOL%\url-map.tmp" "%SB_SPOOL%\files" >"%SB_OUT%\aq8.out" 2>&1
+set "STUB_DELIVER_DIR="
 set "AQ8_RC=!errorlevel!"
 if not "%AQ8_RC%"=="0" (echo FAIL: the https-refusing stub must still end green through the http fallback & type "%SB_OUT%\aq8.out" & goto Fail)
 findstr /C:"falling back to the original http URLs" "%SB_OUT%\aq8.out" >nul 2>&1
@@ -452,11 +501,12 @@ if errorlevel 1 (echo FAIL: the wget http fallback line is missing & goto Fail)
 echo PASS: case 8 - bounded https-first, http-fallback transport proven.
 
 echo --- Case 9: loud abort + cleanup on the failure path ---
+rem Empty spool (and no deliver dir): the failing stubs must never see a
+rem pre-verified skip state - the legs must run and fail loudly.
 set "STUB_MODE=ALWAYS-FAILS"
+set "STUB_DELIVER_DIR="
 set "SB_SPOOL=%SANDBOX%\spool9"
 mkdir "%SB_SPOOL%\files" 2>nul
-copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
-copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
 copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
 call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%SB_SPOOL%\url-map.tmp" "%SB_SPOOL%\files" >"%SB_OUT%\aq9.out" 2>&1
 set "AQ9_RC=!errorlevel!"
@@ -511,12 +561,13 @@ if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: the pin refusal path leaked
 echo PASS: case 9c - glued wget URL refused by the shape pin before any downloader ran.
 
 echo --- Case 9d: downloader output confined to the spool scratch + list shape (live-UAT #5) ---
+rem Empty spool + delivering stubs (see case 7): the confinement
+rem assertions need the legs to actually run.
 set "STUB_MODE=OK"
+set "STUB_DELIVER_DIR=%SB_DELIVER%"
 set "STUB_CAPTURE=%SB_OUT%\aria-list-capture.txt"
 set "SB_SPOOL=%SANDBOX%\spool9d"
 mkdir "%SB_SPOOL%\files" 2>nul
-copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
-copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
 copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
 set "SIMLOG=%SB_FIX%\download-sim.log"
 >"%SIMLOG%" type nul
@@ -548,6 +599,7 @@ if errorlevel 1 (echo FAIL: the aria list URI line must match the frozen grammar
 findstr /C:"  out=big.esd" "%STUB_CAPTURE%" >nul 2>&1
 if errorlevel 1 (echo FAIL: the aria list must carry the indented out= continuation & goto Fail)
 set "STUB_CAPTURE="
+set "STUB_DELIVER_DIR="
 set "DOWNLOAD_LOGFILE="
 echo PASS: case 9d - downloader output confined to the spool scratch, mandated list shape pinned.
 
@@ -737,6 +789,77 @@ if not exist "%PR_SETS%\11111111-1111-1111-1111-111111111111" (echo FAIL: the fa
 set "WOU_UPGRADE_SPOOL="
 echo PASS: case 16 - purge answers 0 / exact / nothing, kept set survives.
 
+echo --- Case 16b: staging move is cross-volume safe (live-UAT 33 finding #7a) ---
+rem cmd's internal `move` cannot move a DIRECTORY across volumes (measured
+rem 2026-11-12: same-volume dir move rc=0, cross-volume rc=1 "Access
+rem denied", file move rc=0) and the LIVE engine geometry is cross-volume:
+rem the spool lives in %TEMP% (C:) while the client tree lives beside the
+rem repo (D:). The same-volume battery sandbox hid the defect from every
+rem earlier gate; the live 2026-11-12 20:14 run died at the aside move
+rem with the staging untouched. This case replicates the live geometry:
+rem stage + spool under %TEMP%, UUP_CLIENT_ROOT on a DIFFERENT volume,
+rem existing same-uuid target (the aside path fires). Can-fail: with a
+rem plain `move` implementation the aside move refuses (the no-fix probe
+rem reproduced the live error line verbatim). Requires a second writable
+rem volume - a single-volume host skips loudly and the gate stays honest
+rem about the geometry it could NOT test.
+set "XV16B="
+for %%v in (D: E: F: G: H: I: J: K:) do (
+  if not defined XV16B (
+    if /i not "%%v"=="!SANDBOX:~0,2!" if /i not "%%v"=="%TEMP:~0,2%" (
+      mkdir "%%v\wou_test_xvol_16b" 2>nul
+      if exist "%%v\wou_test_xvol_16b\" set "XV16B=%%v\wou_test_xvol_16b"
+    )
+  )
+)
+if not defined XV16B (
+  echo SKIP: case 16b - no second writable volume available; the cross-volume move geometry is untested on this host.
+  goto Case17
+)
+rem The fixture spool + assembled stage (small fixtures, stub sigcheck -
+rem the MOVEMENT is under test, not the gates; cases 4/13/14 own those)
+set "SM_SPOOL=%SANDBOX%\spool16b"
+mkdir "%SM_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SM_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SM_SPOOL%\files\small.cab" >nul 2>&1
+>"%SM_SPOOL%\manifest.txt" echo uuid^|cccccccc-0000-0000-0000-000000000000
+>>"%SM_SPOOL%\manifest.txt" echo small.cab^|!H_SMALL!^|102
+>>"%SM_SPOOL%\manifest.txt" echo big.esd^|!H_BIG!^|104857600
+mkdir "%SANDBOX%\stage16b\sources" 2>nul
+>"%SANDBOX%\stage16b\sources\setup.exe" echo STUB-NEW
+rem The existing same-uuid target on the OTHER volume - the live state.
+rem UUP_CLIENT_ROOT is the CLIENT root: the target dir becomes
+rem <root>\upgrade\26200-x64\en-us - no extra upgrade segment here.
+mkdir "%XV16B%\upgrade\26200-x64\en-us" 2>nul
+>"%XV16B%\upgrade\26200-x64\en-us\manifest.txt" echo uuid^|cccccccc-0000-0000-0000-000000000000
+>"%XV16B%\upgrade\26200-x64\en-us\old-media.bin" echo OLD-REVISION
+set "UUP_CLIENT_ROOT=%XV16B%"
+call cmd\UpgradePayloads.cmd :UpgStageMedia "%SANDBOX%\stage16b" "%SM_SPOOL%\manifest.txt" 26200 x64 en-us >"%SB_OUT%\sm16b.out" 2>&1
+set "SM16B_RC=!errorlevel!"
+if not "%SM16B_RC%"=="0" (
+  echo FAIL: case 16b - the cross-volume staging must end green ^(the live 2026-11-12 failure shape^).
+  type "%SB_OUT%\sm16b.out"
+  goto Fail16b
+)
+if not exist "%XV16B%\upgrade\26200-x64\en-us\sources\setup.exe" (echo FAIL: case 16b - the media must land on the second volume & goto Fail16b)
+findstr /C:"uuid|cccccccc-0000-0000-0000-000000000000" "%XV16B%\upgrade\26200-x64\en-us\manifest.txt" >nul 2>&1
+if errorlevel 1 (echo FAIL: case 16b - the staged manifest must read back with the staged uuid & goto Fail16b)
+if exist "%SANDBOX%\stage16b" (echo FAIL: case 16b - the stage dir must be GONE after the move & goto Fail16b)
+for /F %%c in ('dir /B "%SM_SPOOL%\replaced-*" 2^>nul ^| %SystemRoot%\System32\find.exe /c /v ""') do set "ASIDES16B=%%c"
+if not "%ASIDES16B%"=="0" (echo FAIL: case 16b - the moved-aside old revision must be deleted after success, %ASIDES16B% asides remain & goto Fail16b)
+findstr /C:"Media staged" "%SB_OUT%\sm16b.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: case 16b - the loud success line is missing & goto Fail16b)
+echo   ok 16b: staging landed on %XV16B% across the volume boundary, old revision deleted after readback.
+set "UUP_CLIENT_ROOT=%SANDBOX%\client"
+rd /s /q "%XV16B%" >nul 2>&1
+echo PASS: case 16b - cross-volume staging move proven over the live geometry.
+goto Case17
+:Fail16b
+set "UUP_CLIENT_ROOT=%SANDBOX%\client"
+rd /s /q "%XV16B%" >nul 2>&1
+goto Fail
+:Case17
+
 echo --- Case 17: :UpgCreateMediaDb - the staged media gets its integrity class ---
 call cmd\UpgradePayloads.cmd :UpgCreateMediaDb 26200 x64 en-us >"%SB_OUT%\cd17.out" 2>&1
 if errorlevel 1 (echo FAIL: the media db creation must end green over the staged fixture & type "%SB_OUT%\cd17.out" & goto Fail)
@@ -849,8 +972,10 @@ if not exist "%WOU_UUP_FIXTURE%" (
   goto Fail
 )
 rem --- 19a: table wired (sandbox copy of the committed upgrades.txt) ---
+rem The scope token rides the subroutine argument since finding #7b - the
+rem carrying scope (w100-x64) is part of the wiring contract now.
 set "WOU_UPGRADE_TABLE=%UPGTAB%"
-call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_OUT%\upg19a.out" 2>&1
+call cmd\UpgradePayloads.cmd :UpgSectionEntry w100-x64 >"%SB_OUT%\upg19a.out" 2>&1
 findstr /C:"acquisition target: 26200-x64 lang en-us" "%SB_OUT%\upg19a.out" >nul 2>&1
 if errorlevel 1 (
   echo FAIL: case 19a - the fu_media chain never picked the target; the section must emit its target line ^(with the en-us default^) for a wired table.
@@ -872,7 +997,7 @@ echo   ok 19a: wired table - target line + BUDGET line + spool manifest.
 rem --- 19b: the absence control - table unset (var is the only delta) ---
 set "WOU_UPGRADE_TABLE="
 set "WOU_UPGRADE_SPOOL=%SPOOL19B%"
-call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_OUT%\upg19b.out" 2>&1
+call cmd\UpgradePayloads.cmd :UpgSectionEntry w100-x64 >"%SB_OUT%\upg19b.out" 2>&1
 set "U19B_RC=!errorlevel!"
 if not "%U19B_RC%"=="0" (
   echo FAIL: case 19b - with the table unset the section must exit 0 silently, got %U19B_RC%.
@@ -1069,9 +1194,147 @@ call :TempArtifactCount
 if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: the %5C refusal path leaked TEMP artifacts & goto Fail)
 echo PASS: case 23 - URL-encoded backslash glue refused before any downloader ran.
 
+echo --- Case 24: pre-download short-circuit - a complete verified spool skips the legs (live-UAT 33 finding #8) ---
+rem The live 20:44 evidence: on a complete spool the aria2 leg completes
+rem network-free while the wget leg still contacts the token service and
+rem dies on the refusal - the acquisition failed with nothing wrong on
+rem disk. The short-circuit audits a count-complete spool FIRST and skips
+rem both legs on green. Can-fail: without the short-circuit the stubs run
+rem and their markers land in the spool scratch run logs.
+set "STUB_MODE=OK"
+set "STUB_DELIVER_DIR="
+set "SB_SPOOL=%SANDBOX%\spool24"
+mkdir "%SB_SPOOL%\files" 2>nul
+copy /y "%BIG%" "%SB_SPOOL%\files\big.esd" >nul 2>&1
+copy /y "%SMALL%" "%SB_SPOOL%\files\small.cab" >nul 2>&1
+copy /y "%URLMAP%" "%SB_SPOOL%\url-map.tmp" >nul 2>&1
+call cmd\UpgradePayloads.cmd :UpgAcquire "%MANIFEST%" "%SB_SPOOL%\url-map.tmp" "%SB_SPOOL%\files" >"%SB_OUT%\aq24.out" 2>&1
+set "AQ24_RC=!errorlevel!"
+if not "%AQ24_RC%"=="0" (echo FAIL: the pre-verified spool must end green & type "%SB_OUT%\aq24.out" & goto Fail)
+findstr /C:"pre-verified spool accepted" "%SB_OUT%\aq24.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the short-circuit must name its skip loudly & type "%SB_OUT%\aq24.out" & goto Fail)
+findstr /C:"Spool integrity audit passed" "%SB_OUT%\aq24.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: the pre-download audit must have run & goto Fail)
+findstr /C:"STUB-DOWNLOAD" "%SB_SPOOL%\aria2-run.log" "%SB_SPOOL%\wget-run.log" >nul 2>&1
+if not errorlevel 1 (echo FAIL: a pre-verified spool must skip BOTH download legs - the stubs ran & goto Fail)
+call :TempArtifactCount
+if not "%TEMP_COUNT%"=="%TEMP_BASELINE%" (echo FAIL: the short-circuit path leaked TEMP artifacts & goto Fail)
+echo PASS: case 24 - complete spool pre-verified, download legs skipped, hygiene intact.
+
+echo --- Case 25: the scope gate (live-UAT 33 finding #7b) - only the carrying scope acquires ---
+rem The 2026-11-12 20:14 live run: the twin (selection + table) is global,
+rem so all ten scope invocations fired the acquisition and nine died on
+rem token-service refusals. The gate: only a w100/w100-x64 scope whose
+rem arch matches the picked row's arch may acquire; every other scope, and
+rem an absent scope token, is an absolute no-op - zero output, zero side
+rem effects. 25b is the live-bug-inverse bite: the x64 row is on file, the
+rem scope is the x86 one, and nothing may happen.
+set "SEL25=%SB_FIX%\sel-case25.ini"
+echo 26200_x64=on>"%SEL25%"
+set "WOU_UPGRADE_SEL=%SEL25%"
+set "WOU_UPGRADE_TABLE=%UPGTAB%"
+set "WOU_UUP_FIXTURE=%REPO_ROOT%\tests\fixtures\uup-get-26200-en-us-multiedition.json"
+set "TMP_UPG_TARGETS=26200"
+rem 25a: non-carrying scope with the twin fully present
+set "WOU_UPGRADE_SPOOL=%SANDBOX%\spool25a"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry w61-x64 >"%SB_OUT%\upg25a.out" 2>&1
+set "U25A_RC=!errorlevel!"
+if not "%U25A_RC%"=="0" (echo FAIL: case 25a - a non-carrying scope must exit 0, got %U25A_RC% & type "%SB_OUT%\upg25a.out" & goto Fail)
+for /F %%c in ('type "%SB_OUT%\upg25a.out" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "U25A_LINES=%%c"
+if not "%U25A_LINES%"=="0" (echo FAIL: case 25a - a non-carrying scope must be a byte-level no-op ^(got %U25A_LINES% lines^) & type "%SB_OUT%\upg25a.out" & goto Fail)
+if exist "%SANDBOX%\spool25a" (echo FAIL: case 25a - a non-carrying scope must not create its spool & goto Fail)
+rem 25b: arch mismatch - the x64 row exists but this scope carries x86
+set "WOU_UPGRADE_SPOOL=%SANDBOX%\spool25b"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry w100 >"%SB_OUT%\upg25b.out" 2>&1
+set "U25B_RC=!errorlevel!"
+if not "%U25B_RC%"=="0" (echo FAIL: case 25b - an arch-mismatched scope must exit 0, got %U25B_RC% & type "%SB_OUT%\upg25b.out" & goto Fail)
+for /F %%c in ('type "%SB_OUT%\upg25b.out" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "U25B_LINES=%%c"
+if not "%U25B_LINES%"=="0" (echo FAIL: case 25b - an arch-mismatched scope must be a byte-level no-op ^(got %U25B_LINES% lines^) & type "%SB_OUT%\upg25b.out" & goto Fail)
+if exist "%SANDBOX%\spool25b" (echo FAIL: case 25b - an arch-mismatched scope must not create its spool & goto Fail)
+rem 25c: absent scope token stays a no-op (fail-closed default)
+set "WOU_UPGRADE_SPOOL=%SANDBOX%\spool25c"
+call cmd\UpgradePayloads.cmd :UpgSectionEntry >"%SB_OUT%\upg25c.out" 2>&1
+set "U25C_RC=!errorlevel!"
+if not "%U25C_RC%"=="0" (echo FAIL: case 25c - an absent scope token must exit 0, got %U25C_RC% & type "%SB_OUT%\upg25c.out" & goto Fail)
+for /F %%c in ('type "%SB_OUT%\upg25c.out" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "U25C_LINES=%%c"
+if not "%U25C_LINES%"=="0" (echo FAIL: case 25c - an absent scope token must be a byte-level no-op ^(got %U25C_LINES% lines^) & type "%SB_OUT%\upg25c.out" & goto Fail)
+if exist "%SANDBOX%\spool25c" (echo FAIL: case 25c - an absent scope token must not create its spool & goto Fail)
+set "WOU_UPGRADE_SEL="
+set "WOU_UPGRADE_TABLE="
+set "WOU_UPGRADE_SPOOL="
+set "TMP_UPG_TARGETS="
+set "WOU_UUP_FIXTURE="
+echo PASS: case 25 - non-carrying scopes silent, arch intersection bites, absent token fail-closed.
+
+echo --- Case 26: staging refresh over the REAL complete spool copy (live-UAT evidence case) ---
+rem Replicates the owner-deployment flow end to end over a COPY of the
+rem live acquisition spool (%TEMP%\wou-upgrade-spool from the 2026-11-12
+rem 20:14 run - never the spool itself, the battery only reads it as the
+rem robocopy SOURCE): files\ + media-stage\ + manifest.txt, then the full
+rem :UpgStageMedia with the REAL gates (real hashdeep over the real
+rem payload set, real vendored sigcheck over the real assembled media) and
+rem the cross-volume move into a second-volume client root. Adds minutes
+rem of runtime when the real spool exists; hosts without it (fresh
+rem checkouts) skip loudly - case 16b keeps the cross-volume bite.
+set "REAL_SPOOL_26=%TEMP%\wou-upgrade-spool"
+set "XV26="
+if exist "%REAL_SPOOL_26%\manifest.txt" if exist "%REAL_SPOOL_26%\files\" if exist "%REAL_SPOOL_26%\media-stage\" (
+  for %%v in (D: E: F: G: H: I: J: K:) do (
+    if not defined XV26 (
+      if /i not "%%v"=="!SANDBOX:~0,2!" if /i not "%%v"=="%TEMP:~0,2%" (
+        mkdir "%%v\wou_test_realstage_26" 2>nul
+        if exist "%%v\wou_test_realstage_26\" set "XV26=%%v\wou_test_realstage_26"
+      )
+    )
+  )
+)
+if not defined XV26 (
+  echo SKIP: case 26 - the live acquisition spool or a second writable volume is absent; the real-payload staging refresh is not exercised on this host.
+  goto After26
+)
+set "RS26_SPOOL=%SANDBOX%\spool26"
+"%SystemRoot%\System32\robocopy.exe" "%REAL_SPOOL_26%" "%RS26_SPOOL%" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /MT:16 /NFL /NDL /NP /NJH /XD converted >nul 2>&1
+set "RS26_RC=!errorlevel!"
+if !RS26_RC! GEQ 8 (echo FAIL: case 26 - the real-spool copy into the sandbox failed ^(robocopy exit class !RS26_RC!^) & goto Fail)
+set "RS26_UUID="
+for /F "usebackq eol=# tokens=1-2 delims=|" %%a in ("%RS26_SPOOL%\manifest.txt") do if /i "%%a"=="uuid" if not defined RS26_UUID set "RS26_UUID=%%b"
+if "!RS26_UUID!"=="" (echo FAIL: case 26 - the real spool manifest carries no uuid meta row & goto Fail)
+mkdir "%XV26%\upgrade\26200-x64\en-us" 2>nul
+>"%XV26%\upgrade\26200-x64\en-us\manifest.txt" echo uuid^|!RS26_UUID!
+>"%XV26%\upgrade\26200-x64\en-us\old-media.bin" echo OLD-REVISION
+set "UUP_SIGCHK_PATH="
+set "UUP_CLIENT_ROOT=%XV26%"
+call cmd\UpgradePayloads.cmd :UpgStageMedia "%RS26_SPOOL%\media-stage" "%RS26_SPOOL%\manifest.txt" 26200 x64 en-us >"%SB_OUT%\sm26.out" 2>&1
+set "SM26_RC=!errorlevel!"
+if not "%SM26_RC%"=="0" (
+  echo FAIL: case 26 - the real-payload staging refresh must end green over the real complete spool copy.
+  type "%SB_OUT%\sm26.out"
+  goto Fail26
+)
+if not exist "%XV26%\upgrade\26200-x64\en-us\sources\install.esd" (echo FAIL: case 26 - install.esd must land in the second-volume tree & goto Fail26)
+if not exist "%XV26%\upgrade\26200-x64\en-us\sources\boot.wim" (echo FAIL: case 26 - boot.wim must land in the second-volume tree & goto Fail26)
+findstr /C:"uuid|!RS26_UUID!" "%XV26%\upgrade\26200-x64\en-us\manifest.txt" >nul 2>&1
+if errorlevel 1 (echo FAIL: case 26 - the staged manifest must read back with the real uuid & goto Fail26)
+findstr /C:"Authenticode gate passed" "%SB_OUT%\sm26.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: case 26 - the real Authenticode gate must have run and passed & goto Fail26)
+findstr /C:"Media staged" "%SB_OUT%\sm26.out" >nul 2>&1
+if errorlevel 1 (echo FAIL: case 26 - the loud success line is missing & goto Fail26)
+echo   ok 26: the real complete spool (%REAL_SPOOL_26% copy) staged onto %XV26% with both real gates green.
+set "UUP_SIGCHK_PATH=%SB_STUBS%\sigcheck-stub.cmd"
+set "UUP_CLIENT_ROOT=%SANDBOX%\client"
+rd /s /q "%XV26%" >nul 2>&1
+echo PASS: case 26 - real-payload staging refresh proven over the live geometry.
+goto After26
+:Fail26
+set "UUP_SIGCHK_PATH=%SB_STUBS%\sigcheck-stub.cmd"
+set "UUP_CLIENT_ROOT=%SANDBOX%\client"
+rd /s /q "%XV26%" >nul 2>&1
+goto Fail
+:After26
+
 echo.
 echo =======================================================================
-echo UPG-PAYLOADS-CMD-PASS: all 28 acquisition cases green.
+echo UPG-PAYLOADS-CMD-PASS: all 32 acquisition cases green.
 echo =======================================================================
 rd /s /q "%SANDBOX%" 2>nul
 exit /b 0

@@ -1539,8 +1539,17 @@ rem superseded DETERMINATION itself stays skippable behind the valid-list
 rem jump - this block consumes only the selection twin, the upgrades.txt
 rem table and the fu_media column, never the superseded lists. Pinned by
 rem case 20 of tests\verify-upgrade-payloads.cmd (source-order pins).
+rem SCOPE FORWARDING (live-UAT 33 finding #7b): the acquisition module
+rem reads this invocation's own scope token from its subroutine argument
+rem and no-ops unless it carries the picked row's product family + arch -
+rem the engine-side equivalent of the generator's Win10/11-x64 job gate.
+rem The selection twin and the upgrade table are global, so without this
+rem forwarding every scope invocation fired the acquisition (the
+rem 2026-11-12 20:14 GUI run: one real acquisition + nine redundant
+rem resolves, ten UpgradeErrors total). %1 is unshifted here - the
+rem EvalParams loop shifts %3 onward only.
 set "WOU_UPGRADE_TABLE=..\client\UpdateTable\upgrades.txt"
-if defined TMP_UPG_TARGETS call .\UpgradePayloads.cmd :UpgSectionEntry || goto UpgradeError
+if defined TMP_UPG_TARGETS call .\UpgradePayloads.cmd :UpgSectionEntry "%~1" || goto UpgradeError
 rem === end UUP upgrade payloads ===
 
 if "%4"=="/skipdynamic" (

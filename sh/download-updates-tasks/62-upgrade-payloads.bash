@@ -476,6 +476,15 @@ function uup_stage_raw_set ()
 
 # The acquisition section (plan 33-03): selection gate, one-shot resolve,
 # coupled download + verification; the plan 33-04 staging tail
+#
+# CMD-twin asymmetry, by design (live-UAT 2026-11-12 finding #7b): the CMD
+# engine is invoked once per scope (the generator launches w100-x64, w100,
+# w61, ... as separate DownloadUpdates.cmd runs), so its acquisition section
+# gates on the invocation's own scope token - without it every scope fired
+# the acquisition and nine of ten runs died on token-service refusals.
+# This engine runs the whole selection in ONE invocation and takes no scope
+# argument (download_updates ignores "$@"), so there is nothing to gate on
+# here - do not "fix" the asymmetry.
 
 function acquire_upgrade_payloads ()
 {

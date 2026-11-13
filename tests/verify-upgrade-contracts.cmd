@@ -327,11 +327,24 @@ echo [PASS] DoUpdate.cmd: prepare-leg attempts write-back pinned (exactly 1)
 
 set ENGINE_ATTEMPTS_FMT=0
 for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:",%%OS_VER_REVIS%%,%%OS_VER_BUILD%%," "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_ATTEMPTS_FMT=%%c
-if not "%ENGINE_ATTEMPTS_FMT%"=="2" (
-  echo FAIL: the attempts count,revision,build write prefix appears %ENGINE_ATTEMPTS_FMT% times - exactly 2 expected ^(prepare + perform write-backs^)
+if not "%ENGINE_ATTEMPTS_FMT%"=="3" (
+  echo FAIL: the attempts count,revision,build write prefix appears %ENGINE_ATTEMPTS_FMT% times - exactly 3 expected ^(prepare + perform + full-FU write-backs^)
   goto Fail
 )
-echo [PASS] DoUpdate.cmd: attempts format write prefix pinned (exactly 2)
+echo [PASS] DoUpdate.cmd: attempts format write prefix pinned (exactly 3)
+
+findstr /C:",full>" "%ENGINE_CMD%" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: DoUpdate.cmd is missing the full-FU leg attempts write-back
+  goto Fail
+)
+set ENGINE_FULL_WB=0
+for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:",full>" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_FULL_WB=%%c
+if not "%ENGINE_FULL_WB%"=="1" (
+  echo FAIL: the full-FU leg write-back appears %ENGINE_FULL_WB% times - exactly 1 expected ^(DEC-34-06^)
+  goto Fail
+)
+echo [PASS] DoUpdate.cmd: full-FU leg attempts write-back pinned (exactly 1)
 
 set ENGINE_REFUSAL_COUNT=0
 for /F %%c in ('%SystemRoot%\System32\findstr.exe /C:"ERROR: /upgradeos target must be a build number" "%ENGINE_CMD%" ^| %SystemRoot%\System32\find.exe /c /v ""') do set ENGINE_REFUSAL_COUNT=%%c

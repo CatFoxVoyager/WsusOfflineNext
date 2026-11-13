@@ -2,7 +2,7 @@
 setlocal
 
 REM =======================================================================
-REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04)
+REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04 and 34-03)
 REM File: tests\verify-upgrade-phase-gate.cmd
 REM
 REM Plan 32-04 / DEC-32-10: the full phase gate lives as THIS artifact -
@@ -38,6 +38,15 @@ REM   16. sh/tests/verify-upgrade-payloads.bash (Phase-33 acquisition + staging)
 REM   17. tests/verify-upgrade-payloads.cmd     (Phase-33 assembly + gates + purge)
 REM   18. tests/verify-upgrade-media.cmd        (consigned record + staged media)
 REM   19. the assembly doc markers (winning set / GPLv3 / exFAT)
+REM   20. tests/verify-fullupgrade-cycle.cmd    (Phase-34 CMD full-FU twin:
+REM       census + states S1-S17 + parity lock)
+REM   21. sh/tests/verify-fullupgrade-cycle.bash (Phase-34 bash evaluator
+REM       twin: S1-S17 over byte-identical golden rows + 24-literal census)
+REM   22. the engine census (frozen flag-set == 2, /compat scanonly == 1,
+REM       bypass tokens == 0, all nine documented hex codes present)
+REM   23. the seam-order assert (:SkipBuildUpgrade, then :FullUpgrade, then
+REM       the WUA comment - line numbers strictly ordered)
+REM   24. tests/verify-offline-audit.cmd        (audit regression battery)
 REM
 REM A red link is diagnosable by its GATE number: every link echoes one
 REM numbered line before running and a PASS line after. Bash resolves at
@@ -246,9 +255,104 @@ if errorlevel 1 (
 )
 echo [GATE 19] PASS
 
+REM =======================================================================
+REM Phase 34 extension (plan 34-03): the 19 links above stay byte-identical
+REM to the consigned 33-04 chain - Phase-34 links APPEND as GATE 20..24
+REM (DEC-32-10 consignment discipline: extend, never rewrite). The full-FU
+REM twins on both platforms, the engine census, the seam-order assert and
+REM the audit regression battery join the chain. The census keeps the
+REM 32-01 lesson: full-path System32 find.exe/findstr.exe, never plain find.
+REM =======================================================================
+
+set "ENGINE=client\cmd\DoUpdate.cmd"
+set "FIND_EXE=%SystemRoot%\System32\find.exe"
+
+echo [GATE 20] CMD full-FU twin battery (census + states S1-S17 + parity lock)...
+call tests\verify-fullupgrade-cycle.cmd
+if errorlevel 1 (
+  echo FAIL: GATE 20 red - the CMD full-FU twin is not green
+  goto Fail
+)
+echo [GATE 20] PASS
+
+echo [GATE 21] bash full-FU twin (evaluator, S1-S17 + 24-literal source census)...
+"%BASH_EXE%" sh/tests/verify-fullupgrade-cycle.bash
+if errorlevel 1 (
+  echo FAIL: GATE 21 red - the bash full-FU twin is not green
+  goto Fail
+)
+echo [GATE 21] PASS
+
+echo [GATE 22] engine census (frozen flag-set, scanonly, bypass tokens, nine hex codes)...
+for /f %%N in ('findstr /C:"/auto upgrade /quiet /noreboot /eula accept /dynamicupdate disable" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_FLAGS=%%N"
+if not "%CNT_FLAGS%"=="2" (
+  echo FAIL: GATE 22 red - frozen flag-set census is "%CNT_FLAGS%", expected exactly 2
+  goto Fail
+)
+for /f %%N in ('findstr /C:"/compat scanonly" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_SCAN=%%N"
+if not "%CNT_SCAN%"=="1" (
+  echo FAIL: GATE 22 red - scanonly census is "%CNT_SCAN%", expected exactly 1
+  goto Fail
+)
+for /f %%N in ('findstr /I /C:"/pkey" /C:"/SkipFinalize" /C:"/Finalize" /C:"/ImageIndex" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_BYPASS=%%N"
+if not "%CNT_BYPASS%"=="0" (
+  echo FAIL: GATE 22 red - bypass token census is "%CNT_BYPASS%", expected 0
+  goto Fail
+)
+for %%C in (C1900210 C1900208 C1900204 C1900200 C190020E C190010E C1900215 C1900132 C1900101) do (
+  findstr /I /C:"%%C" "%ENGINE%" >nul 2>&1
+  if errorlevel 1 (
+    echo FAIL: GATE 22 red - documented hex code %%C missing from the engine
+    goto Fail
+  )
+)
+for /f %%N in ('findstr /C:"wou_fullupgrade_attempts.txt" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_FU_RECORD=%%N"
+if not "%CNT_FU_RECORD%"=="7" (
+  echo FAIL: GATE 22 red - the full-FU attempts record filename census is "%CNT_FU_RECORD%", expected exactly 7 - the deletion surface is the contract
+  goto Fail
+)
+echo [GATE 22] PASS
+
+echo [GATE 23] seam-order assert - :SkipBuildUpgrade, then :FullUpgrade, then the WUA comment, strictly ordered...
+set "SEAM_SKIP="
+set "SEAM_FU="
+set "SEAM_WUA="
+for /f "tokens=1 delims=:" %%N in ('findstr /N /R /C:"^:SkipBuildUpgrade$" "%ENGINE%"') do set "SEAM_SKIP=%%N"
+for /f "tokens=1 delims=:" %%N in ('findstr /N /R /C:"^:FullUpgrade$" "%ENGINE%"') do set "SEAM_FU=%%N"
+for /f "tokens=1 delims=:" %%N in ('findstr /N /C:"rem *** Update Windows Update Agent ***" "%ENGINE%"') do set "SEAM_WUA=%%N"
+if not defined SEAM_SKIP (
+  echo FAIL: GATE 23 red - seam anchor :SkipBuildUpgrade not found in the engine
+  goto Fail
+)
+if not defined SEAM_FU (
+  echo FAIL: GATE 23 red - seam anchor :FullUpgrade not found in the engine
+  goto Fail
+)
+if not defined SEAM_WUA (
+  echo FAIL: GATE 23 red - seam anchor WUA comment not found in the engine
+  goto Fail
+)
+if %SEAM_FU% LEQ %SEAM_SKIP% (
+  echo FAIL: GATE 23 red - :FullUpgrade line %SEAM_FU% is not strictly after :SkipBuildUpgrade line %SEAM_SKIP%
+  goto Fail
+)
+if %SEAM_FU% GEQ %SEAM_WUA% (
+  echo FAIL: GATE 23 red - :FullUpgrade line %SEAM_FU% is not strictly before the WUA comment line %SEAM_WUA%
+  goto Fail
+)
+echo [GATE 23] PASS
+
+echo [GATE 24] audit regression battery (auditonly skips the full-FU lane)...
+call tests\verify-offline-audit.cmd
+if errorlevel 1 (
+  echo FAIL: GATE 24 red - the audit regression battery is not green
+  goto Fail
+)
+echo [GATE 24] PASS
+
 echo.
 echo =======================================================================
-echo UPGRADE-PHASE-GATE-PASS: all 19 links green in one run.
+echo UPGRADE-PHASE-GATE-PASS: all 24 links green in one run.
 echo =======================================================================
 popd
 exit /b 0

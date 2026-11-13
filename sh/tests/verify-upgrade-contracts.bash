@@ -584,10 +584,14 @@ assert_count "refusal literal: baseline revision below minimum (echo + :Log)" \
     "$engine_file" 2 'blocked: baseline revision'
 assert_count "refusal literal: no upgrade path from build (echo + :Log)" \
     "$engine_file" 2 'has no upgrade path from build'
-assert_count "convergence Info literal: jump observed complete (echo + :Log)" \
-    "$engine_file" 2 'observed - jump complete'
-assert_count "perform-stall Warning literal: build did not advance (echo + :Log)" \
-    "$engine_file" 2 'did not advance the OS build'
+assert_count "convergence Info literal: jump observed complete (echo + :Log, both lanes)" \
+    "$engine_file" 4 'observed - jump complete'
+assert_count "full-FU convergence literal: already observed (echo + :Log)" \
+    "$engine_file" 2 'already observed - jump complete'
+assert_count "perform-stall Warning literal: build did not advance (echo + :Log, both lanes)" \
+    "$engine_file" 4 'did not advance the OS build'
+assert_count "full-FU stall literal: full upgrade did not advance (echo + :Log)" \
+    "$engine_file" 2 'Full upgrade did not advance'
 
 # Chosen-target guard: the additive wrapper lives in BOTH :BuildUpgrade
 # row loops (DEC-32-03). The variable must be present throughout (reset,
@@ -610,8 +614,10 @@ assert_count "perform-leg write-back (count,revision,build,perform record)" \
     "$engine_file" 1 ',%OS_VER_REVIS%,%OS_VER_BUILD%,perform>'
 assert_count "prepare-leg write-back (count,revision,build,prepare record)" \
     "$engine_file" 1 ',%OS_VER_REVIS%,%OS_VER_BUILD%,prepare>'
-assert_count "attempts format write prefix (count,revision,build,) on both write-backs" \
-    "$engine_file" 2 ',%OS_VER_REVIS%,%OS_VER_BUILD%,'
+assert_count "attempts format write prefix (count,revision,build,) on all three write-backs" \
+    "$engine_file" 3 ',%OS_VER_REVIS%,%OS_VER_BUILD%,'
+assert_count "full-FU leg write-back (count,revision,build,full record)" \
+    "$engine_file" 1 ',%OS_VER_REVIS%,%OS_VER_BUILD%,full>'
 
 # Frozen 31-02 parse contract: the loud parse refusal at exactly 4
 # physical lines (echo + :Log at the parse site AND the bare-token site).

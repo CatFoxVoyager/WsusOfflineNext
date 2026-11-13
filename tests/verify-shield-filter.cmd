@@ -193,7 +193,7 @@ rem it the new scope gate would answer the no-op before the selection
 rem branch under test is reached, and this case would pass vacuously.
 set "TMP_UPG_TARGETS="
 type nul >"%SB_FEED%\acq7.out"
-call cmd\UpgradePayloads.cmd :UpgSectionEntry w100-x64 >"%SB_FEED%\acq7.out" 2>&1
+call "%REPO_ROOT%\cmd\UpgradePayloads.cmd" :UpgSectionEntry w100-x64 >"%SB_FEED%\acq7.out" 2>&1
 set "ACQ7_RC=!errorlevel!"
 if not "%ACQ7_RC%"=="0" (
   echo FAIL: case 7 ^(no selection^) - the acquisition entry must exit 0, got %ACQ7_RC%.
@@ -216,7 +216,7 @@ echo --- Case 8: acquisition absence - fu_media=0 row answers the no-op path ---
 set "TMP_UPG_TARGETS=19045"
 echo 19045_x64=on>"%WOU_UPGRADE_SEL%"
 type nul >"%SB_FEED%\acq8.out"
-call cmd\UpgradePayloads.cmd :UpgSectionEntry w100-x64 >"%SB_FEED%\acq8.out" 2>&1
+call "%REPO_ROOT%\cmd\UpgradePayloads.cmd" :UpgSectionEntry w100-x64 >"%SB_FEED%\acq8.out" 2>&1
 set "ACQ8_RC=!errorlevel!"
 if not "%ACQ8_RC%"=="0" (
   echo FAIL: case 8 ^(fu_media=0^) - the acquisition entry must exit 0, got %ACQ8_RC%.
@@ -243,7 +243,7 @@ if not exist "%WOU_UUP_FIXTURE%" (
   echo ERROR: the golden fixture is missing at "%WOU_UUP_FIXTURE%".
   goto Fail
 )
-call cmd\UpgradePayloads.cmd :UpgSectionEntry w100-x64 >"%SB_FEED%\acq9.out" 2>&1
+call "%REPO_ROOT%\cmd\UpgradePayloads.cmd" :UpgSectionEntry w100-x64 >"%SB_FEED%\acq9.out" 2>&1
 set "ACQ9_RC=!errorlevel!"
 if "%ACQ9_RC%"=="0" (
   echo FAIL: case 9 ^(fu_media=1^) - in the sandbox the fixture resolve emits no url map, so the section must abort at the join, not end green.

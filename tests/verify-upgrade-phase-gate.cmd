@@ -2,7 +2,7 @@
 setlocal
 
 REM =======================================================================
-REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04, 34-03, 35-02 and 36-05)
+REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04, 34-03, 35-02, 36-05 and 37-03)
 REM File: tests\verify-upgrade-phase-gate.cmd
 REM
 REM Plan 32-04 / DEC-32-10: the full phase gate lives as THIS artifact -
@@ -17,8 +17,8 @@ REM       selection library, both bash batteries, the bash contract twin)
 REM       + the Phase-33 acquisition bash files (62 task, resolver
 REM       library, payloads battery - the 33-04 extension; the original
 REM       five-file command shape is preserved, the list only grew)
-REM    2. sh/tests/verify-reboot-cycle.bash     (evaluator, 12 states)
-REM    3. tests/verify-reboot-cycle.cmd         (real engine, 12 states)
+REM    2. sh/tests/verify-reboot-cycle.bash     (evaluator, 16 states)
+REM    3. tests/verify-reboot-cycle.cmd         (real engine, 16 states)
 REM    4. sh/tests/verify-win11-26h1.bash
 REM    5. tests/verify-win11-26h1.cmd
 REM    6. sh/tests/verify-upgrade-contracts.bash
@@ -640,9 +640,28 @@ if errorlevel 1 (
 )
 echo [GATE 36] PASS
 
+REM =======================================================================
+REM Phase 37 extension (plan 37-03): the 36 links above stay byte-identical
+REM to the consigned 36-05 chain - Phase-37 links APPEND as GATE 37
+REM (DEC-32-10 consignment discipline: extend, never rewrite). The bash
+REM media-gate twin (sh/tests/verify-upgrade-media.bash, VAL-01c) joins
+REM the chain; the 16-state cycle twins flow through their existing frozen
+REM links (GATE 2/3), the roster family census cases through the contracts
+REM links (GATE 6/7), and the wxp-family TAP case and picker exclusion pins
+REM through GATE 32/34's instruments.
+REM =======================================================================
+
+echo [GATE 37] bash media-gate twin (consigned record + staged media, bash pipeline)...
+"%BASH_EXE%" sh/tests/verify-upgrade-media.bash
+if errorlevel 1 (
+  echo FAIL: GATE 37 red - the bash media twin is not green
+  goto Fail
+)
+echo [GATE 37] PASS
+
 echo.
 echo =======================================================================
-echo UPGRADE-PHASE-GATE-PASS: all 36 links green in one run.
+echo UPGRADE-PHASE-GATE-PASS: all 37 links green in one run.
 echo =======================================================================
 popd
 exit /b 0

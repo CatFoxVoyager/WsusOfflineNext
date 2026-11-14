@@ -41,7 +41,9 @@ program testrunner;
     upgradesconsent unit (UcEnumerateConsentTarget enumeration,
     UcConsentGate matrix, UcReasonToDisplayId map, UcDeriveOsFamily
     boundary, UcDiskGbText rendering - consent- cases land with the
-    consent battery task). }
+    consent battery task). Plan 36-04 adds the consent-argv- emission
+    cases: the value-carrying /upgradeos:<digits> composition over
+    frozen entry 25 (consented / unconsented / fully-enabled records). }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry, zipper,
@@ -525,6 +527,44 @@ begin
     'consent-disk-03: 0 MiB renders 0.0 (edge)');
   CheckEq(UcDiskGbText(0, ','), '0,0',
     'consent-disk-04: 0 MiB renders 0,0 with the DE separator (edge)');
+end;
+
+procedure TestConsentArgv;
+var
+  T: TArgvToggles;
+begin
+  { Plan 36-04: the value-carrying emission over frozen entry 25. The
+    digits travel ONLY in the record field the caller fills from the
+    verdict layer's named target build; AddSwitch stays bare-token
+    (T-26-01). An empty UpgradeOsBuild emits nothing - the unconsented
+    argv is byte-identical to the pre-36-04 emission (SC4). }
+  FillChar(T, SizeOf(T), 0);
+  T.UpgradeOsBuild := '26200';
+  CheckEq(EngBuildArgv(T), '/upgradeos:26200',
+    'consent-argv-01: empty-Boolean record with target 26200 emits exactly /upgradeos:26200 once');
+
+  FillChar(T, SizeOf(T), 0);
+  Check(Pos('upgradeos', EngBuildArgv(T)) = 0,
+    'consent-argv-02: empty UpgradeOsBuild emits no upgradeos substring at all');
+
+  FillChar(T, SizeOf(T), 0);
+  T.UpgradeBuilds := True; T.Updatercerts := True;
+  T.InstDotNet35 := True; T.InstDotNet4 := True; T.InstWmf := True;
+  T.UpdateDotNet5 := True; T.UpdateCpp := True; T.InstEdge := True;
+  T.InstWebView2 := True; T.UpdateOffice := True;
+  T.SkipIeInst := True; T.SkipDefs := True; T.SkipDynamic := True;
+  T.AllUpdates := True; T.ExcludeStatics := True; T.SecOnly := True;
+  T.Verify := True; T.AuditOnly := True; T.AutoReboot := True;
+  T.Shutdown := True; T.ShowLog := True;
+  T.ShowDismProgress := True; T.MonitorOn := True;
+  T.UpgradeOsBuild := '26200';
+  CheckEq(EngBuildArgv(T),
+    '/upgradebuilds /updatercerts /instdotnet35 /instdotnet4 /instwmf ' +
+    '/updatedotnet5 /updatecpp /instedge /instwebview2 /updateoffice ' +
+    '/skipieinst /skipdefs /skipdynamic /all /excludestatics /seconly ' +
+    '/verify /auditonly /autoreboot /upgradeos:26200 /shutdown /showlog ' +
+    '/showdismprogress /monitoron',
+    'consent-argv-03: fully-enabled record keeps every bare table token and adds exactly the one value-carrying token adjacent to the autoreboot slot');
 end;
 
 procedure TestDisplayMaps;
@@ -1639,6 +1679,7 @@ begin
     TestConsentMap;
     TestConsentPick;
     TestConsentDisk;
+    TestConsentArgv;
     TestToggleGates;
     TestOsGate;
     TestPathValid;

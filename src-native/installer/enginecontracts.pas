@@ -184,6 +184,14 @@ type
     Verify, AuditOnly, AutoReboot, Shutdown, ShowLog: Boolean;
     SkipIeInst, SkipDefs, SkipDynamic, AllUpdates, ExcludeStatics: Boolean;
     SecOnly, ShowDismProgress, MonitorOn: Boolean;
+    { Value-carrying consent extension (plan 36-04, frozen entry 25):
+      UpgradeOsBuild carries the verdict-sourced target build digits;
+      empty = no consent, no token. NO new switch-table row and NO
+      INI-defaults row ride with it - ENG_SWITCH_COUNT and
+      ENG_INI_DEFAULT_COUNT stay byte-identical (gui-contracts Test 2
+      asserts both). AddSwitch itself is never taught values: the
+      T-26-01 bare-token invariant stays untouched. }
+    UpgradeOsBuild: string;
   end;
 
 { Pure argv emission in the incumbent's exact switch order (au3:1210-1281):
@@ -380,6 +388,15 @@ begin
   AddSwitch('verify', A.Verify);
   AddSwitch('auditonly', A.AuditOnly);
   AddSwitch('autoreboot', A.AutoReboot);
+  { First value-carrying emission (plan 36-04, entry 25): the consented
+    OS-upgrade target travels as /upgradeos:<digits>, adjacent to the
+    /autoreboot slot. The token comes from the frozen table via
+    EngSwitchToken; the digits come from the caller's verdict-sourced
+    target build - never INI text, never user-typed text (threat
+    T-36-09). An empty UpgradeOsBuild emits nothing: the unconsented
+    argv stays byte-identical (SC4). }
+  if A.UpgradeOsBuild <> '' then
+    Result := Result + ' ' + EngSwitchToken('upgradeos') + ':' + A.UpgradeOsBuild;
   AddSwitch('shutdown', A.Shutdown);
   AddSwitch('showlog', A.ShowLog);
   AddSwitch('showdismprogress', A.ShowDismProgress);

@@ -843,6 +843,63 @@ namespace WSUSOffline.Generator
                 }
             }
 
+            // Phase 36 spawn plumbing (36-03): the upgrade selection is
+            // re-extracted here INDEPENDENTLY of SaveIniFiles' pinned call -
+            // the same pure parser, a second call of it (state is never
+            // threaded between the two call sites).
+            List<string> upgradeKeys = GetUpgradePayloadSelection(payload, out bool upgradePayloadPresent);
+
+            // DEC-36-01 scope widening: an upgrade-only selection still
+            // triggers the arch-carrying w100-family invocation (T-36-07 -
+            // the acquisition can never sit silently unacquired). Additive
+            // OR over the product-derived values; an absent or empty
+            // upgrade property widens nothing (SC4: untouched empty picker
+            // = zero observables).
+            job.HasWin11Or10x64 |= upgradeKeys.Exists(k => k.EndsWith("_x64"));
+            job.HasWin10x86 |= upgradeKeys.Exists(k => k.EndsWith("_x86"));
+
+            // Arch-routed /includeupgrade tokens (DEC-08 singular grammar,
+            // one token per selected target): composed ONLY from the digit
+            // prefix of a grammar-validated "<build>_<arch>" key - no
+            // free-form string reaches the spawn line (T-36-06; the
+            // engine's :EvalParams unknown-switch tolerance is the second
+            // gate). x64 keys ride the w100-x64 invocation, x86 keys the
+            // w100 invocation; each list carries its own leading space so
+            // the argument interpolation below stays clean. job.Switches
+            // is never extended (legacy invocations stay token-free).
+            const string includeUpgradeToken = "/includeupgrade:";
+            string upgradeSwitchesX64 = "";
+            string upgradeSwitchesX86 = "";
+            foreach (string upgradeKey in upgradeKeys)
+            {
+                string upgradeBuild = upgradeKey.Substring(0, upgradeKey.IndexOf('_'));
+                if (upgradeKey.EndsWith("_x64"))
+                {
+                    upgradeSwitchesX64 += " " + includeUpgradeToken + upgradeBuild;
+                }
+                else if (upgradeKey.EndsWith("_x86"))
+                {
+                    upgradeSwitchesX86 += " " + includeUpgradeToken + upgradeBuild;
+                }
+            }
+
+            // Media language (DEC-33-01/DEC-36-06): read from the payload,
+            // delivered ONLY on runs that carry a selection - the SC4
+            // contract falls out naturally (empty selection -> empty value
+            // -> no environment variable; the pipeline's en-us default
+            // applies - UpgradePayloads.cmd reads the env with the en-us
+            // fallback right beside the scope gate).
+            string upgradeLangValue = "";
+            if (payload.TryGetProperty("upgradeLang", out var upgradeLangProp)
+                && upgradeLangProp.ValueKind == JsonValueKind.String)
+            {
+                upgradeLangValue = (upgradeLangProp.GetString() ?? "").Trim();
+            }
+            if (!upgradePayloadPresent || upgradeKeys.Count == 0)
+            {
+                upgradeLangValue = "";
+            }
+
             // Save INI files synchronously
             try
             {
@@ -858,15 +915,20 @@ namespace WSUSOffline.Generator
             {
                 try
                 {
-                    // 1. Download Updates
+                    // 1. Download Updates. The upgrade tokens are arch-routed
+                    // onto these two w100-family argument strings ONLY (the
+                    // DEC-36-01-widened guards let upgrade-only selections
+                    // reach them); job.Switches itself stays untouched, so
+                    // legacy invocations never carry upgrade tokens. The
+                    // [CMD] log line above is the UI-SPEC console observable.
                     if (job.HasWin11Or10x64 && !ct.IsCancellationRequested)
                     {
-                        await RunCommandAsync("DownloadUpdates.cmd", $"w100-x64 glb {job.Switches}".Trim(), cmdDir, ct);
+                        await RunCommandAsync("DownloadUpdates.cmd", $"w100-x64 glb {job.Switches}{upgradeSwitchesX64}".Trim(), cmdDir, ct, upgradeLangValue);
                     }
 
                     if (job.HasWin10x86 && !ct.IsCancellationRequested)
                     {
-                        await RunCommandAsync("DownloadUpdates.cmd", $"w100 glb {job.Switches}".Trim(), cmdDir, ct);
+                        await RunCommandAsync("DownloadUpdates.cmd", $"w100 glb {job.Switches}{upgradeSwitchesX86}".Trim(), cmdDir, ct, upgradeLangValue);
                     }
 
                     // Legacy targets (Windows 7, Windows Vista, 8.1, Server 2008/2012, XP)
@@ -1406,9 +1468,10 @@ namespace WSUSOffline.Generator
         /// directory the manifest of the preferred staged language (en-us
         /// first, then the lexicographic-first) is read for its total_mib
         /// meta row only (DEC-33-07: consume totals, never re-sum raw byte
-        /// rows) plus the updateName line used for row display. No staged
-        /// language, no manifest or no total_mib row = no map entry -
-        /// nothing is invented beyond what is staged on disk.
+        /// rows) plus the updateName line used for row display and the
+        /// payload-file count (name|sha256|size rows) the budget warning
+        /// renders. No staged language, no manifest or no total_mib row =
+        /// no map entry - nothing is invented beyond what is staged on disk.
         /// </summary>
         private static Dictionary<string, object> BuildUpgradeSizeMap(string root)
         {
@@ -1462,11 +1525,16 @@ namespace WSUSOffline.Generator
                 }
                 string? totalMib = null;
                 string? updateName = null;
+                int fileCount = 0;
                 try
                 {
                     foreach (string line in File.ReadAllLines(manifestPath))
                     {
                         string trimmed = line.Trim();
+                        if (trimmed.Length == 0 || trimmed.StartsWith("#"))
+                        {
+                            continue;
+                        }
                         if (trimmed.StartsWith("total_mib|", StringComparison.Ordinal))
                         {
                             totalMib = trimmed.Substring("total_mib|".Length).Trim();
@@ -1475,9 +1543,17 @@ namespace WSUSOffline.Generator
                         {
                             updateName = trimmed.Substring("updateName|".Length).Trim();
                         }
-                        if (totalMib != null && updateName != null)
+                        else if (!(trimmed.StartsWith("uuid|", StringComparison.Ordinal)
+                            || trimmed.StartsWith("arch|", StringComparison.Ordinal)
+                            || trimmed.StartsWith("lang|", StringComparison.Ordinal)
+                            || trimmed.StartsWith("build|", StringComparison.Ordinal)
+                            || trimmed.StartsWith("total_bytes|", StringComparison.Ordinal)))
                         {
-                            break;
+                            // one name|sha256|size row per payload file - the
+                            // budget warning's file count (36-03); the comment
+                            // header and the meta key|value block are excluded
+                            // by the branches above
+                            fileCount++;
                         }
                     }
                 }
@@ -1489,7 +1565,7 @@ namespace WSUSOffline.Generator
                 {
                     continue;
                 }
-                sizes[build + "_" + arch] = new { totalMib, updateName = updateName ?? "" };
+                sizes[build + "_" + arch] = new { totalMib, updateName = updateName ?? "", fileCount };
             }
             return sizes;
         }
@@ -1546,7 +1622,7 @@ namespace WSUSOffline.Generator
             { "neutral", "Any Language (neutral)" }
         };
 
-        private async Task RunCommandAsync(string script, string arguments, string workingDir, CancellationToken ct)
+        private async Task RunCommandAsync(string script, string arguments, string workingDir, CancellationToken ct, string? upgradeLang = null)
         {
             LogToWeb($"[CMD] {script} {arguments}");
 
@@ -1560,6 +1636,15 @@ namespace WSUSOffline.Generator
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+
+            // Media-language carriage (36-03, DEC-33-01): set ONLY when a
+            // language value reaches this call - absent/null/empty leaves
+            // the child environment untouched (SC4; the pipeline reads
+            // WOU_UPGRADE_LANG with the en-us fallback when unset).
+            if (!string.IsNullOrEmpty(upgradeLang))
+            {
+                psi.EnvironmentVariables["WOU_UPGRADE_LANG"] = upgradeLang;
+            }
 
             using var process = new Process { StartInfo = psi };
             _activeProcess = process;

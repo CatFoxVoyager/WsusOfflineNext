@@ -954,6 +954,7 @@ var
   Name, Data: string;
   LongPath: string;
   MarkerDir: string;
+  UpgradeDir: string;
 begin
   { Builder shape (threat T-26-06): '!'-prefixed name, quoted exe +
     /resume only. }
@@ -1030,6 +1031,42 @@ begin
   { the marker and the engine recall are independent signals. }
   Check(not ResResumePendingIn(MarkerDir),
     'resume: engine recall alone is not a GUI-pending run');
+
+  { Phase 35 RECALL-01: the ENGINE-owned upgrade-in-progress marker.
+    The GUI reads it (probe + lenient target parse + the blocked
+    decision) and never writes or deletes it. }
+  UpgradeDir := IncludeTrailingPathDelimiter(GTempDir) + 'upgrademarker';
+  ForceDirectories(UpgradeDir);
+  Check(not ResUpgradeInProgressIn(UpgradeDir),
+    'resume: upgrade marker absent -> probe false');
+  Check(not ResUpgradeResumeBlockedIn(UpgradeDir, 26200),
+    'resume: upgrade blocked when marker absent -> false');
+  WriteFixture('upgrademarker\wou_upgrade_in_progress.txt',
+    'full,26200,19045' + LineEnding + 'timestamp' + LineEnding);
+  Check(ResUpgradeInProgressIn(UpgradeDir),
+    'resume: upgrade marker present -> probe true');
+  Check(ResUpgradeMarkerTargetIn(UpgradeDir) = 26200,
+    'resume: upgrade target parse full,26200,19045 -> 26200');
+  Check(ResUpgradeResumeBlockedIn(UpgradeDir, 19045),
+    'resume: upgrade blocked when observed build differs -> true');
+  WriteFixture('upgrademarker\wou_upgrade_in_progress.txt',
+    'garbage' + LineEnding);
+  Check(ResUpgradeMarkerTargetIn(UpgradeDir) = 0,
+    'resume: upgrade target parse garbage -> 0');
+  Check(ResUpgradeResumeBlockedIn(UpgradeDir, 26200),
+    'resume: upgrade blocked when target unparseable -> true');
+  WriteFixture('upgrademarker\wou_upgrade_in_progress.txt', '');
+  Check(ResUpgradeMarkerTargetIn(UpgradeDir) = 0,
+    'resume: upgrade target parse empty file -> 0');
+  { The converged fall-through contract (Pitfall 3): a marker standing
+    with observed build == parsed target is NOT blocked - StartRun
+    re-enters the engine and the convergence branch clears the marker. }
+  WriteFixture('upgrademarker\wou_upgrade_in_progress.txt',
+    'full,26200,19045' + LineEnding);
+  Check(not ResUpgradeResumeBlockedIn(UpgradeDir, 26200),
+    'resume: upgrade converged observed==target -> falls through');
+  SysUtils.DeleteFile(IncludeTrailingPathDelimiter(UpgradeDir)
+    + 'wou_upgrade_in_progress.txt');
 end;
 
 procedure TestCompletionMatrix;

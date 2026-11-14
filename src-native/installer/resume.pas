@@ -51,6 +51,13 @@ const
     script here until CleanupRecall removes the directory. While it exists
     the engine resumes the run by itself. }
   RES_ENGINE_RECALL_REL = 'WOURecall\RecallUpdate.cmd';
+  { The ENGINE-owned upgrade-in-progress marker (Phase 35, RECALL-01):
+    posed by DoUpdate.cmd beside its launch record before every setup.exe
+    launch, cleared only at the observed-build convergence and the stall
+    halt. The GUI READS it - it never writes or deletes it (ownership
+    boundary, like the staging constants above). While it stands,
+    setup.exe owns the machine. }
+  RES_UPGRADE_MARKER = 'wou_upgrade_in_progress.txt';
 
 { Pure builder (unit-proven): AName = '!WOUResume'; AData = the quoted
   exe path (short-path spelling when the file exists and 8.3 names are
@@ -96,6 +103,30 @@ function ResResumePending: Boolean;
   duplicates the very continuation it is supposed to provide. }
 function ResEngineRecallPreparedIn(const ADir: string): Boolean;
 function ResEngineRecallPrepared: Boolean;
+
+{ The upgrade-in-progress marker probe (Phase 35, RECALL-01). ENGINE-owned
+  state: the GUI reads it, never writes or deletes it. }
+function ResUpgradeInProgressIn(const ADir: string): Boolean;
+function ResUpgradeInProgress: Boolean;
+
+{ The marker's target build: field 2 of line 1 (CSV `full,<target>,<rev>`,
+  DEC-35-05). A missing, empty or malformed marker parses as 0 - the
+  lenient reader never raises; the decision below fails closed on it. }
+function ResUpgradeMarkerTargetIn(const ADir: string): Integer;
+function ResUpgradeMarkerTarget: Integer;
+
+{ The /resume decision for the upgrade marker: False when the marker is
+  absent (today's behaviour, degrade-silently); True when the parsed
+  target is unusable (<= 0) or the observed build differs from it - the
+  machine is either still setup.exe-owned or awaiting the engine's own
+  stall-halt restore. A converged machine (observed build = target) is
+  NOT blocked: the caller falls through so StartRun re-enters the engine
+  and the convergence branch clears the marker. NO counter is added here:
+  the engine's wourecall.1-9 rotation and the attempts record stay the
+  only loop protection (installer.lpr verbatim rule). }
+function ResUpgradeResumeBlockedIn(const ADir: string;
+  const AObservedBuild: Integer): Boolean;
+function ResUpgradeResumeBlocked(const AObservedBuild: Integer): Boolean;
 
 implementation
 
@@ -244,6 +275,73 @@ end;
 function ResEngineRecallPrepared: Boolean;
 begin
   Result := ResEngineRecallPreparedIn(EngEngineTempDir);
+end;
+
+function ResUpgradeInProgressIn(const ADir: string): Boolean;
+begin
+  Result := FileExists(IncludeTrailingPathDelimiter(ADir)
+    + RES_UPGRADE_MARKER);
+end;
+
+function ResUpgradeInProgress: Boolean;
+begin
+  Result := ResUpgradeInProgressIn(EngEngineTempDir);
+end;
+
+function ResUpgradeMarkerTargetIn(const ADir: string): Integer;
+var
+  Sl: TStringList;
+  Line, Field2: string;
+  P: Integer;
+begin
+  Result := 0;
+  Sl := TStringList.Create;
+  try
+    try
+      Sl.LoadFromFile(IncludeTrailingPathDelimiter(ADir)
+        + RES_UPGRADE_MARKER);
+      if Sl.Count < 1 then
+        Exit; { empty file parses as 0 (fail-closed downstream) }
+      Line := Sl.Strings[0];
+      P := Pos(',', Line);
+      if P = 0 then
+        Exit; { no CSV fields at all }
+      Delete(Line, 1, P); { drop field 1 = the leg token }
+      P := Pos(',', Line);
+      if P = 0 then
+        Field2 := Trim(Line) { the target is the last field }
+      else
+        Field2 := Copy(Line, 1, P - 1);
+      Result := StrToIntDef(Trim(Field2), 0);
+    except
+      Result := 0; { degrade silently: an unreadable marker parses as 0 }
+    end;
+  finally
+    Sl.Free;
+  end;
+end;
+
+function ResUpgradeMarkerTarget: Integer;
+begin
+  Result := ResUpgradeMarkerTargetIn(EngEngineTempDir);
+end;
+
+function ResUpgradeResumeBlockedIn(const ADir: string;
+  const AObservedBuild: Integer): Boolean;
+var
+  Target: Integer;
+begin
+  if not ResUpgradeInProgressIn(ADir) then
+    Exit(False); { no marker: today's behaviour }
+  Target := ResUpgradeMarkerTargetIn(ADir);
+  if Target <= 0 then
+    Exit(True); { unparseable target: stay out, fail-closed }
+  Result := AObservedBuild <> Target;
+end;
+
+function ResUpgradeResumeBlocked(const AObservedBuild: Integer): Boolean;
+begin
+  Result := ResUpgradeResumeBlockedIn(EngEngineTempDir, AObservedBuild);
 end;
 
 end.

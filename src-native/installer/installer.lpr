@@ -113,6 +113,18 @@ begin
         recall. Leave silently. }
       Halt(0);
     end;
+    if ResUpgradeResumeBlocked(DetectOsInfo.Build) then
+    begin
+      { RECALL-01 (Phase 35): the engine posed its upgrade-in-progress
+        marker and the observed build differs from the marker's target -
+        setup.exe owns the machine, or a failed upgrade awaits the engine's
+        own stall-halt restore. The converged case (observed build = marker
+        target) is NOT blocked and falls through to the resume below so
+        StartRun re-enters the engine and the convergence branch clears
+        the marker. Any dialog or second engine here would block the first
+        post-upgrade logon. Leave silently (the EngineRecall rule). }
+      Halt(0);
+    end;
     if ResumePending then
     begin
       { FormCreate restores the prior toggle set from the INI (the same

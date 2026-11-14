@@ -20,7 +20,7 @@ LAZBUILD = os.path.join(LAZARUS_ROOT, "lazbuild.exe")
 LPI = os.path.join(repo_root, "src-native", "installer", "installer.lpi")
 
 # Test 1: enginecontracts.pas frozen INI sections/keys
-print("[Test 1/5] Verifying enginecontracts.pas frozen INI sections and keys...")
+print("[Test 1/6] Verifying enginecontracts.pas frozen INI sections and keys...")
 with open(os.path.join("src-native", "installer", "enginecontracts.pas"), "r", encoding="utf-8") as f:
     contracts = f.read()
 
@@ -61,7 +61,7 @@ print("[PASS] Test 1: enginecontracts.pas frozen INI sections and keys intact.")
 
 # Test 2: argv contracts (the launcher forwards argv verbatim, so the
 # incumbent 'enu'/'deu' language contract and the frozen switch table persist)
-print("\n[Test 2/5] Verifying command-line argument handling contracts...")
+print("\n[Test 2/6] Verifying command-line argument handling contracts...")
 assert "ENG_SWITCH_COUNT = 25" in contracts, "Installer missing the frozen 25-token switch table"
 assert "ENG_INI_DEFAULT_COUNT = 25" in contracts, "Installer missing the frozen 25-row INI defaults table"
 for token in ["/auditonly", "/updateoffice", "/autoreboot", "/instmsi", "/upgradeos"]:
@@ -82,7 +82,7 @@ print("[PASS] Test 2: Command-line contracts verified on the native sources.")
 # empty keeps the explicit-cleared DELETE contract (no stale twin).
 # Source-level pin over the generator host (path overridable for
 # scratch-copy bite proofs).
-print("\n[Test 3/5] Verifying the generator host OS-upgrades twin contract...")
+print("\n[Test 3/6] Verifying the generator host OS-upgrades twin contract...")
 GENERATOR_HOST_CS = os.environ.get(
     "WSON_GENERATOR_HOST_CS",
     os.path.join("src-modern", "generator", "host", "Program.cs"))
@@ -126,7 +126,7 @@ print("[PASS] Test 3: generator host OS-upgrades twin contract verified.")
 # RID layout: the host falls back to BaseDirectory and the launched pipeline
 # gets a nonexistent WorkingDirectory ("Nom de repertoire non valide").
 # Source-level pin over the same overridable path as Test 3.
-print("\n[Test 4/5] Verifying the generator host dev-root parent-walk contract...")
+print("\n[Test 4/6] Verifying the generator host dev-root parent-walk contract...")
 walk_shapes = [
     # The walk is rooted at the app's BaseDirectory (level 0 = shipped root).
     ("BaseDirectory-rooted walk", "new DirectoryInfo(baseDir)"),
@@ -154,8 +154,8 @@ if '"..", "..", "..", "..", ".."' in gen_host_src:
     sys.exit(1)
 print("[PASS] Test 4: generator host dev-root parent-walk contract verified.")
 
-# Test 4: native compile + launcher contracts
-print("\n[Test 5/5] Compiling the native installer (both Release modes) and verifying the launcher contract...")
+# Test 5: native compile + launcher contracts
+print("\n[Test 5/6] Compiling the native installer (both Release modes) and verifying the launcher contract...")
 if not os.path.exists(LAZBUILD):
     print(f"[FAIL] lazbuild not found at {LAZBUILD} - set WO_LAZARUS_ROOT "
           f"(CI runner installation is Phase 27's lane)")
@@ -193,6 +193,98 @@ for name in ["UpdateInstaller.orig.exe", "UpdateInstallerLegacy.exe"]:
 print("  Program.cs exact-name probes verified.")
 print("[PASS] Test 5: Native compile and launcher contracts verified.")
 
+# Test 6: Phase 36 picker wiring pins (36-03). The budget line (DEC-36-03
+# manifest-first), the media-language select (DEC-36-06), the arch-routed
+# /includeupgrade spawn tokens (DEC-08 grammar, DEC-36-01 scope widening)
+# and the touched-flag payload rule, pinned source-side over the generator
+# host AND the App.tsx frontend. Fail-closed literal lists, Test-3 style:
+# every pin names its literal, any miss exits 1. The host path reuses the
+# WSON_GENERATOR_HOST_CS override; the frontend path gains its own
+# WSON_GENERATOR_APP_TSX override (same idiom) for bite proofs.
+print("\n[Test 6/6] Verifying the Phase 36 picker wiring literals...")
+
+def check_picker_pins(source, source_label, pins):
+    """Evaluate (name, literal, op, expected) pins over one source;
+    print a named [FAIL] line per miss and return True when all pass."""
+    failed = False
+    for name, shape, op, expected in pins:
+        count = source.count(shape)
+        ok = (count == expected) if op == "==" else (count >= expected)
+        if not ok:
+            print(f"[FAIL] picker wiring {source_label}: pin '{name}' expects "
+                  f"{op} {expected} occurrence(s) of: {shape} (found {count})")
+            failed = True
+    return not failed
+
+# Host pins (over the existing GENERATOR_HOST_CS reader - gen_host_src
+# already holds the resolved path's content from Tests 3/4).
+picker_pins_host = [
+    # The spawn site re-extracts the selection with a SECOND independent
+    # call of the pure parser (SaveIniFiles' pinned call is the first).
+    ("upgrade payload re-extraction at spawn site",
+     "GetUpgradePayloadSelection(payload, out bool upgradePayloadPresent)", ">=", 2),
+    # DEC-08 singular grammar, composed only from validated key digits.
+    ("token composition literal",
+     '"/includeupgrade:"', ">=", 1),
+    # Arch-routed token lists (x64 -> w100-x64, x86 -> w100).
+    ("arch-routed x64 token list",
+     "upgradeSwitchesX64", ">=", 1),
+    ("arch-routed x86 token list",
+     "upgradeSwitchesX86", ">=", 1),
+    # DEC-36-01 scope widening predicates (upgrade-only selections spawn).
+    ("scope widening x64 predicate",
+     'EndsWith("_x64")', ">=", 1),
+    ("scope widening x86 predicate",
+     'EndsWith("_x86")', ">=", 1),
+    # The env carriage exists exactly once - set only on a language value.
+    ("language env carriage (exactly once)",
+     'EnvironmentVariables["WOU_UPGRADE_LANG"]', "==", 1),
+    # DEC-36-03: the budget reads the staged manifest total_mib.
+    ("budget source (manifest total_mib)",
+     "total_mib", ">=", 1),
+]
+
+# Frontend pins (new reader, path overridable for bite proofs).
+GENERATOR_APP_TSX = os.environ.get(
+    "WSON_GENERATOR_APP_TSX",
+    os.path.join("src-modern", "generator", "src", "App.tsx"))
+with open(GENERATOR_APP_TSX, "r", encoding="utf-8") as f:
+    gen_app_src = f.read()
+
+picker_pins_app = [
+    # Touched-flag payload rule (the 26a0073 regression class).
+    ("payload rule spread-conditional",
+     "upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget", "==", 1),
+    # DEC-36-06: the language rides inside the same conditional.
+    ("payload language fragment",
+     "upgradeLang: upgradeLang", "==", 1),
+    # DEC-36-07 roster partition over the pushed rows.
+    ("roster partition fuMedia",
+     "fuMedia", ">=", 1),
+    ("roster partition ekbPresent",
+     "ekbPresent", ">=", 1),
+    # Budget line states - byte-exact UI-SPEC Copywriting Contract copy.
+    ("budget calm copy",
+     "Estimated download: ", "==", 1),
+    ("budget warning copy",
+     "Media above 4 GB needs exFAT/NTFS formatting or split .swm handling on FAT32 drives", "==", 1),
+    ("budget estimate copy",
+     "measured on 26200 en-us; varies by target and language", "==", 1),
+    # Default option label of the media-language select.
+    ("default language label",
+     "English (en-us)", "==", 1),
+    # Roster merge arm inside the state-message listener.
+    ("roster state arm",
+     "if (data.upgrades)", "==", 1),
+]
+
+host_ok = check_picker_pins(gen_host_src, GENERATOR_HOST_CS, picker_pins_host)
+app_ok = check_picker_pins(gen_app_src, GENERATOR_APP_TSX, picker_pins_app)
+if not host_ok or not app_ok:
+    sys.exit(1)
+print("[PASS] Test 6: Phase 36 picker wiring literals verified "
+      f"(host {GENERATOR_HOST_CS}, frontend {GENERATOR_APP_TSX}).")
+
 print("\n" + "=" * 71)
-print("SUCCESS: All 5 GUI contract tests passed!")
+print("SUCCESS: All 6 GUI contract tests passed!")
 print("=" * 71)

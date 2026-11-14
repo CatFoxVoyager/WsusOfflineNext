@@ -113,7 +113,21 @@ type
     siUpgradeReasonArchUnsupported, { upgrade blocked: arch-unsupported }
     siUpgradeReasonBaselineUnknown, { upgrade blocked: baseline-unknown }
     siUpgradeReasonLangNotCarried, { upgrade blocked: language-not-carried }
-    siUpgradeReasonGeneric { fallback for an out-of-vocabulary reason }
+    siUpgradeReasonGeneric, { fallback for an out-of-vocabulary reason }
+    siUpgradeTabCaption, { consent TabSheet caption (36-02) }
+    siUpgradeTargetLine, { named target line, %s = updateName }
+    siUpgradePathFull, { path line: full feature update }
+    siUpgradePathEkb, { path line: enablement package, %s = ekb_kb }
+    siUpgradeDiskLine, { disk line, %s = total_mib rendered n.n/n,n }
+    siUpgradeDurationLine, { duration line, %s = duration band }
+    siUpgradeDurationFullBand, { duration band: full feature update }
+    siUpgradeDurationEkbBand, { duration band: enablement package }
+    siUpgradeRebootsFull, { reboots line: full feature update }
+    siUpgradeRebootsEkb, { reboots line: enablement package }
+    siUpgradeConsentCaption, { opt-in toggle caption, %s = target }
+    siUpgradeConsentTitle, { start-time confirmation title }
+    siUpgradeConsentBody { five-fact confirmation body: target, path,
+                          disk, duration, reboots }
   );
 
 { Select the active language: True = German (incumbent $gergui), False =
@@ -301,7 +315,33 @@ const
     (EN: 'Language not carried by this target';
      DE: 'Sprache wird von diesem Ziel nicht angeboten'),
     (EN: 'Upgrade not available for this computer';
-     DE: 'Upgrade für diesen Computer nicht verfügbar')
+     DE: 'Upgrade für diesen Computer nicht verfügbar'),
+    (EN: 'OS Upgrade';
+     DE: 'OS-Upgrade'),
+    (EN: 'Target: %s';
+     DE: 'Ziel: %s'),
+    (EN: 'Path: Full update (setup.exe media)';
+     DE: 'Pfad: Full-Update (setup.exe-Medium)'),
+    (EN: 'Path: Enablement package %s';
+     DE: 'Pfad: Enablement-Paket %s'),
+    (EN: 'Disk space required: ~%s GB';
+     DE: 'Freier Speicher benötigt: ~%s GB'),
+    (EN: 'Estimated duration: %s (hardware-dependent)';
+     DE: 'Geschätzte Dauer: %s (hardwareabhängig)'),
+    (EN: '30–90 minutes';
+     DE: '30–90 Minuten'),
+    (EN: 'a few minutes';
+     DE: 'einige Minuten'),
+    (EN: 'Expected reboots: at least 2 (setup.exe owns the restart chain)';
+     DE: 'Erwartete Neustarts: mindestens 2 (setup.exe steuert die Neustartkette)'),
+    (EN: 'Expected reboots: 1 (plus resume)';
+     DE: 'Erwartete Neustarts: 1 (plus Fortsetzung)'),
+    (EN: 'Upgrade this computer to %s (opt-in, this run only)';
+     DE: 'Dieser Computer auf %s aktualisieren (Opt-in, nur dieser Lauf)'),
+    (EN: 'Confirm OS upgrade';
+     DE: 'OS-Upgrade bestätigen'),
+    (EN: 'Upgrade this computer to %s? Path: %s. Disk space required: ~%s GB. Estimated duration: %s (hardware-dependent). Expected reboots: %s. This replaces the current Windows installation. Apps and files are kept.';
+     DE: 'Diesen Computer auf %s aktualisieren? Pfad: %s. Freier Speicher benötigt: ~%s GB. Geschätzte Dauer: %s (hardwareabhängig). Erwartete Neustarts: %s. Dies ersetzt die aktuelle Windows-Installation. Apps und Dateien bleiben erhalten.')
   );
 
 var

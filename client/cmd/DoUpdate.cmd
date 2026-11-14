@@ -1157,6 +1157,7 @@ if defined WOU_UPGRADE_TARGET if "%OS_VER_BUILD%"=="%WOU_UPGRADE_TARGET%" (
   call :Log "FULLUPGRADE-CONVERGED"
   if exist %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt
   if exist %SystemRoot%\Temp\wou_fullupgrade_attempts.txt del %SystemRoot%\Temp\wou_fullupgrade_attempts.txt
+  call :FullUpgradeClearMarker
   goto FullUpgradeSkip
 )
 rem Physical media probe (DEC-34-02/03): enumerate the staged language directories -
@@ -1238,12 +1239,29 @@ if defined WOU_FU_PREV_COUNT if "!WOU_FU_PREV_LEG!"=="full" if "!WOU_FU_PREV_BUI
     call :Log "FULLUPGRADE-STALL-HALT"
     if exist %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt
     if exist %SystemRoot%\Temp\wou_fullupgrade_attempts.txt del %SystemRoot%\Temp\wou_fullupgrade_attempts.txt
+    call :FullUpgradeClearMarker
+    echo RECALL-RESTORED
+    call :Log "RECALL-RESTORED"
+    rem Armed-state gate (DEC-35-06): the teardown is only for a machine where
+    rem the legacy recall is actually armed - never a w100-shaped sandbox.
+    if exist "%SystemRoot%\Temp\WOURecall" (
+      echo Info: Armed recall state found - restoring safe state after failed upgrade
+      call :Log "Info: Armed recall state found - restoring safe state after failed upgrade"
+      call CleanupRecall.cmd
+    )
     goto FullUpgradeSkip
   )
 )
 rem Write the attempt record BEFORE the launch - under test mode and real mode
 rem alike - because a reboot during the setup invocation must not lose the count
 echo %WOU_FU_COUNT%,%OS_VER_REVIS%,%OS_VER_BUILD%,full>%WOU_TEMP_DIR%\wou_fullupgrade_attempts.txt
+rem Pose the upgrade-in-progress marker beside the launch record (RECALL-01) -
+rem under test mode and real mode alike; its only legitimate deaths are the
+rem converged routing and the halt below (never :Cleanup, never a refusal pass).
+echo full,%WOU_UPGRADE_TARGET%,%OS_VER_REVIS%>%WOU_TEMP_DIR%\wou_upgrade_in_progress.txt
+(echo %DATE% %TIME%)>>%WOU_TEMP_DIR%\wou_upgrade_in_progress.txt
+echo FULLUPGRADE-MARKER-POSED
+call :Log "FULLUPGRADE-MARKER-POSED"
 rem Launch (APPLY-01): the frozen flag-set with NO additional flags - the launch
 rem terminates the pass unconditionally (DEC-34-01/04), whatever setup reports
 if "%WOU_TEST_MODE%"=="1" goto FullUpgradeLaunchMock
@@ -1261,6 +1279,14 @@ if "%REBOOT_REQUIRED%"=="1" (
   if "%RECALL_REQUIRED%" NEQ "1" set "RECALL_REQUIRED=1"
 )
 goto Installed
+
+:FullUpgradeClearMarker
+rem Dual-path delete for the only two legitimate deaths (converged routing,
+rem stall halt) - same discipline as the attempts deletes; the marker never
+rem joins :Cleanup or the fresh-run deletion class (DEC-35-01, T-35-03).
+if exist %WOU_TEMP_DIR%\wou_upgrade_in_progress.txt del %WOU_TEMP_DIR%\wou_upgrade_in_progress.txt
+if exist %SystemRoot%\Temp\wou_upgrade_in_progress.txt del %SystemRoot%\Temp\wou_upgrade_in_progress.txt
+goto :eof
 
 :NormalizeFuRc
 rem Map the signed-decimal errorlevel display form of the documented setup.exe

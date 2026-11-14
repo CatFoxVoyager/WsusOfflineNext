@@ -8,6 +8,12 @@ if "%UPDATE_LOGFILE%"=="" set UPDATE_LOGFILE=%SystemRoot%\wsusofflineupdate.log
 cd /D "%~dp0"
 
 if exist %UPDATE_LOGFILE% echo.>>%UPDATE_LOGFILE%
+rem Upgrade-in-progress marker (Phase 35, RECALL-01): while setup.exe owns the
+rem machine, the automatic recall stays out - no relaunch, no cleanup, no reboot.
+if exist %SystemRoot%\Temp\wou_upgrade_in_progress.txt (
+  echo %DATE% %TIME% - Info: Upgrade in progress - automatic recall suppressed>>%UPDATE_LOGFILE%
+  goto EoF
+)
 if not exist RecallUpdate.cmd (
   echo %DATE% %TIME% - Error: Script file RecallUpdate.cmd not found>>%UPDATE_LOGFILE%
   goto Cleanup

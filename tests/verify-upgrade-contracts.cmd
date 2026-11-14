@@ -362,6 +362,77 @@ if not errorlevel 1 (
 echo [PASS] DoUpdate.cmd: zero selection-file references (DEC-32-01 CSV-only)
 
 REM -----------------------------------------------------------------------
+REM 5. Phase-37 family census (plan 37-02, VAL-02b): zero pre-Win10 rows
+REM    at the data layer. Field-4 walks over the live roster and the
+REM    generator source of truth (for /f token walks - NOT findstr
+REM    pattern counting), counts captured into variables and compared
+REM    numerically. The upgrade entries the GUIs surface come ONLY from
+REM    this roster, so a w61/wxp family can never reach the picker; the
+REM    FPC resolver's R4 refusal is exercised by the TAP negative
+REM    (upg-case-21-wxp-family-r4) instead.
+REM -----------------------------------------------------------------------
+set "UPGRADES_TXT=%REPO_ROOT%\client\UpdateTable\upgrades.txt"
+set "BUILDS_INI=%REPO_ROOT%\static\builds.ini"
+if not exist "%UPGRADES_TXT%" (
+  echo FAIL: missing upgrades.txt at "%UPGRADES_TXT%"
+  goto Fail
+)
+set ROSTER_TOTAL=0
+set ROSTER_WIN10=0
+set ROSTER_WIN11=0
+set ROSTER_OTHER=0
+set "ROSTER_OTHER_FIRST="
+for /F "usebackq eol=# delims=| tokens=4" %%f in ("%UPGRADES_TXT%") do (
+  set /a ROSTER_TOTAL+=1
+  if /i "%%f"=="win10" (
+    set /a ROSTER_WIN10+=1
+  ) else if /i "%%f"=="win11" (
+    set /a ROSTER_WIN11+=1
+  ) else (
+    set /a ROSTER_OTHER+=1
+    if not defined ROSTER_OTHER_FIRST set "ROSTER_OTHER_FIRST=%%f"
+  )
+)
+if %ROSTER_TOTAL% LSS 1 (
+  echo FAIL: the roster family census read 0 data rows - vacuous census ^(population proof failed^)
+  goto Fail
+)
+if %ROSTER_OTHER% NEQ 0 (
+  echo FAIL: upgrades.txt carries %ROSTER_OTHER% pre-Win10 os_family row^(s^) ^(first: %ROSTER_OTHER_FIRST%; expected zero^)
+  goto Fail
+)
+set /a ROSTER_W1011=ROSTER_WIN10+ROSTER_WIN11
+if not "%ROSTER_W1011%"=="%ROSTER_TOTAL%" (
+  echo FAIL: the roster family census is inconsistent - win10+win11 = %ROSTER_W1011% of %ROSTER_TOTAL% rows
+  goto Fail
+)
+echo [PASS] upgrades.txt: zero pre-Win10 os_family rows (census %ROSTER_TOTAL%/%ROSTER_W1011% win10+win11, 0 other)
+
+if not exist "%BUILDS_INI%" (
+  echo FAIL: missing builds.ini at "%BUILDS_INI%"
+  goto Fail
+)
+set BUILDS_TOTAL=0
+set BUILDS_OTHER=0
+set "BUILDS_OTHER_FIRST="
+for /F "delims== tokens=2" %%v in ('%SystemRoot%\System32\findstr.exe /B /C:"os_family=" "%BUILDS_INI%"') do (
+  set /a BUILDS_TOTAL+=1
+  if /i not "%%v"=="win10" if /i not "%%v"=="win11" (
+    set /a BUILDS_OTHER+=1
+    if not defined BUILDS_OTHER_FIRST set "BUILDS_OTHER_FIRST=%%v"
+  )
+)
+if %BUILDS_TOTAL% LSS 1 (
+  echo FAIL: the builds.ini family census read 0 os_family values - vacuous census ^(population proof failed^)
+  goto Fail
+)
+if %BUILDS_OTHER% NEQ 0 (
+  echo FAIL: builds.ini carries %BUILDS_OTHER% pre-Win10 os_family value^(s^) ^(first: %BUILDS_OTHER_FIRST%; expected zero^)
+  goto Fail
+)
+echo [PASS] builds.ini: zero pre-Win10 os_family values (census %BUILDS_TOTAL% win10+win11, 0 other)
+
+REM -----------------------------------------------------------------------
 REM 2. Battery invocation - argv acceptance + bash contract twin
 REM -----------------------------------------------------------------------
 echo [RUN ] invoking tests\verify-upgrade-argv.cmd ...

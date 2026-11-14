@@ -425,6 +425,75 @@ printf '[A] verdict evaluator parity: %s checks green (3 parser facts + 20 matri
 echo "--- Section B: generated contracts (--check twins + data census) ---"
 SECTION_PASS=0
 
+# -----------------------------------------------------------------------
+# Phase-37 family census (plan 37-02, VAL-02b): zero pre-Win10 upgrade
+# rows at the data layer. Field-4 awk walk over the live roster plus the
+# generator source of truth (LC_ALL=C is exported at the twin top) -
+# counts captured into variables and compared numerically. The upgrade
+# entries the GUIs surface come ONLY from this roster, so a w61/wxp
+# family can never reach the picker; the FPC resolver's R4 refusal is
+# exercised by the TAP negative (upg-case-21-wxp-family-r4) instead.
+# -----------------------------------------------------------------------
+upg_file="${repo_root}/client/UpdateTable/upgrades.txt"
+if [[ ! -f "$upg_file" ]]; then
+    printf 'FAIL: missing generated file client/UpdateTable/upgrades.txt\n'
+    exit 1
+fi
+census_out="$(awk -F'|' '
+    $0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*$/ && NF==12 {
+        total++
+        fam=$4; sub(/\r$/, "", fam)
+        if (fam=="win10") w10++
+        else if (fam=="win11") w11++
+        else { other++; if (other_first=="") other_first=fam }
+    }
+    END { printf "%d %d %d %d %s\n", total+0, w10+0, w11+0, other+0, other_first }
+' "$upg_file")"
+read -r census_total census_win10 census_win11 census_other census_other_first <<< "$census_out"
+if [[ "$census_total" -lt 1 ]]; then
+    printf 'FAIL: the roster family census read 0 data rows - vacuous census (population proof failed)\n'
+    exit 1
+fi
+if [[ "$census_other" -ne 0 ]]; then
+    printf 'FAIL: upgrades.txt carries %s pre-Win10 os_family row(s) (first: %s; expected zero)\n' \
+        "$census_other" "$census_other_first"
+    exit 1
+fi
+assert_eq "$((census_win10 + census_win11))" "$census_total" \
+    "upgrades.txt family census: win10+win11 = all ${census_total} data rows"
+SECTION_PASS=$((SECTION_PASS + 1))
+echo "[B] upgrades.txt: zero pre-Win10 os_family rows (census ${census_total}/${census_total} win10+win11, 0 other)"
+
+builds_ini_file="${repo_root}/static/builds.ini"
+if [[ ! -f "$builds_ini_file" ]]; then
+    printf 'FAIL: missing builds registry static/builds.ini\n'
+    exit 1
+fi
+b_census_out="$(awk -F= '
+    /^os_family=/ {
+        total++
+        fam=$2; sub(/\r$/, "", fam)
+        if (fam=="win10") w10++
+        else if (fam=="win11") w11++
+        else { other++; if (other_first=="") other_first=fam }
+    }
+    END { printf "%d %d %d %d %s\n", total+0, w10+0, w11+0, other+0, other_first }
+' "$builds_ini_file")"
+read -r b_total b_win10 b_win11 b_other b_other_first <<< "$b_census_out"
+if [[ "$b_total" -lt 1 ]]; then
+    printf 'FAIL: the builds.ini family census read 0 os_family values - vacuous census (population proof failed)\n'
+    exit 1
+fi
+assert_eq "$((b_win10 + b_win11))" "$b_total" \
+    "builds.ini family census: win10+win11 = all ${b_total} declared families"
+if [[ "$b_other" -ne 0 ]]; then
+    printf 'FAIL: builds.ini carries %s pre-Win10 os_family value(s) (first: %s; expected zero)\n' \
+        "$b_other" "$b_other_first"
+    exit 1
+fi
+SECTION_PASS=$((SECTION_PASS + 1))
+echo "[B] builds.ini: zero pre-Win10 os_family values (census ${b_total} win10+win11, 0 other)"
+
 if ! bash_twin_out="$(bash sh/generate-build-sites.bash --check 2>&1)"; then
     printf 'FAIL: bash generation twin --check reported drift\n%s\n' "$bash_twin_out"
     exit 1

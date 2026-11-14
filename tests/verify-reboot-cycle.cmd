@@ -19,6 +19,7 @@ REM   State 9: Baseline below min revision + prereq CU absent -> loud refusal ->
 REM   State 10: Chosen target with no upgrade path -> loud refusal -> 0
 REM   State 11: Observed convergence (build == target) -> report + purge -> 0
 REM   State 12: Perform-stall guard (stagnant build) -> halts safely -> 0
+REM   State 13: 3010 perform stub -> b69 RECALL convergence (3011) + stall guard
 REM =======================================================================
 
 pushd "%~dp0.."
@@ -92,7 +93,7 @@ set "DISM_MODE="
 REM -----------------------------------------------------------------------
 REM State 1: Fresh Run (26100.1000)
 REM -----------------------------------------------------------------------
-echo [Test 1/12] State 1: Fresh Run (Build 26100, Revision 1000)...
+echo [Test 1/13] State 1: Fresh Run (Build 26100, Revision 1000)...
 set "OS_VER_BUILD=26100"
 set "OS_VER_BUILD_INTERNAL=26100"
 set "OS_VER_REVIS=1000"
@@ -128,7 +129,7 @@ echo [PASS] State 1: Fresh run triggered PrepareBuildUpgrade (exit 3011, prereq 
 REM -----------------------------------------------------------------------
 REM State 2: Simulated Reboot 1
 REM -----------------------------------------------------------------------
-echo [Test 2/12] State 2: Simulated Reboot 1 (OS revision advances 1000 -^> 5074)...
+echo [Test 2/13] State 2: Simulated Reboot 1 (OS revision advances 1000 -^> 5074)...
 set "OS_VER_BUILD=26100"
 set "OS_VER_BUILD_INTERNAL=26100"
 set "OS_VER_REVIS=5074"
@@ -138,7 +139,7 @@ echo [PASS] State 2: Reboot 1 simulated successfully (target revision 5074 met).
 REM -----------------------------------------------------------------------
 REM State 3: Perform Run (26100.5074)
 REM -----------------------------------------------------------------------
-echo [Test 3/12] State 3: Perform Run (Build 26100, Revision 5074)...
+echo [Test 3/13] State 3: Perform Run (Build 26100, Revision 5074)...
 call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade >nul 2>&1
 set "STATE3_EXIT=!errorlevel!"
 
@@ -168,7 +169,7 @@ echo [PASS] State 3: Perform run triggered PerformBuildUpgrade (exit 3011, eKB k
 REM -----------------------------------------------------------------------
 REM State 4: Simulated Reboot 2
 REM -----------------------------------------------------------------------
-echo [Test 4/12] State 4: Simulated Reboot 2 (OS build advances 26100 -^> 26200)...
+echo [Test 4/13] State 4: Simulated Reboot 2 (OS build advances 26100 -^> 26200)...
 set "OS_VER_BUILD=26200"
 set "OS_VER_BUILD_INTERNAL=26200"
 set "OS_VER_REVIS=5074"
@@ -178,7 +179,7 @@ echo [PASS] State 4: Reboot 2 simulated successfully (target build 26200 reached
 REM -----------------------------------------------------------------------
 REM State 5: Convergence Run (26200.5074)
 REM -----------------------------------------------------------------------
-echo [Test 5/12] State 5: Convergence Run (Build 26200, Revision 5074)...
+echo [Test 5/13] State 5: Convergence Run (Build 26200, Revision 5074)...
 call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade >nul 2>&1
 set "STATE5_EXIT=!errorlevel!"
 
@@ -203,7 +204,7 @@ echo [PASS] State 5: Build upgrade converged cleanly (exit 0, all markers purged
 REM -----------------------------------------------------------------------
 REM State 6: Infinite Loop Prevention Guard Test
 REM -----------------------------------------------------------------------
-echo [Test 6/12] State 6: Infinite Loop Guard Test (stagnant revision across reboots)...
+echo [Test 6/13] State 6: Infinite Loop Guard Test (stagnant revision across reboots)...
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
 set "OS_VER_BUILD=26100"
 set "OS_VER_BUILD_INTERNAL=26100"
@@ -267,7 +268,7 @@ echo [PASS] State 6: Infinite loop guard triggered as expected (loop halted, exi
 REM -----------------------------------------------------------------------
 REM State 7: Target-Scoped Match (/upgradeos:26200 set)
 REM -----------------------------------------------------------------------
-echo [Test 7/12] State 7: Target-Scoped Match (target 26200 set - the 26999 row never wins)...
+echo [Test 7/13] State 7: Target-Scoped Match (target 26200 set - the 26999 row never wins)...
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
 set "OS_VER_BUILD=26100"
 set "OS_VER_MAJOR=10"
@@ -324,7 +325,7 @@ echo [PASS] State 7: target-scoped selection held (only 26200 won; 26999 never w
 REM -----------------------------------------------------------------------
 REM State 8: Chosen Target With The EKB Payload Absent (missing-enablement refusal)
 REM -----------------------------------------------------------------------
-echo [Test 8/12] State 8: Chosen target with the EKB payload absent - missing-enablement refusal...
+echo [Test 8/13] State 8: Chosen target with the EKB payload absent - missing-enablement refusal...
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
@@ -363,7 +364,7 @@ REM State 9: Baseline Below Min Revision And Prereq CU Absent
 set "OS_VER_MAJOR=10"
 set "OS_VER_MINOR=0"
 REM -----------------------------------------------------------------------
-echo [Test 9/12] State 9: Baseline revision below required and prereq CU absent - baseline+prereq refusal...
+echo [Test 9/13] State 9: Baseline revision below required and prereq CU absent - baseline+prereq refusal...
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
 set "OS_VER_BUILD=26100"
 set "OS_VER_BUILD_INTERNAL=26100"
@@ -400,7 +401,7 @@ set "OS_VER_MINOR=0"
 REM -----------------------------------------------------------------------
 REM State 10: Chosen Target With No Upgrade Path
 REM -----------------------------------------------------------------------
-echo [Test 10/12] State 10: Chosen target 26999 from build 26200 - no upgrade path refusal...
+echo [Test 10/13] State 10: Chosen target 26999 from build 26200 - no upgrade path refusal...
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
 set "OS_VER_BUILD=26200"
 set "OS_VER_BUILD_INTERNAL=26200"
@@ -443,7 +444,7 @@ echo [PASS] State 10: no-upgrade-path refusal fired verbatim (exit 0, nothing qu
 REM -----------------------------------------------------------------------
 REM State 11: Observed Convergence (build == target)
 REM -----------------------------------------------------------------------
-echo [Test 11/12] State 11: Observed convergence (build 26200 with target 26200)...
+echo [Test 11/13] State 11: Observed convergence (build 26200 with target 26200)...
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
 set "OS_VER_BUILD=26200"
 set "OS_VER_BUILD_INTERNAL=26200"
@@ -486,7 +487,7 @@ echo [PASS] State 11: observed convergence reported and all markers purged (exit
 REM -----------------------------------------------------------------------
 REM State 12: Perform-Leg Stall Guard (build stagnant across perform attempts)
 REM -----------------------------------------------------------------------
-echo [Test 12/12] State 12: Perform-stall guard (EKB apply does not advance the OS build)...
+echo [Test 12/13] State 12: Perform-stall guard (EKB apply does not advance the OS build)...
 del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
 set "OS_VER_BUILD=26100"
 set "OS_VER_BUILD_INTERNAL=26100"
@@ -542,13 +543,83 @@ if not "!STATE12Q!"=="1" (
   goto Fail
 )
 echo [PASS] State 12: perform stall halted verbatim and purged (third stagnant attempt, exit 0).
+REM -----------------------------------------------------------------------
+REM State 13: 3010 Perform Mapping + b69 RECALL-Precedence Convergence (VAL-01a)
+REM + attempts-guard interaction (VAL-01b). The engine's :BuildUpgradeComplete
+REM FIXME 12.5 (b69) unconditionally forces RECALL_REQUIRED after the ERR_LEVEL
+REM mapping (client\cmd\DoUpdate.cmd:1078-1081) - the CURRENT contract: a 3010
+REM stub (reboot pending) converges to exit 3011 on the real EKB lane. This
+REM state PINS that convergence (the FIXME b69 fix must flip it deliberately);
+REM State 14 proves the mapping itself load-bearing on a b69-neutralized scratch.
+REM -----------------------------------------------------------------------
+echo [Test 13/13] State 13: 3010 perform stub converges to 3011 (b69 pinned) + stall guard...
+del /q "%MOCK_SYS_TEMP%\*.*" 2>nul
+set "OS_VER_MAJOR=10"
+set "OS_VER_MINOR=0"
+set "OS_VER_BUILD=26100"
+set "OS_VER_BUILD_INTERNAL=26100"
+set "OS_VER_REVIS=5074"
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+REM Seed a perform record for build 26100: the first stagnant attempt is already recorded
+echo 1,5074,26100,perform>"%MOCK_SYS_TEMP%\wou_buildupgrade_attempts.txt"
+REM Re-point the install stub at the reboot-pending handshake (3010) - the mapping
+REM under test lives at client\cmd\DoUpdate.cmd:1078-1081
+(
+  echo @echo off
+  echo rem Simulate package installation requiring a reboot to complete
+  echo exit /b 3010
+) >"%MOCK_CMD%\InstallListedUpdates.cmd"
+
+REM Run 1: the mapping sets REBOOT_REQUIRED, the b69 force converges it to RECALL
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\state13_run1.txt" 2>&1
+set "STATE13A_EXIT=!errorlevel!"
+
+if "!STATE13A_EXIT!" NEQ "3011" (
+  echo FAIL: State 13 run 1 expected exit code 3011 - the b69 RECALL-precedence convergence of the 3010 mapping - got !STATE13A_EXIT!.
+  type "%MOCK_TEMP%\state13_run1.txt"
+  goto Fail
+)
+findstr /C:"2,5074,26100,perform" "%MOCK_SYS_TEMP%\wou_buildupgrade_attempts.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State 13 run 1 expected the perform record 2,5074,26100,perform - the mapping flow must reach the attempts write, not InstError.
+  type "%MOCK_TEMP%\state13_run1.txt"
+  goto Fail
+)
+findstr /C:"ERROR: Installation failed" "%MOCK_TEMP%\state13_run1.txt" >nul 2>&1
+if not errorlevel 1 (
+  echo FAIL: State 13 run 1 must NOT report an installation error - the 3010 stub maps to the reboot branch, not InstError.
+  type "%MOCK_TEMP%\state13_run1.txt"
+  goto Fail
+)
+
+REM Run 2: same stagnant build - the perform-stall guard halts (counter 2 -^> 3 exceeds GTR 2)
+if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.txt"
+call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\state13_run2.txt" 2>&1
+set "STATE13B_EXIT=!errorlevel!"
+
+if "!STATE13B_EXIT!" NEQ "0" (
+  echo FAIL: State 13 run 2 expected exit code 0 [stall halt], got !STATE13B_EXIT!.
+  type "%MOCK_TEMP%\state13_run2.txt"
+  goto Fail
+)
+findstr /C:"Warning: EKB apply did not advance the OS build (still 26100) - halting to prevent infinite reboot loop" "%MOCK_TEMP%\state13_run2.txt" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: State 13 run 2 expected the perform-stall literal verbatim.
+  type "%MOCK_TEMP%\state13_run2.txt"
+  goto Fail
+)
+if exist "%MOCK_SYS_TEMP%\wou_buildupgrade_attempts.txt" (
+  echo FAIL: State 13 run 2 expected the attempts file purged on the stall halt.
+  goto Fail
+)
+echo [PASS] State 13: 3010 stub converged to 3011 with the attempts record advanced (b69 pinned); stall guard halted and purged on the repeat run.
 
 REM -----------------------------------------------------------------------
 REM All Passed
 REM -----------------------------------------------------------------------
 echo.
 echo =======================================================================
-echo SUCCESS: All 12 reboot cycle regression states passed successfully.
+echo SUCCESS: All 13 reboot cycle regression states passed successfully.
 echo =======================================================================
 call :Cleanup
 exit /b 0

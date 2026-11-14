@@ -16,7 +16,8 @@ import {
   Server,
   Monitor,
   PackageCheck,
-  LoaderCircle
+  LoaderCircle,
+  CircleArrowUp
 } from 'lucide-react';
 
 import logo from './assets/logo.png';
@@ -69,12 +70,31 @@ interface WinBuild {
   status: 'current' | 'supported' | 'esu' | 'eol' | 'insider';
 }
 
+// One OS Upgrades roster row, pushed by the host at init (lowercase keys
+// straight from the state message; the WebView2 sandbox has no file access).
+interface UpgradeRowState {
+  build: string;
+  arch: string;
+  family: string;
+  status: string;
+  reason: string;
+  fuMedia: string;
+  ekbPresent: boolean;
+}
+
+// Staged-media facts for one <build>_<arch> key, read by the host from the
+// staged manifest's meta rows (total_mib consumed per DEC-33-07).
+interface UpgradeSizeInfo {
+  totalMib: string;
+  updateName: string;
+}
+
 export default function App() {
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const initialTab = (urlParams?.get('tab') as any) || 'win11';
   const initialConsole = urlParams?.get('console') === 'true';
 
-  const [activeTab, setActiveTab] = useState<'win11' | 'win10' | 'office' | 'legacy' | 'options' | 'network'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'win11' | 'win10' | 'office' | 'legacy' | 'upgrades' | 'options' | 'network'>(initialTab);
   const [isRunning, setIsRunning] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialConsole);
   const [logs, setLogs] = useState<LogEntry[]>([
@@ -160,6 +180,17 @@ export default function App() {
     wxp_x86: false  // Win XP / Server 2003
   });
 
+  // OS Upgrades (Phase 36 picker): the roster, staged sizes and language
+  // vocabulary arrive via the host's state push; the selection is
+  // zero-or-more EKB keys plus zero-or-one full-FU target and lives in
+  // session state only (opt-in per run, never persisted anywhere).
+  const [upgradeRows, setUpgradeRows] = useState<UpgradeRowState[]>([]);
+  const [upgradeSizes, setUpgradeSizes] = useState<Record<string, UpgradeSizeInfo>>({});
+  const [upgradeLangs, setUpgradeLangs] = useState<Record<string, string>>({});
+  const [upgradeLang, setUpgradeLang] = useState('en-us');
+  const [upgradeSelection, setUpgradeSelection] = useState<string[]>([]);
+  const [upgradeFullTarget, setUpgradeFullTarget] = useState<string | null>(null);
+
   // Native message sender
   const sendNative = (action: string, payload: any = {}) => {
     if (typeof window !== 'undefined' && (window as any).chrome?.webview?.postMessage) {
@@ -194,6 +225,15 @@ export default function App() {
           }
           if (data.catalogDate) setCatalogDate(data.catalogDate);
           if (data.lastDownload) setLastDownload(data.lastDownload);
+          if (data.upgrades) {
+            setUpgradeRows(data.upgrades);
+          }
+          if (data.upgradeSizes) {
+            setUpgradeSizes(prev => ({ ...prev, ...data.upgradeSizes }));
+          }
+          if (data.upgradeLangs) {
+            setUpgradeLangs(prev => ({ ...prev, ...data.upgradeLangs }));
+          }
         } else if (data.type === 'status') {
           setIsRunning(data.running);
         } else if (data.type === 'folder_selected') {
@@ -229,6 +269,36 @@ export default function App() {
     win10Builds.filter(b => b.enabled).length +
     Object.values(officeBuilds).filter(Boolean).length +
     Object.values(legacyBuilds).filter(Boolean).length;
+
+  // OS Upgrades roster partition (DEC-36-07): EKB group = rows with
+  // non-empty hop fields (enabled iff status=active); full-FU group =
+  // rows with fu_media=1 (a row may carry both, e.g. 26200); the
+  // not-available region = rows with neither hop nor fu_media whose
+  // status is not active (visible-disabled, labeled from the row's own
+  // status/reason). Active rows with neither hop nor fu_media are not
+  // upgrade targets and render in no group.
+  const upgradeKeyOf = (row: UpgradeRowState) => `${row.build}_${row.arch}`;
+  const upgradeEkbRows = upgradeRows.filter(r => r.ekbPresent);
+  const upgradeFuRows = upgradeRows.filter(r => r.fuMedia === '1');
+  const upgradeUnavailableRows = upgradeRows.filter(r => !r.ekbPresent && r.fuMedia !== '1' && r.status !== 'active');
+
+  const toggleUpgradeEkb = (key: string) => {
+    setUpgradeSelection(prev => (prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]));
+  };
+
+  const pickUpgradeFull = (key: string) => {
+    setUpgradeFullTarget(prev => (prev === key ? null : key));
+  };
+
+  // Status/reason display label for a roster row - fixed wording, never a
+  // raw status or reason token (the map is finalized by the copy pass).
+  const upgradeStatusLabel = (row: UpgradeRowState): string => {
+    if (row.status === 'eol') return 'EOL';
+    if (row.status === 'ineligible') {
+      return row.reason ? `Ineligible: ${row.reason}` : 'Ineligible';
+    }
+    return 'Not available';
+  };
 
   const handleStart = () => {
     setIsRunning(true);
@@ -334,6 +404,7 @@ export default function App() {
           { id: 'win10', label: 'Windows 10 & Server', icon: Server, count: win10Builds.filter(b => b.enabled).length },
           { id: 'office', label: 'Microsoft Office', icon: PackageCheck, count: Object.values(officeBuilds).filter(Boolean).length },
           { id: 'legacy', label: 'Legacy Windows', icon: Cpu, count: Object.values(legacyBuilds).filter(Boolean).length },
+          { id: 'upgrades', label: 'OS Upgrades', icon: CircleArrowUp, count: upgradeSelection.length + (upgradeFullTarget !== null ? 1 : 0) },
           { id: 'options', label: 'Options & Media', icon: Disc, badge: options.copyUsb ? 'USB' : (options.createIso ? 'ISO' : undefined) },
           { id: 'network', label: 'Network & Proxy', icon: Globe }
         ].map((tab) => {
@@ -866,7 +937,183 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: OPTIONS & MEDIA */}
+        {/* TAB 5: OS UPGRADES */}
+        {activeTab === 'upgrades' && (
+          <div className="space-y-6 max-w-5xl mx-auto">
+            {/* Panel header */}
+            <div className="pb-3 border-b border-dark-800">
+              <h2 className="text-sm font-semibold text-zinc-100">Upgrade targets</h2>
+              <p className="text-xs text-zinc-400">Opt-in per run; nothing is downloaded until you start the run.</p>
+            </div>
+
+            {/* Empty state: also the default state - the locked default is NO selection */}
+            {upgradeSelection.length === 0 && upgradeFullTarget === null && (
+              <div className="p-4 rounded-lg bg-dark-900 border border-dark-800">
+                <h3 className="text-sm font-semibold text-zinc-100">Nothing selected</h3>
+                <p className="text-xs text-zinc-400 mt-1">Choose a target below to add an offline upgrade path.</p>
+              </div>
+            )}
+
+            {/* Upgrade media language (vocabulary = the host-pushed UUP constant) */}
+            <div className="flex items-center gap-3">
+              <label htmlFor="upgrade-lang" className="text-xs font-medium text-zinc-300">Upgrade media language</label>
+              <select
+                id="upgrade-lang"
+                value={upgradeLang}
+                onChange={(e) => setUpgradeLang(e.target.value)}
+                className="bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-hidden focus:border-accent-500"
+              >
+                {Object.entries(upgradeLangs).map(([code, label]) => (
+                  <option key={code} value={code}>{label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Servicing hop group: zero-or-more EKB targets (checkbox rows) */}
+            {upgradeEkbRows.length > 0 && (
+              <div className="space-y-2">
+                <div className="pb-1 border-b border-dark-800">
+                  <h3 className="text-sm font-semibold text-zinc-100">Servicing hop</h3>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">In-branch enablement package applied by the client installer.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {upgradeEkbRows.map((row) => {
+                    const key = upgradeKeyOf(row);
+                    const isEnabled = row.status === 'active';
+                    const isSelected = upgradeSelection.includes(key);
+                    const sizeInfo = upgradeSizes[key];
+                    return (
+                      <label
+                        key={key}
+                        className={`p-3 rounded-lg border border-dark-800 flex items-start gap-3 transition-colors ${
+                          isEnabled && isSelected ? 'bg-accent-600/5' : 'bg-dark-900'
+                        } ${isEnabled ? 'cursor-pointer hover:bg-dark-850/60 hover:border-dark-700' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={!isEnabled}
+                          checked={isSelected}
+                          onChange={() => toggleUpgradeEkb(key)}
+                          className="mt-0.5 w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-zinc-100">{row.build}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-800 text-zinc-300 border border-dark-700">
+                              {row.arch}
+                            </span>
+                            {sizeInfo?.updateName && (
+                              <span className="text-[11px] text-zinc-400">{sizeInfo.updateName}</span>
+                            )}
+                            {!isEnabled && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-500 border border-dark-700">
+                                {upgradeStatusLabel(row)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Full update group: exactly zero-or-one target (radio group) */}
+            {upgradeFuRows.length > 0 && (
+              <div className="space-y-2">
+                <div className="pb-1 border-b border-dark-800">
+                  <h3 className="text-sm font-semibold text-zinc-100">Full update</h3>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">Staged Windows setup media applied by setup.exe on the client.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {upgradeFuRows.map((row) => {
+                    const key = upgradeKeyOf(row);
+                    const isEnabled = row.status === 'active';
+                    const isSelected = upgradeFullTarget === key;
+                    const sizeInfo = upgradeSizes[key];
+                    return (
+                      <label
+                        key={key}
+                        className={`p-3 rounded-lg border border-dark-800 flex items-start gap-3 transition-colors ${
+                          isEnabled && isSelected ? 'bg-accent-600/5' : 'bg-dark-900'
+                        } ${isEnabled ? 'cursor-pointer hover:bg-dark-850/60 hover:border-dark-700' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="upgrade-full-target"
+                          disabled={!isEnabled}
+                          checked={isSelected}
+                          onChange={() => pickUpgradeFull(key)}
+                          className="mt-0.5 w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-zinc-100">{row.build}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-800 text-zinc-300 border border-dark-700">
+                              {row.arch}
+                            </span>
+                            {sizeInfo?.updateName && (
+                              <span className="text-[11px] text-zinc-400">{sizeInfo.updateName}</span>
+                            )}
+                            {!isEnabled && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-500 border border-dark-700">
+                                {upgradeStatusLabel(row)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Not-available region: rows with neither hop nor fu_media whose
+                status is not active - visible-disabled, labeled from the
+                row's own status/reason (never hidden, never raw tokens) */}
+            {upgradeUnavailableRows.length > 0 && (
+              <div className="space-y-2">
+                <div className="pb-1 border-b border-dark-800">
+                  <h3 className="text-sm font-semibold text-zinc-100">Not available</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {upgradeUnavailableRows.map((row) => {
+                    const key = upgradeKeyOf(row);
+                    return (
+                      <div
+                        key={key}
+                        className="p-3 rounded-lg bg-dark-900 border border-dark-800 flex items-start gap-3"
+                      >
+                        <input
+                          type="checkbox"
+                          disabled
+                          checked={false}
+                          onChange={() => {}}
+                          className="mt-0.5 w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-zinc-500">{row.build}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-800 text-zinc-500 border border-dark-700">
+                              {row.arch}
+                            </span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-500 border border-dark-700">
+                              {upgradeStatusLabel(row)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 6: OPTIONS & MEDIA */}
         {activeTab === 'options' && (
           <div className="space-y-6 max-w-5xl mx-auto">
             {/* Additional Components */}
@@ -978,7 +1225,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 6: NETWORK */}
+        {/* TAB 7: NETWORK */}
         {activeTab === 'network' && (
           <div className="space-y-4 max-w-3xl mx-auto">
             <div className="pb-2 border-b border-dark-800">

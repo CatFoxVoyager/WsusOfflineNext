@@ -486,6 +486,16 @@ namespace WSUSOffline.Generator
             }
         }
 
+        // State-message serialization options: camelCase property policy so
+        // record-based payloads (UpgradeRow) cross the bridge with the
+        // lowercase keys the frontend consumes. Existing messages already
+        // use lowercase property names and dictionary keys are exempt from
+        // the policy, so every pre-existing message shape is byte-identical.
+        private static readonly JsonSerializerOptions StateJsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
         private void SendToWeb(object message)
         {
             // Issue #21: the download pipeline calls this from Task.Run worker
@@ -497,7 +507,7 @@ namespace WSUSOffline.Generator
             // a dead/disposed control.
             try
             {
-                string json = JsonSerializer.Serialize(message);
+                string json = JsonSerializer.Serialize(message, StateJsonOptions);
                 this.BeginInvoke(new Action(() =>
                 {
                     try
@@ -666,13 +676,25 @@ namespace WSUSOffline.Generator
             opts["usbPath"] = usbPath;
             opts["copyUsb"] = copyUsb;
 
+            // Phase 36 OS Upgrades picker (36-01): parse the generated roster
+            // and the staged-media sizes at init and push them with the state
+            // message - the WebView2 sandbox has no file access, the host is
+            // the only reader. Tolerant and never fatal (empty sources yield
+            // an empty roster/map, never an init failure).
+            var upgradeRoster = ParseUpgradesRoster(root);
+            var upgradeSizeMap = BuildUpgradeSizeMap(root);
+            var upgradeLangVocabulary = UpgradeLangVocabulary;
+
             SendToWeb(new
             {
                 type = "state",
                 win11 = win11Dict,
                 win10 = win10Dict,
                 legacy = legacyDict,
-                options = opts
+                options = opts,
+                upgrades = upgradeRoster,
+                upgradeSizes = upgradeSizeMap,
+                upgradeLangs = upgradeLangVocabulary
             });
         }
 
@@ -1289,6 +1311,240 @@ namespace WSUSOffline.Generator
                 lines.Add($"{key}={(isSelected ? "Enabled" : "Disabled")}");
             }
         }
+
+        // --- Phase 36 OS Upgrades picker bridge (36-01). The host reads the
+        // generated decision files at init and pushes them over the existing
+        // state message; the frontend renders them (the WebView2 sandbox has
+        // no file access). Read-only over the live contracts: the roster is
+        // client/UpdateTable/upgrades.txt (12-field pipe grammar, frozen by
+        // Phase 31); sizes come from staged manifest total_mib meta rows
+        // (DEC-33-07: consume totals, never re-sum raw bytes). Everything is
+        // tolerant and never fatal - a missing or malformed source yields an
+        // empty roster/map, exactly like UpgParseUpgradesFile
+        // (upgradespredicates.pas). Raw roster values render as React text
+        // nodes only (T-36-01); the selection they feed is re-validated by
+        // the host's IsUpgradeKeyShape void-all grammar on every start.
+
+        /// <summary>
+        /// One picker-usable upgrades.txt row (positional record so the
+        /// camelCase serializer emits exactly the lowercase keys the
+        /// frontend consumes: build, arch, family, status, reason, fuMedia,
+        /// ekbPresent). EkbPresent = any EKB hop field (source build, KB,
+        /// min revision) non-empty - DEC-36-07's group-partition bit.
+        /// </summary>
+        private sealed record UpgradeRow(
+            string Build,
+            string Arch,
+            string Family,
+            string Status,
+            string Reason,
+            string FuMedia,
+            bool EkbPresent);
+
+        /// <summary>
+        /// Tolerant 12-field parse of client/UpdateTable/upgrades.txt:
+        /// '#' comments and blank lines are skipped, rows must split on
+        /// '|' into exactly 12 fields, anything else is skipped silently
+        /// (never fatal; missing file = empty roster). Field order per the
+        /// frozen grammar: 1 build, 2 arch, 3 lang, 4 family, 5 servicing
+        /// branch, 6 status, 7-9 EKB hop fields, 10 prereq KB, 11
+        /// fu_media, 12 blocked_reason.
+        /// </summary>
+        private static List<UpgradeRow> ParseUpgradesRoster(string root)
+        {
+            var roster = new List<UpgradeRow>();
+            string path = Path.Combine(root, "client", "UpdateTable", "upgrades.txt");
+            if (!File.Exists(path))
+            {
+                return roster;
+            }
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(path);
+            }
+            catch
+            {
+                return roster;
+            }
+            foreach (string raw in lines)
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#"))
+                {
+                    continue;
+                }
+                string[] fields = line.Split('|');
+                if (fields.Length != 12)
+                {
+                    continue;
+                }
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    fields[i] = fields[i].Trim();
+                }
+                if (fields[0].Length == 0)
+                {
+                    continue;
+                }
+                roster.Add(new UpgradeRow(
+                    Build: fields[0],
+                    Arch: fields[1],
+                    Family: fields[3],
+                    Status: fields[5],
+                    Reason: fields[11],
+                    FuMedia: fields[10],
+                    EkbPresent: fields[6].Length > 0 || fields[7].Length > 0 || fields[8].Length > 0));
+            }
+            return roster;
+        }
+
+        /// <summary>
+        /// Staged-media size map keyed by "&lt;build&gt;_&lt;arch&gt;" (the
+        /// repo's directory tokens - the manifest's arch meta value amd64 is
+        /// display-only, Pitfall 8). For each client/upgrade/&lt;build&gt;-&lt;arch&gt;/
+        /// directory the manifest of the preferred staged language (en-us
+        /// first, then the lexicographic-first) is read for its total_mib
+        /// meta row only (DEC-33-07: consume totals, never re-sum raw byte
+        /// rows) plus the updateName line used for row display. No staged
+        /// language, no manifest or no total_mib row = no map entry -
+        /// nothing is invented beyond what is staged on disk.
+        /// </summary>
+        private static Dictionary<string, object> BuildUpgradeSizeMap(string root)
+        {
+            var sizes = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            string upgradeDir = Path.Combine(root, "client", "upgrade");
+            if (!Directory.Exists(upgradeDir))
+            {
+                return sizes;
+            }
+            foreach (string mediaDir in Directory.EnumerateDirectories(upgradeDir))
+            {
+                string dirName = Path.GetFileName(mediaDir);
+                int dash = dirName.IndexOf('-');
+                if (dash <= 0 || dash == dirName.Length - 1)
+                {
+                    continue;
+                }
+                string build = dirName.Substring(0, dash);
+                string arch = dirName.Substring(dash + 1);
+
+                string? chosen = null;
+                foreach (string sub in Directory.EnumerateDirectories(mediaDir))
+                {
+                    if (Path.GetFileName(sub).Equals("en-us", StringComparison.OrdinalIgnoreCase))
+                    {
+                        chosen = sub;
+                        break;
+                    }
+                }
+                if (chosen == null)
+                {
+                    foreach (string sub in Directory.EnumerateDirectories(mediaDir))
+                    {
+                        if (chosen == null || string.Compare(
+                                Path.GetFileName(sub), Path.GetFileName(chosen),
+                                StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            chosen = sub;
+                        }
+                    }
+                }
+                if (chosen == null)
+                {
+                    continue;
+                }
+
+                string manifestPath = Path.Combine(chosen, "manifest.txt");
+                if (!File.Exists(manifestPath))
+                {
+                    continue;
+                }
+                string? totalMib = null;
+                string? updateName = null;
+                try
+                {
+                    foreach (string line in File.ReadAllLines(manifestPath))
+                    {
+                        string trimmed = line.Trim();
+                        if (trimmed.StartsWith("total_mib|", StringComparison.Ordinal))
+                        {
+                            totalMib = trimmed.Substring("total_mib|".Length).Trim();
+                        }
+                        else if (trimmed.StartsWith("updateName|", StringComparison.Ordinal))
+                        {
+                            updateName = trimmed.Substring("updateName|".Length).Trim();
+                        }
+                        if (totalMib != null && updateName != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+                if (string.IsNullOrEmpty(totalMib))
+                {
+                    continue;
+                }
+                sizes[build + "_" + arch] = new { totalMib, updateName = updateName ?? "" };
+            }
+            return sizes;
+        }
+
+        /// <summary>
+        /// UUP language vocabulary for the picker's media-language select
+        /// (DEC-36-06): code + English label pairs seeded ONCE by a
+        /// listlangs.php probe against the staged 26200 uuid
+        /// fb0a90c6-cc17-4a55-832d-f23495f93aa3 (probed live 2026-11-14;
+        /// langFancyNames qualifier-stripped so the default renders exactly
+        /// "English (en-us)"). Frozen as a host constant - never hand-typed
+        /// from memory, never probed at GUI runtime.
+        /// </summary>
+        private static readonly Dictionary<string, string> UpgradeLangVocabulary = new()
+        {
+            { "en-us", "English (en-us)" },
+            { "ar-sa", "Arabic (ar-sa)" },
+            { "ko-kr", "Korean (ko-kr)" },
+            { "tr-tr", "Turkish (tr-tr)" },
+            { "da-dk", "Danish (da-dk)" },
+            { "ro-ro", "Romanian (ro-ro)" },
+            { "sr-latn-rs", "Serbian (sr-latn-rs)" },
+            { "de-de", "German (de-de)" },
+            { "lv-lv", "Latvian (lv-lv)" },
+            { "sv-se", "Swedish (sv-se)" },
+            { "pt-pt", "Portuguese (pt-pt)" },
+            { "zh-tw", "Chinese (zh-tw)" },
+            { "pl-pl", "Polish (pl-pl)" },
+            { "el-gr", "Greek (el-gr)" },
+            { "hu-hu", "Hungarian (hu-hu)" },
+            { "en-gb", "English (en-gb)" },
+            { "nl-nl", "Dutch (nl-nl)" },
+            { "th-th", "Thai (th-th)" },
+            { "ja-jp", "Japanese (ja-jp)" },
+            { "cs-cz", "Czech (cs-cz)" },
+            { "zh-cn", "Chinese (zh-cn)" },
+            { "et-ee", "Estonian (et-ee)" },
+            { "he-il", "Hebrew (he-il)" },
+            { "uk-ua", "Ukrainian (uk-ua)" },
+            { "fi-fi", "Finnish (fi-fi)" },
+            { "hr-hr", "Croatian (hr-hr)" },
+            { "nb-no", "Norwegian (nb-no)" },
+            { "lt-lt", "Lithuanian (lt-lt)" },
+            { "pt-br", "Portuguese (pt-br)" },
+            { "es-mx", "Spanish (es-mx)" },
+            { "ru-ru", "Russian (ru-ru)" },
+            { "es-es", "Spanish (es-es)" },
+            { "fr-fr", "French (fr-fr)" },
+            { "sl-si", "Slovenian (sl-si)" },
+            { "bg-bg", "Bulgarian (bg-bg)" },
+            { "fr-ca", "French (fr-ca)" },
+            { "sk-sk", "Slovak (sk-sk)" },
+            { "it-it", "Italian (it-it)" },
+            { "neutral", "Any Language (neutral)" }
+        };
 
         private async Task RunCommandAsync(string script, string arguments, string workingDir, CancellationToken ct)
         {

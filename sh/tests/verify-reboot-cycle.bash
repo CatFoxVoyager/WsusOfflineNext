@@ -17,6 +17,10 @@
 #   State 10: Chosen target with no upgrade path -> loud refusal -> 0
 #   State 11: Observed convergence (build == target) -> report + purge -> 0
 #   State 12: Perform-stall guard (stagnant build) -> halts safely -> 0
+#   State 13: 3010 perform stub -> b69 RECALL convergence (3011) + stall guard
+#   State 14: mapping proof on the b69-neutralized model (3010 -> 3010, 3011 -> 3011)
+#   State 15: w61 pre-Win10 host (integer major 6) - both lanes refuse, zero artifacts
+#   State 16: wxp pre-Win10 host (integer major 5) - both lanes refuse, zero artifacts
 # =======================================================================
 
 set -e
@@ -69,6 +73,12 @@ run_build_upgrade_evaluator() {
     local chosen_target="${3:-}"
     local os_arch="x64"
     local os_name="w100"
+    # Modeled engine knobs (phase 37 parity extension; defaults keep the
+    # 12 pre-existing states byte-identical: stub 3011, b69 force active,
+    # integer major 10)
+    local install_stub_exit="${4:-3011}"
+    local b69_neutralized="${5:-off}"
+    local os_major="${6:-10}"
 
     local matched_oldbuild=""
     local matched_minrevis=""
@@ -81,6 +91,23 @@ run_build_upgrade_evaluator() {
     local target_epkg=""
     local target_found_epkg=""
     local target_found_preupd=""
+
+    # Argv acceptance model (parity: DoUpdate.cmd:134-153 - the frozen parse
+    # runs before every lane; a valid digits target is accepted before any gate)
+    if [[ -n "$chosen_target" ]]; then
+        echo "Info: Upgrade target build ${chosen_target} accepted"
+    fi
+
+    # Pre-Win10 gate model (parity: DoUpdate.cmd:659-660, "supported on
+    # Windows 10 only") - OS_VER_MAJOR is the dot-split INTEGER major; empty
+    # or < 10 skips the lane (and SkipBuildUpgrade purges the markers)
+    if [[ -z "$os_major" ]] || (( os_major < 10 )); then
+        rm -f "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
+        rm -f "${mock_sys_temp}/wou_buildupgrade_tried.txt"
+        rm -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+        CYCLE_EXIT_CODE=0
+        return 0
+    fi
 
     # Chosen-target convergence: the observed build already equals the requested
     # target - report it and purge every upgrade marker (parity: the report sits
@@ -243,7 +270,28 @@ run_build_upgrade_evaluator() {
         # persist the perform record for the build-advancement guard on the next
         # resume (parity: END of Perform block, before the reboot path)
         printf '%s,%s,%s,%s\n' "$perform_count" "$os_revis" "$os_build" "perform" > "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
-        CYCLE_EXIT_CODE=3011
+        # ERR_LEVEL mapping model (parity: DoUpdate.cmd:1078-1084): 3010 ->
+        # REBOOT_REQUIRED, 3011 -> RECALL_REQUIRED; then the
+        # :BuildUpgradeComplete b69 force (:1089-1091, unconditional RECALL)
+        # unless neutralized; then the EoF priority ladder (:3658-3666):
+        # recall wins over reboot.
+        local cycle_reboot_required=""
+        local cycle_recall_required=""
+        if [[ "$install_stub_exit" == "3010" ]]; then
+            cycle_reboot_required=1
+        elif [[ "$install_stub_exit" == "3011" ]]; then
+            cycle_recall_required=1
+        fi
+        if [[ "$b69_neutralized" != "on" ]]; then
+            cycle_recall_required=1
+        fi
+        if [[ "$cycle_recall_required" == "1" ]]; then
+            CYCLE_EXIT_CODE=3011
+        elif [[ "$cycle_reboot_required" == "1" ]]; then
+            CYCLE_EXIT_CODE=3010
+        else
+            CYCLE_EXIT_CODE=0
+        fi
         return 195 2>/dev/null || return 1
     fi
 
@@ -284,14 +332,33 @@ run_build_upgrade_evaluator() {
     touch "${mock_sys_temp}/wou_buildupgrade_prep_tried.txt"
     echo "Preparing feature upgrade from build ${matched_oldbuild} to ${matched_newbuild}..."
     echo "$matched_preupd" > "${mock_temp}/MissingUpdateIds.txt"
-    CYCLE_EXIT_CODE=3011
+    # ERR_LEVEL mapping model (parity: DoUpdate.cmd:1024-1031 + the shared
+    # :BuildUpgradeComplete convergence and EoF ladder - identical semantics
+    # to the perform-leg model above)
+    local cycle_reboot_required=""
+    local cycle_recall_required=""
+    if [[ "$install_stub_exit" == "3010" ]]; then
+        cycle_reboot_required=1
+    elif [[ "$install_stub_exit" == "3011" ]]; then
+        cycle_recall_required=1
+    fi
+    if [[ "$b69_neutralized" != "on" ]]; then
+        cycle_recall_required=1
+    fi
+    if [[ "$cycle_recall_required" == "1" ]]; then
+        CYCLE_EXIT_CODE=3011
+    elif [[ "$cycle_reboot_required" == "1" ]]; then
+        CYCLE_EXIT_CODE=3010
+    else
+        CYCLE_EXIT_CODE=0
+    fi
     return 195 2>/dev/null || return 1
 }
 
 # -----------------------------------------------------------------------
 # State 1: Fresh Run (26100.1000)
 # -----------------------------------------------------------------------
-echo "[Test 1/12] State 1: Fresh Run (Build 26100, Revision 1000)..."
+echo "[Test 1/16] State 1: Fresh Run (Build 26100, Revision 1000)..."
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 
 CYCLE_EXIT_CODE=0
@@ -325,14 +392,14 @@ echo "[PASS] State 1: Fresh run triggered PrepareBuildUpgrade (exit 3011, prereq
 # -----------------------------------------------------------------------
 # State 2: Simulated Reboot 1
 # -----------------------------------------------------------------------
-echo "[Test 2/12] State 2: Simulated Reboot 1 (OS revision advances 1000 -> 5074)..."
+echo "[Test 2/16] State 2: Simulated Reboot 1 (OS revision advances 1000 -> 5074)..."
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 echo "[PASS] State 2: Reboot 1 simulated successfully (target revision 5074 met)."
 
 # -----------------------------------------------------------------------
 # State 3: Perform Run (26100.5074)
 # -----------------------------------------------------------------------
-echo "[Test 3/12] State 3: Perform Run (Build 26100, Revision 5074)..."
+echo "[Test 3/16] State 3: Perform Run (Build 26100, Revision 5074)..."
 CYCLE_EXIT_CODE=0
 set +e
 run_build_upgrade_evaluator 26100 5074 >/dev/null 2>&1
@@ -363,14 +430,14 @@ echo "[PASS] State 3: Perform run triggered PerformBuildUpgrade (exit 3011, eKB 
 # -----------------------------------------------------------------------
 # State 4: Simulated Reboot 2
 # -----------------------------------------------------------------------
-echo "[Test 4/12] State 4: Simulated Reboot 2 (OS build advances 26100 -> 26200)..."
+echo "[Test 4/16] State 4: Simulated Reboot 2 (OS build advances 26100 -> 26200)..."
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 echo "[PASS] State 4: Reboot 2 simulated successfully (target build 26200 reached)."
 
 # -----------------------------------------------------------------------
 # State 5: Convergence Run (26200.5074)
 # -----------------------------------------------------------------------
-echo "[Test 5/12] State 5: Convergence Run (Build 26200, Revision 5074)..."
+echo "[Test 5/16] State 5: Convergence Run (Build 26200, Revision 5074)..."
 CYCLE_EXIT_CODE=0
 set +e
 run_build_upgrade_evaluator 26200 5074 >/dev/null 2>&1
@@ -398,7 +465,7 @@ echo "[PASS] State 5: Build upgrade converged cleanly (exit 0, all markers purge
 # -----------------------------------------------------------------------
 # State 6: Infinite Loop Prevention Guard Test
 # -----------------------------------------------------------------------
-echo "[Test 6/12] State 6: Infinite Loop Guard Test (stagnant revision across reboots)..."
+echo "[Test 6/16] State 6: Infinite Loop Guard Test (stagnant revision across reboots)..."
 rm -f "${mock_sys_temp}"/*
 
 # Attempt 1
@@ -463,7 +530,7 @@ echo "[PASS] State 6: Infinite loop guard triggered as expected (loop halted, ex
 # -----------------------------------------------------------------------
 # State 7: Target-Scoped Match (/upgradeos:26200 set)
 # -----------------------------------------------------------------------
-echo "[Test 7/12] State 7: Target-Scoped Match (target 26200 set - the 26999 row never wins)..."
+echo "[Test 7/16] State 7: Target-Scoped Match (target 26200 set - the 26999 row never wins)..."
 # Control run WITHOUT a target: the GEQ walk must pick the higher 26999 row,
 # proving the fixture is a real threat the target guard neutralizes.
 # (direct call + output file, NOT command substitution: the evaluator reports
@@ -516,7 +583,7 @@ echo "[PASS] State 7: target-scoped selection held (only 26200 won; 26999 never 
 # -----------------------------------------------------------------------
 # State 8: Chosen Target With The EKB Payload Absent (missing-enablement refusal)
 # -----------------------------------------------------------------------
-echo "[Test 8/12] State 8: Chosen target with the EKB payload absent - missing-enablement refusal..."
+echo "[Test 8/16] State 8: Chosen target with the EKB payload absent - missing-enablement refusal..."
 rm -f "${mock_sys_temp}"/*
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 mv "${mock_glb}/windows11.0-kb5054156-x64.cab" "${tmp_dir}/state8_stash_epkg.cab"
@@ -550,7 +617,7 @@ echo "[PASS] State 8: missing-enablement refusal fired verbatim (exit 0, nothing
 # -----------------------------------------------------------------------
 # State 9: Baseline Below Min Revision And Prereq CU Absent
 # -----------------------------------------------------------------------
-echo "[Test 9/12] State 9: Baseline revision below required and prereq CU absent - baseline+prereq refusal..."
+echo "[Test 9/16] State 9: Baseline revision below required and prereq CU absent - baseline+prereq refusal..."
 rm -f "${mock_sys_temp}"/*
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 mv "${mock_glb}/windows11.0-kb5064081-x64.cab" "${tmp_dir}/state9_stash_pre.cab"
@@ -584,7 +651,7 @@ echo "[PASS] State 9: baseline+prereq refusal fired verbatim naming revision and
 # -----------------------------------------------------------------------
 # State 10: Chosen Target With No Upgrade Path
 # -----------------------------------------------------------------------
-echo "[Test 10/12] State 10: Chosen target 26999 from build 26200 - no upgrade path refusal..."
+echo "[Test 10/16] State 10: Chosen target 26999 from build 26200 - no upgrade path refusal..."
 rm -f "${mock_sys_temp}"/*
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 CYCLE_EXIT_CODE=0
@@ -616,7 +683,7 @@ echo "[PASS] State 10: no-upgrade-path refusal fired verbatim (exit 0, nothing q
 # -----------------------------------------------------------------------
 # State 11: Observed Convergence (build == target)
 # -----------------------------------------------------------------------
-echo "[Test 11/12] State 11: Observed convergence (build 26200 with target 26200)..."
+echo "[Test 11/16] State 11: Observed convergence (build 26200 with target 26200)..."
 rm -f "${mock_sys_temp}"/*
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 # Seed stale markers: the convergence path must purge them (apply-once semantics)
@@ -648,7 +715,7 @@ echo "[PASS] State 11: observed convergence reported and all markers purged (exi
 # -----------------------------------------------------------------------
 # State 12: Perform-Leg Stall Guard (build stagnant across perform attempts)
 # -----------------------------------------------------------------------
-echo "[Test 12/12] State 12: Perform-stall guard (EKB apply does not advance the OS build)..."
+echo "[Test 12/16] State 12: Perform-stall guard (EKB apply does not advance the OS build)..."
 rm -f "${mock_sys_temp}"/*
 rm -f "${mock_temp}/MissingUpdateIds.txt"
 # Seed a perform record for build 26100: the first stagnant attempt is already recorded
@@ -698,12 +765,200 @@ if [[ -f "${mock_temp}/MissingUpdateIds.txt" ]]; then
     exit 1
 fi
 echo "[PASS] State 12: perform stall halted verbatim and purged (third stagnant attempt, exit 0)."
+# -----------------------------------------------------------------------
+# State 13: 3010 Perform Mapping + b69 RECALL-Precedence Convergence (VAL-01a)
+# + attempts-guard interaction (VAL-01b) - parity with the CMD twin's State 13.
+# The b69 force is the CURRENT engine contract: a 3010 stub converges to 3011.
+# This state PINS that convergence; State 14 proves the mapping load-bearing.
+# -----------------------------------------------------------------------
+echo "[Test 13/16] State 13: 3010 perform stub converges to 3011 (b69 pinned) + stall guard..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+# Seed a perform record for build 26100: the first stagnant attempt is already recorded
+printf '1,5074,26100,perform\n' > "${mock_sys_temp}/wou_buildupgrade_attempts.txt"
+
+# Run 1: stub 3010 - the mapping sets reboot, the b69 force converges to recall
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 5074 26200 3010 off 10 > "${tmp_dir}/state13_run1.out" 2>&1
+set -e
+state13a_exit="$CYCLE_EXIT_CODE"
+
+if (( state13a_exit != 3011 )); then
+    echo "FAIL: State 13 run 1 expected exit code 3011 (the b69 RECALL-precedence convergence of the 3010 mapping), got ${state13a_exit}." >&2
+    cat "${tmp_dir}/state13_run1.out" >&2
+    exit 1
+fi
+if ! grep -q "2,5074,26100,perform" "${mock_sys_temp}/wou_buildupgrade_attempts.txt" 2>/dev/null; then
+    echo "FAIL: State 13 run 1 expected the perform record 2,5074,26100,perform - the mapping flow must reach the record write." >&2
+    exit 1
+fi
+if grep -qF "ERROR: Installation failed" "${tmp_dir}/state13_run1.out"; then
+    echo "FAIL: State 13 run 1 must NOT report an installation error - the 3010 stub maps to the reboot branch, not InstError." >&2
+    cat "${tmp_dir}/state13_run1.out" >&2
+    exit 1
+fi
+
+# Run 2: same stagnant build - the perform-stall guard halts (counter 2 -> 3 exceeds GTR 2)
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 5074 26200 > "${tmp_dir}/state13_run2.out" 2>&1
+set -e
+state13b_exit="$CYCLE_EXIT_CODE"
+
+if (( state13b_exit != 0 )); then
+    echo "FAIL: State 13 run 2 expected exit code 0 [stall halt], got ${state13b_exit}." >&2
+    cat "${tmp_dir}/state13_run2.out" >&2
+    exit 1
+fi
+if ! grep -qF "Warning: EKB apply did not advance the OS build (still 26100) - halting to prevent infinite reboot loop" "${tmp_dir}/state13_run2.out"; then
+    echo "FAIL: State 13 run 2 expected the perform-stall literal verbatim." >&2
+    cat "${tmp_dir}/state13_run2.out" >&2
+    exit 1
+fi
+if [[ -f "${mock_sys_temp}/wou_buildupgrade_attempts.txt" ]]; then
+    echo "FAIL: State 13 run 2 expected the attempts file purged on the stall halt." >&2
+    exit 1
+fi
+echo "[PASS] State 13: 3010 stub converged to 3011 with the attempts record advanced (b69 pinned); stall guard halted and purged on the repeat run."
+
+# -----------------------------------------------------------------------
+# State 14: ERR_LEVEL Mapping Proof (VAL-01a positive distinction) - the
+# b69_neutralized model answers stub 3010 -> 3010 and stub 3011 -> 3011,
+# mirroring the CMD twin's scratch probe (engine minus the :BuildUpgradeComplete
+# b69 force). Red-recorded: swapping the modeled mapping literals makes the
+# stub-3010 run exit 3011 - this state's exit assertion bites.
+# -----------------------------------------------------------------------
+echo "[Test 14/16] State 14: mapping proof on the b69-neutralized model (3010 -> 3010, 3011 -> 3011)..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 5074 26200 3010 on 10 > "${tmp_dir}/state14_run1.out" 2>&1
+set -e
+state14a_exit="$CYCLE_EXIT_CODE"
+
+if (( state14a_exit != 3010 )); then
+    echo "FAIL: State 14 run 1 expected exit code 3010 on the b69-neutralized model, got ${state14a_exit}." >&2
+    cat "${tmp_dir}/state14_run1.out" >&2
+    exit 1
+fi
+if ! grep -q "1,5074,26100,perform" "${mock_sys_temp}/wou_buildupgrade_attempts.txt" 2>/dev/null; then
+    echo "FAIL: State 14 run 1 expected the perform record 1,5074,26100,perform after the 3010 handshake." >&2
+    exit 1
+fi
+
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 26100 5074 26200 3011 on 10 > "${tmp_dir}/state14_run2.out" 2>&1
+set -e
+state14b_exit="$CYCLE_EXIT_CODE"
+
+if (( state14b_exit != 3011 )); then
+    echo "FAIL: State 14 run 2 expected exit code 3011 on the b69-neutralized model, got ${state14b_exit}." >&2
+    cat "${tmp_dir}/state14_run2.out" >&2
+    exit 1
+fi
+echo "[PASS] State 14: mapping load-bearing on the model (stub 3010 exited 3010; stub 3011 exited 3011)."
+
+# -----------------------------------------------------------------------
+# State 15: w61 Pre-Win10 Refusal (VAL-02a) - integer major 6 per the VBS
+# producer (DetermineSystemProperties WriteVersionToFile dot-split), never a
+# dotted "6.1". Both lanes must answer Skip: exit 0, the argv-accepted literal
+# present, zero artifacts, zero refusal literals. Red-recorded (CMD engine):
+# deleting the EKB gate line (:660) makes `has no upgrade path from build
+# 7601` appear - the must-NOT assertion below bites.
+# -----------------------------------------------------------------------
+echo "[Test 15/16] State 15: w61 pre-Win10 refusal (OS_VER_MAJOR=6 integer, build 7601)..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 7601 0 26200 3011 off 6 > "${tmp_dir}/state15.out" 2>&1
+set -e
+state15_exit="$CYCLE_EXIT_CODE"
+
+if (( state15_exit != 0 )); then
+    echo "FAIL: State 15 expected exit code 0 [pre-Win10 gate held], got ${state15_exit}." >&2
+    cat "${tmp_dir}/state15.out" >&2
+    exit 1
+fi
+if ! grep -qF "Info: Upgrade target build 26200 accepted" "${tmp_dir}/state15.out"; then
+    echo "FAIL: State 15 expected the argv-accepted literal verbatim - the parse lane must run before the refusal." >&2
+    cat "${tmp_dir}/state15.out" >&2
+    exit 1
+fi
+if [[ -f "${mock_temp}/MissingUpdateIds.txt" ]]; then
+    echo "FAIL: State 15 expected nothing queued in MissingUpdateIds.txt on a pre-Win10 host." >&2
+    exit 1
+fi
+if compgen -G "${mock_sys_temp}/wou_buildupgrade_*" >/dev/null 2>&1; then
+    echo "FAIL: State 15 expected zero wou_buildupgrade_* artifacts on a pre-Win10 host." >&2
+    exit 1
+fi
+if grep -q "has no upgrade path from build" "${tmp_dir}/state15.out"; then
+    echo "FAIL: State 15 must NOT log the no-path refusal - the EKB gate held the lane out." >&2
+    cat "${tmp_dir}/state15.out" >&2
+    exit 1
+fi
+if grep -q "FULLUPGRADE-" "${tmp_dir}/state15.out"; then
+    echo "FAIL: State 15 must NOT log any FULLUPGRADE- marker - the FU gate held the lane out." >&2
+    cat "${tmp_dir}/state15.out" >&2
+    exit 1
+fi
+echo "[PASS] State 15: w61 host refused by both lanes (exit 0, argv accepted, zero artifacts, zero refusal literals)."
+
+# -----------------------------------------------------------------------
+# State 16: wxp Pre-Win10 Refusal (VAL-02a mirror) - integer major 5, build
+# 2600. Identical assertion set to State 15.
+# -----------------------------------------------------------------------
+echo "[Test 16/16] State 16: wxp pre-Win10 refusal (OS_VER_MAJOR=5 integer, build 2600)..."
+rm -f "${mock_sys_temp}"/*
+rm -f "${mock_temp}/MissingUpdateIds.txt"
+CYCLE_EXIT_CODE=0
+set +e
+run_build_upgrade_evaluator 2600 0 26200 3011 off 5 > "${tmp_dir}/state16.out" 2>&1
+set -e
+state16_exit="$CYCLE_EXIT_CODE"
+
+if (( state16_exit != 0 )); then
+    echo "FAIL: State 16 expected exit code 0 [pre-Win10 gate held], got ${state16_exit}." >&2
+    cat "${tmp_dir}/state16.out" >&2
+    exit 1
+fi
+if ! grep -qF "Info: Upgrade target build 26200 accepted" "${tmp_dir}/state16.out"; then
+    echo "FAIL: State 16 expected the argv-accepted literal verbatim - the parse lane must run before the refusal." >&2
+    cat "${tmp_dir}/state16.out" >&2
+    exit 1
+fi
+if [[ -f "${mock_temp}/MissingUpdateIds.txt" ]]; then
+    echo "FAIL: State 16 expected nothing queued in MissingUpdateIds.txt on a pre-Win10 host." >&2
+    exit 1
+fi
+if compgen -G "${mock_sys_temp}/wou_buildupgrade_*" >/dev/null 2>&1; then
+    echo "FAIL: State 16 expected zero wou_buildupgrade_* artifacts on a pre-Win10 host." >&2
+    exit 1
+fi
+if grep -q "has no upgrade path from build" "${tmp_dir}/state16.out"; then
+    echo "FAIL: State 16 must NOT log the no-path refusal - the EKB gate held the lane out." >&2
+    cat "${tmp_dir}/state16.out" >&2
+    exit 1
+fi
+if grep -q "FULLUPGRADE-" "${tmp_dir}/state16.out"; then
+    echo "FAIL: State 16 must NOT log any FULLUPGRADE- marker - the FU gate held the lane out." >&2
+    cat "${tmp_dir}/state16.out" >&2
+    exit 1
+fi
+echo "[PASS] State 16: wxp host refused by both lanes (exit 0, argv accepted, zero artifacts, zero refusal literals)."
 
 # -----------------------------------------------------------------------
 # All Passed
 # -----------------------------------------------------------------------
 echo ""
 echo "======================================================================="
-echo "SUCCESS: All 12 reboot cycle regression states passed successfully."
+echo "SUCCESS: All 16 reboot cycle regression states passed successfully."
 echo "======================================================================="
 exit 0

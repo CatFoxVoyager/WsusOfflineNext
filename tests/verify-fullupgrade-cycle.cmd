@@ -78,12 +78,12 @@ REM              negative control). Marker seeds live at the REAL probe path
 REM              %SystemRoot%\Temp with a pre-flight absence assert and
 REM              per-case cleanup (DEC-35-08; the real caller is the
 REM              instrument).
-REM   Parity lock: the PARITY_LIT_* list (24 entries, byte-identical with the
+REM   Parity lock: the PARITY_LIT_* list (30 entries, byte-identical with the
 REM              bash twin's census_literals array in sh\tests\verify-fullupgrade-
 REM              cycle.bash) is findstr'd against the REAL engine + a count
-REM              assert. The 35 extension of this list lands in plan 35-02
-REM              (the bash twin lags one wave by design - the phase gate
-REM              closes parity).
+REM              assert. The 35 extension (DEC-35-10/11: the six marker
+REM              literals, 24 to 30) landed in the SAME commit as the bash
+REM              twin's extension (the 31-04 cross-tier parity rule).
 REM
 REM Attempts-record lifecycle (DEC-34-06): the record counts ACROSS runs - the
 REM battery seeds it before state S4 and asserts it SURVIVES every refusal pass
@@ -1446,10 +1446,13 @@ echo [PASS] Stub section b: marker absent fired the relaunch canary, cleanup sta
 
 REM -----------------------------------------------------------------------
 REM Parity lock: byte-identical literal list with the bash twin's
-REM census_literals array (sh\tests\verify-fullupgrade-cycle.bash) - 24
-REM entries, each findstr'd against the REAL engine + a count assert
+REM census_literals array (sh\tests\verify-fullupgrade-cycle.bash) - 30
+REM entries (the 35 extension, DEC-35-11: the six marker literals entered
+REM BOTH lists in the SAME commit), each findstr'd against the REAL surface
+REM + a count assert. The stub guard Info literal (DEC-35-04) lives in
+REM RecallStub.cmd, not in the engine - the loop greps the real stub for it.
 REM -----------------------------------------------------------------------
-echo [Test 25/25] Parity lock: 24 pinned literals present in the REAL engine...
+echo [Test 25/25] Parity lock: 30 pinned literals present in the REAL surface...
 set "PARITY_LIT_01=Skipping full upgrade as a LTSB-/LTSC-SKU has been detected"
 set "PARITY_LIT_02=already observed - jump complete"
 set "PARITY_LIT_03=blocked: no full upgrade media staged for"
@@ -1474,20 +1477,28 @@ set "PARITY_LIT_21=blocked: enablement package"
 set "PARITY_LIT_22=FULLUPGRADE-STALL-HALT"
 set "PARITY_LIT_23=FULLUPGRADE-SCAN-PASS"
 set "PARITY_LIT_24=FULLUPGRADE-STAGED"
+set "PARITY_LIT_25=wou_upgrade_in_progress.txt"
+set "PARITY_LIT_26=FullUpgradeClearMarker"
+set "PARITY_LIT_27=FULLUPGRADE-MARKER-POSED"
+set "PARITY_LIT_28=RECALL-RESTORED"
+set "PARITY_LIT_29=restoring safe state after failed upgrade"
+set "PARITY_LIT_30=Upgrade in progress - automatic recall suppressed"
 set /a PARITY_COUNT=0
 for /f "tokens=1* delims==" %%a in ('set PARITY_LIT_') do (
-  "%SystemRoot%\System32\findstr.exe" /C:"%%b" "%REPO_ROOT%\client\cmd\DoUpdate.cmd" >nul 2>&1
+  set "PARITY_TARGET=%REPO_ROOT%\client\cmd\DoUpdate.cmd"
+  if "%%b"=="Upgrade in progress - automatic recall suppressed" set "PARITY_TARGET=%REPO_ROOT%\client\cmd\RecallStub.cmd"
+  "%SystemRoot%\System32\findstr.exe" /C:"%%b" "!PARITY_TARGET!" >nul 2>&1
   if errorlevel 1 (
-    echo FAIL: parity literal missing from the real engine: %%b
+    echo FAIL: parity literal missing from the real surface: %%b
     goto Fail
   )
   set /a PARITY_COUNT+=1
 )
-if not "!PARITY_COUNT!"=="24" (
-  echo FAIL: parity list drifted - expected 24 literals, got !PARITY_COUNT!.
+if not "!PARITY_COUNT!"=="30" (
+  echo FAIL: parity list drifted - expected 30 literals, got !PARITY_COUNT!.
   goto Fail
 )
-echo [PASS] Parity lock: 24 literals present in the engine, list in lockstep with the bash twin.
+echo [PASS] Parity lock: 30 literals present (29 in the engine, 1 in the stub), list in lockstep with the bash twin.
 
 REM -----------------------------------------------------------------------
 REM All Passed

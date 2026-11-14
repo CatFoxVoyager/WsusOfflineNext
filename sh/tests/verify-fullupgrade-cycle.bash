@@ -7,8 +7,15 @@
 # per the 31-04 cross-tier parity rule: identical embedded data + twin
 # evaluators. This twin does NOT drive the CMD engine - it mirrors every
 # block rule of client/cmd/DoUpdate.cmd :FullUpgrade (including the
-# attempts guard, per DEC-34-04/05/06) as bash functions over the SAME
-# golden rows and asserts the SAME expected literals.
+# attempts guard, per DEC-34-04/05/06, and the upgrade-in-progress marker
+# lifecycle, per DEC-35-01/02/03/06) as bash functions over the SAME
+# golden rows and asserts the SAME expected literals - now over the full
+# S1-S21 state set.
+#
+# The real-caller stub lane (RecallStub.cmd sandbox cases) is OUT OF SCOPE
+# for this twin by DEC-35-08/09: the stub is a CMD-only real caller and the
+# bash twin mirrors ENGINE rules only - the stub lane is gated by the phase
+# gate's GATE 27 (tests\verify-recall-stub-cycle.cmd) instead.
 #
 #   Census: source-census block greps the REAL engine for every pinned
 #           literal (the cross-check that keeps the evaluator honest
@@ -52,6 +59,23 @@
 #              target for payload absence (its own frozen literal) and the
 #              full-FU lane then runs the media probe and stages the same
 #              target - both lanes observable in ONE run
+#   State S18: marker pose (RECALL-01, DEC-35-01): a staged-pass row emits the
+#              FULLUPGRADE-MARKER-POSED sentinel, a marker record exists with
+#              the target build in field 2 of line 1, the attempts record
+#              coexists
+#   State S19: converged clear (RECALL-02 pivot): marker present + observed
+#              build == target gives FULLUPGRADE-CONVERGED with BOTH records
+#              gone and no media-probe rule reached
+#   State S20: stall restore (RECALL-02 tail): marker present + a leg=full
+#              record at the same build counting past 2 gives
+#              FULLUPGRADE-STALL-HALT + RECALL-RESTORED with both records
+#              gone and the armed-restore rule NOT reached when the
+#              armed-state probe is false (the w100 shape)
+#   State S21: refusal survival (DEC-35-09): refusal rows never emit the pose
+#              sentinel and never touch a seeded marker; the marker never
+#              appears in a mirrored :Cleanup rule set (the twin mirrors no
+#              :Cleanup deletion rule for it - the engine-side zero-census
+#              ratchet is gated by the phase gate's GATE 29)
 #
 # Golden rows (byte-identical with the CMD twin, tests/verify-fullupgrade-cycle.cmd):
 #   StaticUpdateIds-BuildUpgrades:
@@ -123,6 +147,7 @@ FU_CLASS=""
 function reset_fu_state () {
     rm -f "${fu_temp}/wou_fullupgrade_attempts.txt" "${fu_fallback}/wou_fullupgrade_attempts.txt"
     rm -f "${fu_temp}/wou_buildupgrade_prep_tried.txt" "${fu_temp}/wou_buildupgrade_tried.txt" "${fu_temp}/wou_buildupgrade_attempts.txt"
+    rm -f "${fu_temp}/wou_upgrade_in_progress.txt" "${fu_fallback}/wou_upgrade_in_progress.txt"
     rm -f "${mock_temp}/MissingUpdateIds.txt"
     FU_EXIT_CODE=0
     FU_REBOOT_REQUIRED=""
@@ -325,6 +350,9 @@ function run_fullupgrade_cycle_evaluator () {
         printf '%s\n' "Info: Full upgrade target build ${chosen_target} already observed - jump complete"
         printf '%s\n' "FULLUPGRADE-CONVERGED"
         rm -f "${fu_temp}/wou_fullupgrade_attempts.txt" "${fu_fallback}/wou_fullupgrade_attempts.txt"
+        # Mirror of call :FullUpgradeClearMarker (DEC-35-02): the converged
+        # routing is one of the marker's only two legitimate deaths
+        rm -f "${fu_temp}/wou_upgrade_in_progress.txt" "${fu_fallback}/wou_upgrade_in_progress.txt"
         FU_EXIT_CODE=0
         return 0
     fi
@@ -405,6 +433,17 @@ function run_fullupgrade_cycle_evaluator () {
             printf '%s\n' "Warning: Full upgrade did not advance the OS build (still ${os_build}) - halting to prevent infinite reboot loop"
             printf '%s\n' "FULLUPGRADE-STALL-HALT"
             rm -f "${fu_temp}/wou_fullupgrade_attempts.txt" "${fu_fallback}/wou_fullupgrade_attempts.txt"
+            # Mirror of call :FullUpgradeClearMarker + the safe restore
+            # (RECALL-02 tail, DEC-35-06): RECALL-RESTORED is emitted
+            # unconditionally; only the armed-restore Info line (and the
+            # engine's CleanupRecall call) are gated behind the armed-state
+            # probe - the twin's "${fu_fallback}/WOURecall" mirror stays
+            # absent in the w100-shaped sandbox, so the gate stays shut.
+            rm -f "${fu_temp}/wou_upgrade_in_progress.txt" "${fu_fallback}/wou_upgrade_in_progress.txt"
+            printf '%s\n' "RECALL-RESTORED"
+            if [[ -d "${fu_fallback}/WOURecall" ]]; then
+                printf '%s\n' "Info: Armed recall state found - restoring safe state after failed upgrade"
+            fi
             FU_EXIT_CODE=0
             return 0
         fi
@@ -412,6 +451,14 @@ function run_fullupgrade_cycle_evaluator () {
     # Write the attempt record BEFORE the launch - a reboot during the setup
     # invocation must not lose the count
     printf '%s,%s,%s,%s\n' "$fu_count" "$os_revis" "$os_build" "full" > "${fu_temp}/wou_fullupgrade_attempts.txt"
+    # Pose the upgrade-in-progress marker beside the launch record (RECALL-01,
+    # DEC-35-01) - under test mode and real mode alike; its only legitimate
+    # deaths are the converged routing and the stall halt above (never
+    # :Cleanup, never a refusal pass). Line 1 CSV full,<target>,<revision>,
+    # line 2 the timestamp.
+    printf 'full,%s,%s\n' "$chosen_target" "$os_revis" > "${fu_temp}/wou_upgrade_in_progress.txt"
+    printf '%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "${fu_temp}/wou_upgrade_in_progress.txt"
+    printf '%s\n' "FULLUPGRADE-MARKER-POSED"
     # Launch handshake: the pass terminates unconditionally whatever setup reports
     fu_rc="$(normalize_fu_rc "${test_launch_rc:-0}")"
     decode_full_upgrade_exit "$fu_rc"
@@ -434,11 +481,13 @@ function run_fullupgrade_cycle_evaluator () {
 
 # -----------------------------------------------------------------------
 # Census: source-census over the REAL engine - every pinned literal must
-# exist in client/cmd/DoUpdate.cmd or the evaluator drifted from the engine.
+# exist in client/cmd/DoUpdate.cmd (or, for the one stub-side literal, in
+# client/cmd/RecallStub.cmd) or the evaluator drifted from the engine.
 # The list is byte-identical with the CMD twin's PARITY_LIT_* list (the
-# Task 3 parity lock); the pinned count assert keeps the lists in lockstep.
+# 31-04 parity lock, extended 24 to 30 in the SAME commit per DEC-35-11);
+# the pinned count assert keeps the lists in lockstep.
 # -----------------------------------------------------------------------
-echo "[Test 1/18] Census: source-census of the pinned literals over the REAL engine..."
+echo "[Test 1/22] Census: source-census of the pinned literals over the REAL engine..."
 census_literals=(
     "Skipping full upgrade as a LTSB-/LTSC-SKU has been detected"
     "already observed - jump complete"
@@ -464,23 +513,37 @@ census_literals=(
     "FULLUPGRADE-STALL-HALT"
     "FULLUPGRADE-SCAN-PASS"
     "FULLUPGRADE-STAGED"
+    "wou_upgrade_in_progress.txt"
+    "FullUpgradeClearMarker"
+    "FULLUPGRADE-MARKER-POSED"
+    "RECALL-RESTORED"
+    "restoring safe state after failed upgrade"
+    "Upgrade in progress - automatic recall suppressed"
 )
-if (( ${#census_literals[@]} != 24 )); then
-    echo "FAIL: the parity census list drifted - expected 24 literals, got ${#census_literals[@]}." >&2
+if (( ${#census_literals[@]} != 30 )); then
+    echo "FAIL: the parity census list drifted - expected 30 literals, got ${#census_literals[@]}." >&2
     exit 1
 fi
+stub_file="${repo_root}/client/cmd/RecallStub.cmd"
 for census_lit in "${census_literals[@]}"; do
-    if ! grep -qF -- "$census_lit" "$engine_file"; then
-        echo "FAIL: source-census literal missing from the real engine: ${census_lit}" >&2
+    # The stub guard Info literal (DEC-35-04) lives in RecallStub.cmd, not in
+    # the engine - grep the real stub for it; everything else greps the engine.
+    if [[ "$census_lit" == "Upgrade in progress - automatic recall suppressed" ]]; then
+        census_target="$stub_file"
+    else
+        census_target="$engine_file"
+    fi
+    if ! grep -qF -- "$census_lit" "$census_target"; then
+        echo "FAIL: source-census literal missing from the real surface: ${census_lit}" >&2
         exit 1
     fi
 done
-echo "[PASS] Census: all 24 pinned literals present in client/cmd/DoUpdate.cmd."
+echo "[PASS] Census: all 30 pinned literals present (29 in client/cmd/DoUpdate.cmd, 1 in client/cmd/RecallStub.cmd)."
 
 # -----------------------------------------------------------------------
 # State S1: No Target - the full-FU lane is a silent no-op
 # -----------------------------------------------------------------------
-echo "[Test 2/18] State S1: no /upgradeos target - zero FULLUPGRADE- lines..."
+echo "[Test 2/22] State S1: no /upgradeos target - zero FULLUPGRADE- lines..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional "" "" "" 0 10 > "${tmp_dir}/s1.out" 2>&1
@@ -500,7 +563,7 @@ echo "[PASS] State S1: no-target run emitted no full-FU line (silent no-op)."
 # -----------------------------------------------------------------------
 # State S2: LTSB/LTSC skip
 # -----------------------------------------------------------------------
-echo "[Test 3/18] State S2: LTSB/LTSC edition detected - named skip..."
+echo "[Test 3/22] State S2: LTSB/LTSC edition detected - named skip..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us EnterpriseS 26200 "" "" 0 10 > "${tmp_dir}/s2.out" 2>&1
@@ -531,7 +594,7 @@ echo "[PASS] State S2: LTSC skip reported verbatim with sentinel (exit 0)."
 # -----------------------------------------------------------------------
 # State S3: Convergence (observed build == target)
 # -----------------------------------------------------------------------
-echo "[Test 4/18] State S3: observed convergence - jump complete + purge..."
+echo "[Test 4/22] State S3: observed convergence - jump complete + purge..."
 reset_fu_state
 printf 'stale\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 printf 'stale\n' > "${fu_temp}/wou_buildupgrade_attempts.txt"
@@ -572,7 +635,7 @@ echo "[PASS] State S3: convergence reported, full-FU attempts record purged, no 
 # -----------------------------------------------------------------------
 # State S4: Media missing (target 26999 has no staged tree) - record survives
 # -----------------------------------------------------------------------
-echo "[Test 5/18] State S4: no media staged for the target - named refusal..."
+echo "[Test 5/22] State S4: no media staged for the target - named refusal..."
 reset_fu_state
 printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 set +e
@@ -603,7 +666,7 @@ echo "[PASS] State S4: media-missing refusal fired verbatim, pre-seeded record s
 # -----------------------------------------------------------------------
 # State S5: Media incomplete (sources\install.esd absent) - record survives
 # -----------------------------------------------------------------------
-echo "[Test 6/18] State S5: media incomplete - names the missing file..."
+echo "[Test 6/22] State S5: media incomplete - names the missing file..."
 reset_fu_state
 printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 mv "${mock_upgrade}/26200-x64/en-us/sources/install.esd" "${tmp_dir}/s5_stash.esd"
@@ -636,7 +699,7 @@ echo "[PASS] State S5: media-incomplete refusal fired naming sources\install.esd
 # -----------------------------------------------------------------------
 # State S6: Media ambiguous (two language directories staged) - record survives
 # -----------------------------------------------------------------------
-echo "[Test 7/18] State S6: ambiguous multi-language media tree..."
+echo "[Test 7/22] State S6: ambiguous multi-language media tree..."
 reset_fu_state
 printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 mkdir -p "${mock_upgrade}/26200-x64/fr-fr"
@@ -670,7 +733,7 @@ echo "[PASS] State S6: media-ambiguous refusal fired verbatim, record survived (
 # -----------------------------------------------------------------------
 # State S7: Language mismatch (en-us media vs fr-fr system) - record survives
 # -----------------------------------------------------------------------
-echo "[Test 8/18] State S7: media language differs from system language..."
+echo "[Test 8/22] State S7: media language differs from system language..."
 reset_fu_state
 printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 set +e
@@ -706,7 +769,7 @@ echo "[PASS] State S7: language refusal fired naming both tokens, record survive
 # -----------------------------------------------------------------------
 # State S8: Scan refusals via the mock-RC hooks (hex forms)
 # -----------------------------------------------------------------------
-echo "[Test 9/18] State S8a: scan refusal 0xC1900200 - TPM/CPU eligibility..."
+echo "[Test 9/22] State S8a: scan refusal 0xC1900200 - TPM/CPU eligibility..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900200 "" 0 10 > "${tmp_dir}/s8a.out" 2>&1
@@ -738,7 +801,7 @@ if [[ -f "${fu_temp}/wou_fullupgrade_attempts.txt" ]]; then
 fi
 echo "[PASS] State S8a: scan refusal 0xC1900200 decoded to the TPM/CPU cause (exit 0, no launch, no record)."
 
-echo "[Test 10/18] State S8b: scan refusal 0xC190020E - disk space..."
+echo "[Test 10/22] State S8b: scan refusal 0xC190020E - disk space..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC190020E "" 0 10 > "${tmp_dir}/s8b.out" 2>&1
@@ -765,7 +828,7 @@ echo "[PASS] State S8b: scan refusal 0xC190020E decoded to the disk-space cause 
 # State S9: Staged termination (scan passes, launch reports 3010) -
 # write-before-launch observable
 # -----------------------------------------------------------------------
-echo "[Test 11/18] State S9: staged upgrade, record written BEFORE the launch..."
+echo "[Test 11/22] State S9: staged upgrade, record written BEFORE the launch..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 3010 0 10 > "${tmp_dir}/s9.out" 2>&1
@@ -799,7 +862,7 @@ echo "[PASS] State S9: staged termination proven, record written before the laun
 # -----------------------------------------------------------------------
 # State S10: Suspect - exit 0 without an observed build change
 # -----------------------------------------------------------------------
-echo "[Test 12/18] State S10: launch exit 0 without build change is the suspect row..."
+echo "[Test 12/22] State S10: launch exit 0 without build change is the suspect row..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 0 0 10 > "${tmp_dir}/s10.out" 2>&1
@@ -830,7 +893,7 @@ echo "[PASS] State S10: suspect row fired with the never-success wording (exit 0
 # -----------------------------------------------------------------------
 # State S11: Rollback (0xC1900101)
 # -----------------------------------------------------------------------
-echo "[Test 13/18] State S11: launch exit 0xC1900101 - rollback row..."
+echo "[Test 13/22] State S11: launch exit 0xC1900101 - rollback row..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 0xC1900101 0 10 > "${tmp_dir}/s11.out" 2>&1
@@ -856,7 +919,7 @@ echo "[PASS] State S11: rollback row fired verbatim (exit 0)."
 # -----------------------------------------------------------------------
 # State S12: Undecoded code (0xC1900199 -> catch-all row)
 # -----------------------------------------------------------------------
-echo "[Test 14/18] State S12 and S13: undecoded code + signed-decimal normalization..."
+echo "[Test 14/22] State S12 and S13: undecoded code + signed-decimal normalization..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 0xC1900199 0 10 > "${tmp_dir}/s12.out" 2>&1
@@ -908,7 +971,7 @@ echo "[PASS] State S13: signed-decimal -1047526912 normalized to the 0xC1900200 
 # -----------------------------------------------------------------------
 # State S14: Attempts stall (three stagnant launches at build 26100)
 # -----------------------------------------------------------------------
-echo "[Test 15/18] State S14: attempts stall - the third stagnant attempt halts..."
+echo "[Test 15/22] State S14: attempts stall - the third stagnant attempt halts..."
 reset_fu_state
 printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 printf 'stale-fallback\n' > "${fu_fallback}/wou_fullupgrade_attempts.txt"
@@ -960,7 +1023,7 @@ echo "[PASS] State S14: third stagnant attempt halted verbatim, record purged fr
 # -----------------------------------------------------------------------
 # State S15: Advancement clear + convergence-first purge
 # -----------------------------------------------------------------------
-echo "[Test 16/18] State S15: advancement clears the guard; convergence purges first..."
+echo "[Test 16/22] State S15: advancement clears the guard; convergence purges first..."
 # (a) record at build 26100, run at 26200 with target 26999 (media staged):
 # the guard clears (in-memory), the record is rewritten fresh, launch proceeds
 reset_fu_state
@@ -1018,7 +1081,7 @@ echo "[PASS] State S15: advancement cleared and relaunched fresh; convergence pu
 # -----------------------------------------------------------------------
 # State S16: Audit inert (audit mode never reaches the lane)
 # -----------------------------------------------------------------------
-echo "[Test 17/18] State S16: audit mode with a chosen target never reaches the lane..."
+echo "[Test 17/22] State S16: audit mode with a chosen target never reaches the lane..."
 reset_fu_state
 printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
 set +e
@@ -1044,7 +1107,7 @@ echo "[PASS] State S16: audit drive emitted zero full-FU lines, record untouched
 # -----------------------------------------------------------------------
 # State S17: EKB fall-through (DEC-34-05) - both lanes in ONE run
 # -----------------------------------------------------------------------
-echo "[Test 18/18] State S17: EKB refusal falls through to the full-FU media probe..."
+echo "[Test 18/22] State S17: EKB refusal falls through to the full-FU media probe..."
 reset_fu_state
 set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 3010 0 10 > "${tmp_dir}/s17.out" 2>&1
@@ -1073,11 +1136,208 @@ fi
 echo "[PASS] State S17: EKB enablement refusal AND full-FU SCAN-PASS + STAGED in one run (fall-through proven)."
 
 # -----------------------------------------------------------------------
+# State S18: Marker pose (RECALL-01, DEC-35-01) - a staged-pass row emits the
+# pose sentinel, a marker record exists with the target in field 2 of line 1,
+# the attempts record coexists (golden rows byte-identical with the CMD twin)
+# -----------------------------------------------------------------------
+echo "[Test 19/22] State S18: staged pass poses the upgrade-in-progress marker..."
+reset_fu_state
+set +e
+run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 3010 0 10 > "${tmp_dir}/s18.out" 2>&1
+set -e
+s18_exit="$FU_EXIT_CODE"
+if (( s18_exit != 3011 )); then
+    echo "FAIL: State S18 expected exit code 3011 (staged pass), got ${s18_exit}." >&2
+    cat "${tmp_dir}/s18.out" >&2
+    exit 1
+fi
+if ! grep -qF "FULLUPGRADE-MARKER-POSED" "${tmp_dir}/s18.out"; then
+    echo "FAIL: State S18 expected the FULLUPGRADE-MARKER-POSED sentinel." >&2
+    cat "${tmp_dir}/s18.out" >&2
+    exit 1
+fi
+if [[ ! -f "${fu_temp}/wou_upgrade_in_progress.txt" ]]; then
+    echo "FAIL: State S18 expected the marker file in the mock engine temp dir." >&2
+    exit 1
+fi
+if ! head -n 1 "${fu_temp}/wou_upgrade_in_progress.txt" | grep -q '^full,26200,'; then
+    echo "FAIL: State S18 expected marker line 1 to begin with the target (full,26200,...)." >&2
+    cat "${fu_temp}/wou_upgrade_in_progress.txt" >&2
+    exit 1
+fi
+if ! grep -qF "1,1000,26100,full" "${fu_temp}/wou_fullupgrade_attempts.txt" 2>/dev/null; then
+    echo "FAIL: State S18 expected the attempts record to coexist with the marker." >&2
+    exit 1
+fi
+echo "[PASS] State S18: marker posed beside the launch record, target build on line 1 (exit 3011)."
+
+# -----------------------------------------------------------------------
+# State S19: Converged clear (RECALL-02 pivot) - marker present + observed
+# build == target gives FULLUPGRADE-CONVERGED with BOTH records gone and no
+# media-probe rule reached
+# -----------------------------------------------------------------------
+echo "[Test 20/22] State S19: convergence clears the marker and the attempts record..."
+reset_fu_state
+# Seed both state files with bytes a pose would never write, so the delete is
+# observable as a delete of THE SEED
+printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
+printf 'full,26200,9999\n' > "${fu_temp}/wou_upgrade_in_progress.txt"
+set +e
+run_fullupgrade_cycle_evaluator 26200 5074 en-us Professional 26200 "" "" 0 10 > "${tmp_dir}/s19.out" 2>&1
+set -e
+s19_exit="$FU_EXIT_CODE"
+if (( s19_exit != 0 )); then
+    echo "FAIL: State S19 expected exit code 0, got ${s19_exit}." >&2
+    cat "${tmp_dir}/s19.out" >&2
+    exit 1
+fi
+if ! grep -qF "Info: Full upgrade target build 26200 already observed - jump complete" "${tmp_dir}/s19.out"; then
+    echo "FAIL: State S19 expected the convergence literal verbatim." >&2
+    cat "${tmp_dir}/s19.out" >&2
+    exit 1
+fi
+if ! grep -qF "FULLUPGRADE-CONVERGED" "${tmp_dir}/s19.out"; then
+    echo "FAIL: State S19 expected the FULLUPGRADE-CONVERGED sentinel." >&2
+    cat "${tmp_dir}/s19.out" >&2
+    exit 1
+fi
+if grep -qF "no full upgrade media staged for" "${tmp_dir}/s19.out"; then
+    echo "FAIL: State S19 convergence must precede the media probe." >&2
+    cat "${tmp_dir}/s19.out" >&2
+    exit 1
+fi
+if [[ -f "${fu_temp}/wou_upgrade_in_progress.txt" ]]; then
+    echo "FAIL: State S19 expected the seeded marker DELETED by the converged clear." >&2
+    exit 1
+fi
+if [[ -f "${fu_temp}/wou_fullupgrade_attempts.txt" ]]; then
+    echo "FAIL: State S19 expected the seeded attempts record DELETED by the convergence branch." >&2
+    exit 1
+fi
+echo "[PASS] State S19: convergence cleared BOTH state files before any media probe (exit 0)."
+
+# -----------------------------------------------------------------------
+# State S20: Stall restore (RECALL-02 tail) - marker present + a leg=full
+# record at the same build counting past 2 gives FULLUPGRADE-STALL-HALT +
+# RECALL-RESTORED with both records gone and the armed-restore rule NOT
+# reached when the armed-state probe is false (the w100 shape)
+# -----------------------------------------------------------------------
+echo "[Test 21/22] State S20: stall halt restores safe state behind the closed gate..."
+reset_fu_state
+# Seed the marker AND the attempts record at the current build (count 1)
+printf '1,1000,26100,full\n' > "${fu_temp}/wou_fullupgrade_attempts.txt"
+printf 'full,26200,1000\n' > "${fu_temp}/wou_upgrade_in_progress.txt"
+# Run 1: the guard advances to count 2 and the pose overwrites the seed
+set +e
+run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 3010 0 10 > "${tmp_dir}/s20a.out" 2>&1
+set -e
+s20a_exit="$FU_EXIT_CODE"
+if (( s20a_exit != 3011 )); then
+    echo "FAIL: State S20 run 1 expected exit code 3011 (halt not yet reached), got ${s20a_exit}." >&2
+    cat "${tmp_dir}/s20a.out" >&2
+    exit 1
+fi
+# Run 2: reads count 2 at the same build, computes 3, GTR 2 - the halt
+set +e
+run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 3010 0 10 > "${tmp_dir}/s20b.out" 2>&1
+set -e
+s20b_exit="$FU_EXIT_CODE"
+if (( s20b_exit != 0 )); then
+    echo "FAIL: State S20 run 2 expected exit code 0 [halted], got ${s20b_exit}." >&2
+    cat "${tmp_dir}/s20b.out" >&2
+    exit 1
+fi
+if ! grep -qF "FULLUPGRADE-STALL-HALT" "${tmp_dir}/s20b.out"; then
+    echo "FAIL: State S20 run 2 expected the FULLUPGRADE-STALL-HALT sentinel." >&2
+    cat "${tmp_dir}/s20b.out" >&2
+    exit 1
+fi
+if ! grep -qF "RECALL-RESTORED" "${tmp_dir}/s20b.out"; then
+    echo "FAIL: State S20 run 2 expected the RECALL-RESTORED sentinel." >&2
+    cat "${tmp_dir}/s20b.out" >&2
+    exit 1
+fi
+if grep -qF "restoring safe state after failed upgrade" "${tmp_dir}/s20b.out"; then
+    echo "FAIL: State S20 run 2 expected the armed-state gate SHUT (no restore Info line in the w100-shaped sandbox)." >&2
+    cat "${tmp_dir}/s20b.out" >&2
+    exit 1
+fi
+if grep -qF "FULLUPGRADE-STAGED" "${tmp_dir}/s20b.out"; then
+    echo "FAIL: State S20 run 2 must never reach the launch site past the halt." >&2
+    cat "${tmp_dir}/s20b.out" >&2
+    exit 1
+fi
+if [[ -f "${fu_temp}/wou_upgrade_in_progress.txt" ]]; then
+    echo "FAIL: State S20 run 2 expected the marker cleared by the halt." >&2
+    exit 1
+fi
+if [[ -f "${fu_temp}/wou_fullupgrade_attempts.txt" ]]; then
+    echo "FAIL: State S20 run 2 expected the attempts record deleted by the halt." >&2
+    exit 1
+fi
+echo "[PASS] State S20: halt cleared both files, RECALL-RESTORED emitted, gate stayed shut (exit 0)."
+
+# -----------------------------------------------------------------------
+# State S21: Refusal survival (DEC-35-09) - refusal rows never emit the pose
+# sentinel and never touch a seeded marker; the marker never appears in a
+# mirrored :Cleanup rule set
+# -----------------------------------------------------------------------
+echo "[Test 22/22] State S21: refusals never pose; a seeded marker survives..."
+# (a) never-pose: fresh machine, media-missing refusal shape (target 26999)
+reset_fu_state
+set +e
+run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26999 "" "" 0 10 > "${tmp_dir}/s21a.out" 2>&1
+set -e
+s21a_exit="$FU_EXIT_CODE"
+if (( s21a_exit != 0 )); then
+    echo "FAIL: State S21a expected exit code 0, got ${s21a_exit}." >&2
+    cat "${tmp_dir}/s21a.out" >&2
+    exit 1
+fi
+if ! grep -qF "FULLUPGRADE-MEDIA-MISSING" "${tmp_dir}/s21a.out"; then
+    echo "FAIL: State S21a expected the media-missing refusal sentinel." >&2
+    cat "${tmp_dir}/s21a.out" >&2
+    exit 1
+fi
+if grep -qF "FULLUPGRADE-MARKER-POSED" "${tmp_dir}/s21a.out"; then
+    echo "FAIL: State S21a a refusal pass emitted FULLUPGRADE-MARKER-POSED - the pose must only fire beside the launch." >&2
+    cat "${tmp_dir}/s21a.out" >&2
+    exit 1
+fi
+if [[ -f "${fu_temp}/wou_upgrade_in_progress.txt" ]]; then
+    echo "FAIL: State S21a expected NO marker after a refusal pass." >&2
+    exit 1
+fi
+# (b) survival: seed the marker, run the SAME refusal shape
+printf 'full,26999,424242\n' > "${fu_temp}/wou_upgrade_in_progress.txt"
+set +e
+run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26999 "" "" 0 10 > "${tmp_dir}/s21b.out" 2>&1
+set -e
+s21b_exit="$FU_EXIT_CODE"
+if (( s21b_exit != 0 )); then
+    echo "FAIL: State S21b expected exit code 0, got ${s21b_exit}." >&2
+    cat "${tmp_dir}/s21b.out" >&2
+    exit 1
+fi
+if grep -qF "FULLUPGRADE-MARKER-POSED" "${tmp_dir}/s21b.out"; then
+    echo "FAIL: State S21b the seeded-machine refusal must still never pose." >&2
+    cat "${tmp_dir}/s21b.out" >&2
+    exit 1
+fi
+if [[ "$(cat "${fu_temp}/wou_upgrade_in_progress.txt")" != "full,26999,424242" ]]; then
+    echo "FAIL: State S21b expected the seeded marker to survive byte-identically." >&2
+    cat "${fu_temp}/wou_upgrade_in_progress.txt" >&2
+    exit 1
+fi
+rm -f "${fu_temp}/wou_upgrade_in_progress.txt"
+echo "[PASS] State S21: refusal passes never pose; the seeded marker survived byte-identically."
+
+# -----------------------------------------------------------------------
 # All Passed
 # -----------------------------------------------------------------------
 echo ""
 echo "======================================================================="
-echo "SUCCESS: All full upgrade cycle regression states passed (S1-S17)."
+echo "SUCCESS: All full upgrade cycle regression states passed (S1-S21)."
 echo "======================================================================="
 echo "FULLUPGRADE-CYCLE-PASS"
 exit 0

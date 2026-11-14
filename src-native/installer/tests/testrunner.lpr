@@ -392,6 +392,16 @@ begin
   P := Resolve('19044', '1000', 'x64', 'glb', 'win10', '19045');
   Check((P.Verdict = upgEKB) and P.NeedsBaselineCU and (P.Reason = ''),
     'upg-case-20-EKB: 19044 rev 1000 -> 19045 (branch-window hop) = upgEKB NeedsBaselineCU=true');
+
+  { Legacy floor, wxp family (VAL-02, plan 37-02): the 5.1-encoding build
+    string answers the SAME R4 refusal as the win7 case above - the
+    refusal site (upgradespredicates.pas:226-228) branches on the family
+    string, never on the build encoding. Appended after the highest
+    existing case number; existing case names are byte-frozen by the
+    consigned gate. }
+  P := Resolve('5151', '1', 'x86', 'glb', 'wxp', '19045');
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'legacy-os'),
+    'upg-case-21-wxp-family-r4: 5151 wxp -> 19045 = blocked legacy-os (R4 family refusal)');
 end;
 
 procedure TestConsentFamily;

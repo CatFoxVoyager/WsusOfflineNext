@@ -242,6 +242,19 @@ picker_pins_host = [
     # DEC-36-03: the budget reads the staged manifest total_mib.
     ("budget source (manifest total_mib)",
      "total_mib", ">=", 1),
+    # Phase 37 family-exclusion shape (plan 37-02, VAL-02c). Division of
+    # labor: these pins assert the picker's single-source code shape -
+    # upgrade entries come ONLY from the generated roster file, whose
+    # zero-pre-Win10 property is censused by the contracts twins
+    # (verify-upgrade-contracts.{cmd,bash}, VAL-02b) and refused at
+    # runtime by the FPC resolver's R4 (upg-case-21-wxp-family-r4). There
+    # is no runtime family whitelist at the picker tier: ParseUpgrades-
+    # Roster is a tolerant passthrough (family rides field 4, never
+    # invented), so the w61/wxp exclusion is data-layer + resolver.
+    ("roster source binding (the picker's only upgrade source)",
+     '"client", "UpdateTable", "upgrades.txt"', ">=", 1),
+    ("family passthrough from roster field 4 (no invented family)",
+     "Family: fields[3]", "==", 1),
 ]
 
 # Frontend pins (new reader, path overridable for bite proofs).
@@ -294,6 +307,13 @@ picker_pins_app = [
      "`${friendly} (Build ${build})`", "==", 1),
     ("friendly label win10 vocabulary (UX-2)",
      "'Windows 10 22H2'", ">=", 1),
+    # Phase 37 (plan 37-02, VAL-02c): the picker's groups derive
+    # exclusively from the pushed roster rows (upgradeRows) - no second
+    # entry source at the frontend; the rows' zero-pre-Win10 property is
+    # the contracts twins' census (VAL-02b), per the division stated in
+    # the host pins above.
+    ("picker partition from roster rows only",
+     "upgradeRows.filter(r => r.fuMedia === '1')", "==", 1),
 ]
 
 host_ok = check_picker_pins(gen_host_src, GENERATOR_HOST_CS, picker_pins_host)

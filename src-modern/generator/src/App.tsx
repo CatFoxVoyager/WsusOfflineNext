@@ -90,6 +90,33 @@ interface UpgradeSizeInfo {
   fileCount: number;
 }
 
+// OS Upgrades picker friendly labels (36-UAT UX-2): build -> full Windows
+// version name. Win11 names are the Win11 tab's own vocabulary verbatim
+// (win11Builds below); Win10 entries are the per-build marketing versions
+// (the Win10 tab groups them as ranges - 19041-19045 - so the picker maps
+// each exact build). A roster build missing from the map falls back to
+// the bare build number - fail-open, never a crash on host-pushed data.
+const UPGRADE_BUILD_LABELS: Record<string, string> = {
+  '19041': 'Windows 10 2004',
+  '19042': 'Windows 10 20H2',
+  '19043': 'Windows 10 21H1',
+  '19044': 'Windows 10 21H2',
+  '19045': 'Windows 10 22H2',
+  '22000': 'Windows 11 21H2',
+  '22621': 'Windows 11 22H2',
+  '22631': 'Windows 11 23H2',
+  '26100': 'Windows 11 24H2',
+  '26200': 'Windows 11 25H2',
+  '26300': 'Windows 11 26H2',
+};
+
+// One picker-row label per roster build: the friendly version name plus
+// the build, or the bare build on a map miss (fail-open per 36-UAT UX-2).
+const upgradeLabelOf = (build: string): string => {
+  const friendly = UPGRADE_BUILD_LABELS[build];
+  return friendly ? `${friendly} (Build ${build})` : build;
+};
+
 export default function App() {
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const initialTab = (urlParams?.get('tab') as any) || 'win11';
@@ -288,7 +315,12 @@ export default function App() {
   // status/reason). Active rows with neither hop nor fu_media are not
   // upgrade targets and render in no group.
   const upgradeKeyOf = (row: UpgradeRowState) => `${row.build}_${row.arch}`;
-  const upgradeEkbRows = upgradeRows.filter(r => r.ekbPresent);
+  // UX-1 (36-UAT): the EKB group renders newest-first (descending build
+  // order - the roster file lists old builds first). filter() already
+  // returned a fresh array, so the sort never reorders upgradeRows.
+  const upgradeEkbRows = upgradeRows
+    .filter(r => r.ekbPresent)
+    .sort((a, b) => parseInt(b.build, 10) - parseInt(a.build, 10));
   const upgradeFuRows = upgradeRows.filter(r => r.fuMedia === '1');
   const upgradeUnavailableRows = upgradeRows.filter(r => !r.ekbPresent && r.fuMedia !== '1' && r.status !== 'active');
 
@@ -1071,7 +1103,7 @@ export default function App() {
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold text-zinc-100">{row.build}</span>
+                            <span className="text-xs font-semibold text-zinc-100">{upgradeLabelOf(row.build)}</span>
                             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-800 text-zinc-300 border border-dark-700">
                               {row.arch}
                             </span>
@@ -1122,7 +1154,7 @@ export default function App() {
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold text-zinc-100">{row.build}</span>
+                            <span className="text-xs font-semibold text-zinc-100">{upgradeLabelOf(row.build)}</span>
                             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-800 text-zinc-300 border border-dark-700">
                               {row.arch}
                             </span>
@@ -1168,7 +1200,7 @@ export default function App() {
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold text-zinc-500">{row.build}</span>
+                            <span className="text-xs font-semibold text-zinc-500">{upgradeLabelOf(row.build)}</span>
                             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-800 text-zinc-500 border border-dark-700">
                               {row.arch}
                             </span>

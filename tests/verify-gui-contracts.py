@@ -276,6 +276,24 @@ picker_pins_app = [
     # Roster merge arm inside the state-message listener.
     ("roster state arm",
      "if (data.upgrades)", "==", 1),
+    # UX-1 (36-UAT live run 2026-11-14): the EKB group renders newest-first.
+    # The pin is the descending comparator literal (b before a) - an
+    # ascending flip (a-b) misses the pin and fails the test.
+    ("EKB newest-first comparator (UX-1)",
+     "parseInt(b.build, 10) - parseInt(a.build, 10)", "==", 1),
+    # UX-2 (36-UAT live run 2026-11-14): friendly version labels on the
+    # picker rows. The pins target the new machinery (map const, its
+    # render sites, the label template) plus one Win10 vocabulary string
+    # unique to the map - a bare "Windows 11" pin could not bite, the
+    # Win11 tab's own state list already carries those names.
+    ("friendly label map const (UX-2)",
+     "UPGRADE_BUILD_LABELS", ">=", 2),
+    ("friendly label render sites (UX-2)",
+     "upgradeLabelOf(row.build)", ">=", 3),
+    ("friendly label template (UX-2)",
+     "`${friendly} (Build ${build})`", "==", 1),
+    ("friendly label win10 vocabulary (UX-2)",
+     "'Windows 10 22H2'", ">=", 1),
 ]
 
 host_ok = check_picker_pins(gen_host_src, GENERATOR_HOST_CS, picker_pins_host)

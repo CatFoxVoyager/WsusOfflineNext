@@ -80,6 +80,42 @@ if [ "$UPG_CASE_OK" -lt 19 ]; then
     fail "upg-case- floor violated: $UPG_CASE_OK < 19"
 fi
 
+# Plan 36-02 consent-layer floors: the same WR-03 logic over the
+# consent battery - a deleted consent case family (or dropped cases)
+# would otherwise leave every other check green. Shipped reality is
+# 3 consent-family-, 3 consent-gate-, 11 consent-map-, 6 consent-pick-
+# and 4 consent-disk- cases; the floors sit below.
+CONS_FAMILY_OK="$(grep -c '^ok [0-9]* - consent-family-' "$RUN_LOG" || true)"
+CONS_GATE_OK="$(grep -c '^ok [0-9]* - consent-gate-' "$RUN_LOG" || true)"
+CONS_MAP_OK="$(grep -c '^ok [0-9]* - consent-map-' "$RUN_LOG" || true)"
+CONS_PICK_OK="$(grep -c '^ok [0-9]* - consent-pick-' "$RUN_LOG" || true)"
+CONS_DISK_OK="$(grep -c '^ok [0-9]* - consent-disk-' "$RUN_LOG" || true)"
+if [ "$CONS_FAMILY_OK" -lt 2 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "consent-family- floor violated: $CONS_FAMILY_OK < 2"
+fi
+if [ "$CONS_GATE_OK" -lt 3 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "consent-gate- floor violated: $CONS_GATE_OK < 3"
+fi
+if [ "$CONS_MAP_OK" -lt 10 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "consent-map- floor violated: $CONS_MAP_OK < 10"
+fi
+if [ "$CONS_PICK_OK" -lt 3 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "consent-pick- floor violated: $CONS_PICK_OK < 3"
+fi
+if [ "$CONS_DISK_OK" -lt 2 ]; then
+    echo "--- testrunner output ($RUN_LOG) ---"
+    cat "$RUN_LOG"
+    fail "consent-disk- floor violated: $CONS_DISK_OK < 2"
+fi
+
 if [ -z "$UNIT_FAIL_LINE" ]; then
     echo "--- testrunner output ($RUN_LOG) ---"
     cat "$RUN_LOG"

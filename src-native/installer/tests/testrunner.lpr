@@ -392,6 +392,141 @@ begin
     'upg-case-20-EKB: 19044 rev 1000 -> 19045 (branch-window hop) = upgEKB NeedsBaselineCU=true');
 end;
 
+procedure TestConsentFamily;
+begin
+  { Plan 36-02: UcDeriveOsFamily at the DEC-36-04 22000 boundary - the
+    consent sheet's os-family input, fail-closed to the verdict layer's
+    unknown-current rule on a non-numeric build. }
+  CheckEq(UcDeriveOsFamily('21999'), 'win10',
+    'consent-family-01: build 21999 derives win10 (below the 22000 boundary)');
+  CheckEq(UcDeriveOsFamily('22000'), 'win11',
+    'consent-family-02: build 22000 derives win11 (exactly at the boundary)');
+  CheckEq(UcDeriveOsFamily('not-a-build'), '',
+    'consent-family-03: non-numeric build derives empty (fail-closed)');
+end;
+
+procedure TestConsentGate;
+var
+  Gate: TGateState;
+begin
+  { Plan 36-02: the frozen gate table - enabled only for a qualifying
+    verdict, Checked=False for EVERY input (consent is a user act,
+    never a computed state; no input yields Checked=True). }
+  Gate := UcConsentGate(upgEKB);
+  Check(Gate.Enabled and (not Gate.Checked),
+    'consent-gate-01: upgEKB -> Enabled=True Checked=False');
+  Gate := UcConsentGate(upgFullFU);
+  Check(Gate.Enabled and (not Gate.Checked),
+    'consent-gate-02: upgFullFU -> Enabled=True Checked=False');
+  Gate := UcConsentGate(upgBlocked);
+  Check((not Gate.Enabled) and (not Gate.Checked),
+    'consent-gate-03: upgBlocked -> Enabled=False Checked=False');
+end;
+
+procedure TestConsentMap;
+begin
+  { Plan 36-02: the total display map over the verdict vocabulary's
+    ten frozen tokens, each onto its own siUpgradeReason* id, plus the
+    generic fallback for an out-of-vocabulary token (a row's own
+    blocked_reason passthrough - data, not vocabulary). }
+  Check(UcReasonToDisplayId('unknown-current') = siUpgradeReasonUnknownCurrent,
+    'consent-map-01: unknown-current -> siUpgradeReasonUnknownCurrent');
+  Check(UcReasonToDisplayId('bad-target') = siUpgradeReasonBadTarget,
+    'consent-map-02: bad-target -> siUpgradeReasonBadTarget');
+  Check(UcReasonToDisplayId('already-on-target') = siUpgradeReasonAlreadyOnTarget,
+    'consent-map-03: already-on-target -> siUpgradeReasonAlreadyOnTarget');
+  Check(UcReasonToDisplayId('downgrade') = siUpgradeReasonDowngrade,
+    'consent-map-04: downgrade -> siUpgradeReasonDowngrade');
+  Check(UcReasonToDisplayId('legacy-os') = siUpgradeReasonLegacyOs,
+    'consent-map-05: legacy-os -> siUpgradeReasonLegacyOs');
+  Check(UcReasonToDisplayId('ineligible') = siUpgradeReasonIneligible,
+    'consent-map-06: ineligible -> siUpgradeReasonIneligible');
+  Check(UcReasonToDisplayId('no-media') = siUpgradeReasonNoMedia,
+    'consent-map-07: no-media -> siUpgradeReasonNoMedia');
+  Check(UcReasonToDisplayId('arch-unsupported') = siUpgradeReasonArchUnsupported,
+    'consent-map-08: arch-unsupported -> siUpgradeReasonArchUnsupported');
+  Check(UcReasonToDisplayId('baseline-unknown') = siUpgradeReasonBaselineUnknown,
+    'consent-map-09: baseline-unknown -> siUpgradeReasonBaselineUnknown');
+  Check(UcReasonToDisplayId('language-not-carried') = siUpgradeReasonLangNotCarried,
+    'consent-map-10: language-not-carried -> siUpgradeReasonLangNotCarried');
+  Check(UcReasonToDisplayId('new-devices-only') = siUpgradeReasonGeneric,
+    'consent-map-11: out-of-vocabulary row reason -> siUpgradeReasonGeneric');
+end;
+
+procedure TestConsentPick;
+var
+  Rows: TUpgradeRows;
+  FixturePath: string;
+  P: TUpgradePath;
+  Target: string;
+begin
+  { Plan 36-02: the consent sheet's named-target enumeration over the
+    canonical fixture - expectations derived from the frozen verdict
+    rules (R0-R12) over GOLDEN_UPGRADES, never from plan prose. }
+  FixturePath := WriteFixture('upgrades-golden.txt', GOLDEN_UPGRADES);
+  Rows := UpgParseUpgradesFile(FixturePath, @AlwaysProbe);
+
+  { 26100 x64 at rev 5074: the FIRST x64 candidate (26200 - an EKB hop
+    with a complete baseline triple whose ekb_source 26100 matches the
+    current build) resolves upgEKB; the sheet names 26200. }
+  P := UcEnumerateConsentTarget(Rows, '26100', '5074', 'x64', Target);
+  Check((P.Verdict = upgEKB) and (Target = '26200'),
+    'consent-pick-01: 26100 x64 rev 5074 names 26200 via upgEKB (fixture row 1)');
+
+  { 19045 x64 rev 1865: the earlier x64 candidates answer blocked
+    (26200/26300 no-media against a win10 family; 19045 already-on-
+    target) - the FIRST qualifying candidate is the fu_media=1 win10
+    row 20348, and its build digits must travel with the winning
+    verdict (R9 over fixture row 7). }
+  P := UcEnumerateConsentTarget(Rows, '19045', '1865', 'x64', Target);
+  Check((P.Verdict = upgFullFU) and (Target = '20348') and (P.Reason = ''),
+    'consent-pick-02: 19045 x64 names 20348 via upgFullFU (fixture row 7)');
+
+  { DEC-36-04 fail-closed story (threat T-36-05): an empty current
+    revision answers baseline-unknown on the first candidate - the
+    blocked sheet renders that reason and consent stays disabled. }
+  P := UcEnumerateConsentTarget(Rows, '26100', '', 'x64', Target);
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'baseline-unknown')
+        and (Target = '26200'),
+    'consent-pick-03: 26100 x64 without revision = blocked baseline-unknown on 26200');
+
+  { No qualifying candidate: the FIRST data-qualified candidate's
+    blocked reason travels for display (a 26300 machine: 26200 answers
+    downgrade). }
+  P := UcEnumerateConsentTarget(Rows, '26300', '5074', 'x64', Target);
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'downgrade')
+        and (Target = '26200'),
+    'consent-pick-04: 26300 x64 = blocked downgrade from the first candidate 26200');
+
+  { Arch-scoped candidacy: an x86 machine only ever walks x86 rows -
+    the sole x86 candidate (19045 x86) answers already-on-target. }
+  P := UcEnumerateConsentTarget(Rows, '19045', '1865', 'x86', Target);
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'already-on-target')
+        and (Target = '19045'),
+    'consent-pick-05: 19045 x86 candidates are x86-only = blocked already-on-target');
+
+  { Empty roster: no candidate at all answers no-media with no named
+    build. }
+  P := UcEnumerateConsentTarget(nil, '26100', '5074', 'x64', Target);
+  Check((P.Verdict = upgBlocked) and (P.Reason = 'no-media') and (Target = ''),
+    'consent-pick-06: empty roster = blocked no-media, no named target');
+end;
+
+procedure TestConsentDisk;
+begin
+  { Plan 36-02: one-decimal disk rendering over the staged manifest's
+    total_mib (10397 MiB = the 26200 en-us measurement, DEC-33-02/07)
+    in both separator shapes, plus the 0-MiB edge. }
+  CheckEq(UcDiskGbText(10397, '.'), '10.2',
+    'consent-disk-01: 10397 MiB renders 10.2 with the EN separator');
+  CheckEq(UcDiskGbText(10397, ','), '10,2',
+    'consent-disk-02: 10397 MiB renders 10,2 with the DE separator');
+  CheckEq(UcDiskGbText(0, '.'), '0.0',
+    'consent-disk-03: 0 MiB renders 0.0 (edge)');
+  CheckEq(UcDiskGbText(0, ','), '0,0',
+    'consent-disk-04: 0 MiB renders 0,0 with the DE separator (edge)');
+end;
+
 procedure TestDisplayMaps;
 var
   Os: TOsInfo;
@@ -1499,6 +1634,11 @@ begin
     TestEnablementPredicates;
     TestUpgradesParser;
     TestUpgradesVerdict;
+    TestConsentFamily;
+    TestConsentGate;
+    TestConsentMap;
+    TestConsentPick;
+    TestConsentDisk;
     TestToggleGates;
     TestOsGate;
     TestPathValid;

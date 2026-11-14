@@ -45,8 +45,7 @@ unit upgradesconsent;
 interface
 
 uses
-  SysUtils, Windows, Registry, upgradespredicates, detection,
-  strings_de_en;
+  SysUtils, Registry, upgradespredicates, detection, strings_de_en;
 
 const
   { The DEC-36-04 UBR probe: the DWORD revision value under the
@@ -99,7 +98,7 @@ function UcReasonToDisplayId(const AReason: string): TStringId;
 
 { One-decimal disk-GB rendering of the manifest's total_mib (DEC-33-07:
   consume the total, never re-sum): 10397 MiB renders '10.2' with '.'
-  and '10,2' with ',' (the Copywriting Contract's {n.n}/{n,n} shapes).
+  and '10,2' with ',' - the Copywriting Contract's decimal shapes.
   Half-up rounding in integer tenths - no floating point - and the
   separator is a parameter so neither language's locale can leak into
   the sheet. }
@@ -186,6 +185,11 @@ begin
     end;
     if Path.Verdict <> upgBlocked then
     begin
+      { The winning candidate is the named target - its build digits
+        must travel with the verdict (the fall-through default above
+        carried only the FIRST candidate's build for the blocked
+        sheet). }
+      ATargetBuild := Row.TargetBuild;
       Result := Path;
       Exit;
     end;

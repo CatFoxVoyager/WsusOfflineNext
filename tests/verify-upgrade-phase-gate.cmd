@@ -649,6 +649,14 @@ REM the chain; the 16-state cycle twins flow through their existing frozen
 REM links (GATE 2/3), the roster family census cases through the contracts
 REM links (GATE 6/7), and the wxp-family TAP case and picker exclusion pins
 REM through GATE 32/34's instruments.
+REM The red run that preceded this consignment pointed the media twin's
+REM WSON_UPGRADE_MEDIA_RECORD override at a corrupted scratch record copy
+REM (one token-material line; the bite literal is pinned by the twin's own
+REM MEDIA 2 scrub gate) and the full chain fail-closed naming GATE 37 -
+REM links 1-36 stayed green under the bite, so the named red needed no
+REM scoped scratch gate copy (the override has exactly one consumer in the
+REM chain). The consigned green run covers all 37 executable links in one
+REM clean-MSYS session.
 REM =======================================================================
 
 echo [GATE 37] bash media-gate twin (consigned record + staged media, bash pipeline)...

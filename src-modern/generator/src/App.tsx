@@ -87,6 +87,7 @@ interface UpgradeRowState {
 interface UpgradeSizeInfo {
   totalMib: string;
   updateName: string;
+  fileCount: number;
 }
 
 export default function App() {
@@ -190,11 +191,14 @@ export default function App() {
   const [upgradeLang, setUpgradeLang] = useState('en-us');
   const [upgradeSelection, setUpgradeSelection] = useState<string[]>([]);
   const [upgradeFullTarget, setUpgradeFullTarget] = useState<string | null>(null);
-  // Touched flag: set by EVERY picker interaction (checkbox toggle, radio
-  // pick, radio clear, language change) and never reset by render effects -
+  // Touched flag: set by the picker's SELECTION interactions (checkbox
+  // toggle, radio pick, radio clear) and never reset by render effects -
   // it is the payload rule's other half (an untouched empty picker omits
   // the upgrade property so the host legacy-save branch preserves the
-  // hand-seeded selection, the 26a0073 regression class).
+  // hand-seeded selection, the 26a0073 regression class). The language
+  // select deliberately does NOT set it (DEC-36-06): a language change
+  // alone must never emit an upgrade payload, or a bare language pick
+  // would clear a hand-seeded selection.
   const [upgradeTouched, setUpgradeTouched] = useState(false);
 
   // Native message sender
@@ -288,6 +292,26 @@ export default function App() {
   const upgradeFuRows = upgradeRows.filter(r => r.fuMedia === '1');
   const upgradeUnavailableRows = upgradeRows.filter(r => !r.ekbPresent && r.fuMedia !== '1' && r.status !== 'active');
 
+  // Budget line source (DEC-36-03): the staged full-FU target ONLY - EKB
+  // keys contribute no budget line, and the line is absent entirely when
+  // nothing is selected (SC4). Manifest-first: the size map's total_mib
+  // when the target is staged; a map miss falls to the labeled
+  // measured-reference estimate (never an error row, never accent).
+  // Recomputed on every selection change by construction (render body).
+  const upgradeBudget = (() => {
+    if (upgradeFullTarget === null) return null;
+    const info = upgradeSizes[upgradeFullTarget];
+    const totalMib = info ? parseInt(info.totalMib, 10) : NaN;
+    if (!info || !Number.isFinite(totalMib)) {
+      return { kind: 'estimate' as const };
+    }
+    return {
+      kind: totalMib > 4096 ? ('warning' as const) : ('calm' as const),
+      sizeGb: (totalMib / 1024).toFixed(1),
+      fileCount: info.fileCount,
+    };
+  })();
+
   const toggleUpgradeEkb = (key: string) => {
     setUpgradeTouched(true);
     setUpgradeSelection(prev => (prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]));
@@ -352,7 +376,10 @@ export default function App() {
       // live hand-seeded [OS Upgrades] selection survives. The value is
       // the combined <build>_<arch> key array (EKB keys + the full-FU key
       // when set); SC4: a run without upgrade behaves exactly as before.
-      ...(upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget ? { upgrade: upgradeFullTarget ? [...upgradeSelection, upgradeFullTarget] : upgradeSelection } : {})
+      // upgradeLang rides inside the SAME conditional (DEC-36-06) - a
+      // language value can never travel without an upgrade payload; the
+      // host applies it to the pipeline only on selection-carrying runs.
+      ...(upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget ? { upgrade: upgradeFullTarget ? [...upgradeSelection, upgradeFullTarget] : upgradeSelection, upgradeLang: upgradeLang } : {})
     });
   };
 
@@ -996,16 +1023,18 @@ export default function App() {
               </div>
             )}
 
-            {/* Upgrade media language (vocabulary = the host-pushed UUP constant) */}
+            {/* Media language select (vocabulary = the host-pushed UUP constant;
+                changing it alone never sets the touched flag, DEC-36-06). */}
             <div className="flex items-center gap-3">
               <label htmlFor="upgrade-lang" className="text-xs font-medium text-zinc-300">Upgrade media language</label>
               <select
                 id="upgrade-lang"
                 value={upgradeLang}
-                onChange={(e) => { setUpgradeTouched(true); setUpgradeLang(e.target.value); }}
+                onChange={(e) => setUpgradeLang(e.target.value)}
                 className="bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-hidden focus:border-accent-500"
               >
-                {Object.entries(upgradeLangs).map(([code, label]) => (
+                <option value="en-us">English (en-us)</option>
+                {Object.entries(upgradeLangs).filter(([code]) => code !== 'en-us').map(([code, label]) => (
                   <option key={code} value={code}>{label}</option>
                 ))}
               </select>
@@ -1155,6 +1184,22 @@ export default function App() {
               </div>
             )}
             </div>
+
+            {/* Budget line (DEC-36-03): three states under the groups - calm
+                manifest total, amber media-size warning (the exact UI-SPEC
+                copy + the manifest file count), or the labeled
+                measured-reference estimate on a size-map miss. */}
+            {upgradeBudget && upgradeBudget.kind === 'calm' && (
+              <p className="text-xs text-zinc-400">Estimated download: {upgradeBudget.sizeGb} GB</p>
+            )}
+            {upgradeBudget && upgradeBudget.kind === 'warning' && (
+              <div className="p-3 rounded-lg border bg-amber-500/10 text-amber-400 border-amber-500/20">
+                <p className="text-xs leading-snug">This upgrade adds ~{upgradeBudget.sizeGb} GB to the download ({upgradeBudget.fileCount} files). Media above 4 GB needs exFAT/NTFS formatting or split .swm handling on FAT32 drives.</p>
+              </div>
+            )}
+            {upgradeBudget && upgradeBudget.kind === 'estimate' && (
+              <p className="text-xs text-zinc-400">~10.2 GB multi-edition / ~8.3 GB single-edition (measured on 26200 en-us; varies by target and language)</p>
+            )}
           </div>
         )}
 

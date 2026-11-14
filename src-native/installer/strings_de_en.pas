@@ -101,7 +101,19 @@ type
     siAuditPaneLabel,   { audit view header, %s = report path }
     siNothingToResume,  { /resume with absent staging (INST-05) }
     siOpenReportFailed, { report open failure feedback }
-    siResumeRegisterFailed { RunOnce write failure feedback }
+    siResumeRegisterFailed, { RunOnce write failure feedback }
+    siUpgradeReasonUnknownCurrent, { upgrade blocked: unknown-current
+                          (plan 36-02, verdict vocabulary) }
+    siUpgradeReasonBadTarget, { upgrade blocked: bad-target }
+    siUpgradeReasonAlreadyOnTarget, { upgrade blocked: already-on-target }
+    siUpgradeReasonDowngrade, { upgrade blocked: downgrade }
+    siUpgradeReasonLegacyOs, { upgrade blocked: legacy-os }
+    siUpgradeReasonIneligible, { upgrade blocked: ineligible, %s = cause }
+    siUpgradeReasonNoMedia, { upgrade blocked: no-media }
+    siUpgradeReasonArchUnsupported, { upgrade blocked: arch-unsupported }
+    siUpgradeReasonBaselineUnknown, { upgrade blocked: baseline-unknown }
+    siUpgradeReasonLangNotCarried, { upgrade blocked: language-not-carried }
+    siUpgradeReasonGeneric { fallback for an out-of-vocabulary reason }
   );
 
 { Select the active language: True = German (incumbent $gergui), False =
@@ -267,7 +279,29 @@ const
     (EN: 'The report file could not be opened.';
      DE: 'Die Berichtsdatei konnte nicht geöffnet werden.'),
     (EN: 'The resume registration could not be written.';
-     DE: 'Die Wiederaufnahme-Registrierung konnte nicht geschrieben werden.')
+     DE: 'Die Wiederaufnahme-Registrierung konnte nicht geschrieben werden.'),
+    (EN: 'Upgrade check unavailable for this version of Windows';
+     DE: 'Upgrade-Prüfung für diese Windows-Version nicht verfügbar'),
+    (EN: 'Target version not offered for this computer';
+     DE: 'Zielversion wird für diesen Computer nicht angeboten'),
+    (EN: 'This computer is already on or above the target version';
+     DE: 'Dieser Computer ist bereits auf oder über der Zielversion'),
+    (EN: 'Target version is older than the installed version';
+     DE: 'Zielversion ist älter als die installierte Version'),
+    (EN: 'Not available: pre-Win10 OS';
+     DE: 'Nicht verfügbar: Windows vor Windows 10'),
+    (EN: 'Ineligible: %s';
+     DE: 'Nicht berechtigt: %s'),
+    (EN: 'Upgrade media is not part of this medium';
+     DE: 'Upgrade-Medium ist nicht Teil dieses Mediums'),
+    (EN: 'Not available on this architecture';
+     DE: 'Auf dieser Architektur nicht verfügbar'),
+    (EN: 'EKB baseline unknown for this build';
+     DE: 'EKB-Baseline für diesen Build unbekannt'),
+    (EN: 'Language not carried by this target';
+     DE: 'Sprache wird von diesem Ziel nicht angeboten'),
+    (EN: 'Upgrade not available for this computer';
+     DE: 'Upgrade für diesen Computer nicht verfügbar')
   );
 
 var

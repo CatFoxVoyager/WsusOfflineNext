@@ -37,12 +37,16 @@ program testrunner;
     12-field upgrades.txt parser (upg-parse- cases) and the frozen
     UpgResolvePath verdict rules (upg-case- matrix), both over the
     canonical GOLDEN_UPGRADES fixture shared with plan 31-04's bash
-    twin evaluator. }
+    twin evaluator. Plan 36-02 adds the consent-layer pins over the
+    upgradesconsent unit (UcEnumerateConsentTarget enumeration,
+    UcConsentGate matrix, UcReasonToDisplayId map, UcDeriveOsFamily
+    boundary, UcDiskGbText rendering - consent- cases land with the
+    consent battery task). }
 
 uses
   Classes, SysUtils, Windows, IniFiles, Registry, zipper,
   enginecontracts, enginespine, detection, buildsupgrade,
-  upgradespredicates, strings_de_en, resume, selfupdate;
+  upgradespredicates, upgradesconsent, strings_de_en, resume, selfupdate;
 
 var
   GCaseCount: Integer = 0;

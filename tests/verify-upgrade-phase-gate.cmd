@@ -2,7 +2,7 @@
 setlocal
 
 REM =======================================================================
-REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04 and 34-03)
+REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04, 34-03 and 35-02)
 REM File: tests\verify-upgrade-phase-gate.cmd
 REM
 REM Plan 32-04 / DEC-32-10: the full phase gate lives as THIS artifact -
@@ -47,6 +47,27 @@ REM       bypass tokens == 0, all nine documented hex codes present)
 REM   23. the seam-order assert (:SkipBuildUpgrade, then :FullUpgrade, then
 REM       the WUA comment - line numbers strictly ordered)
 REM   24. tests/verify-offline-audit.cmd        (audit regression battery)
+REM   25. tests/verify-fullupgrade-cycle.cmd    (Phase-35 state set: census +
+REM       states S1-S21 + the real-caller stub section + the 30-literal
+REM       parity lock; the twin's own fail-closed exit is the verdict and
+REM       its PASS census must reach 21)
+REM   26. sh/tests/verify-fullupgrade-cycle.bash (Phase-35 bash evaluator
+REM       twin: S1-S21 + the 30-literal source census over the REAL engine
+REM       and the real stub)
+REM   27. tests/verify-recall-stub-cycle.cmd    (the dedicated real-caller
+REM       stub battery, C1-C7 + recorded can-fail; RECALL-STUB-CYCLE-PASS
+REM       required in its output)
+REM   28. ci/tests/test-native-installer-units.sh (compiled TAP battery;
+REM       exit 0 with the resume: upgrade cases green)
+REM   29. the engine marker census (marker filename == 4,
+REM       FullUpgradeClearMarker == 3, POSED == 2, RESTORED == 2, restore
+REM       Info == 2, the :Cleanup-to-:Installed region == 0, the stub guard
+REM       literal == 1 in RecallStub.cmd, attempts == 7 unchanged)
+REM   30. the GUI census (RES_UPGRADE_MARKER == 3 in resume.pas; the
+REM       installer.lpr line-order chain ResDeleteResume <
+REM       ResUpgradeResumeBlocked < the ResumePending branch)
+REM   31. parity equality (PARITY_LIT entries == 30 == census_literals
+REM       entries; each of the six new literals present in BOTH twin files)
 REM
 REM A red link is diagnosable by its GATE number: every link echoes one
 REM numbered line before running and a PASS line after. Bash resolves at
@@ -350,9 +371,187 @@ if errorlevel 1 (
 )
 echo [GATE 24] PASS
 
+REM =======================================================================
+REM Phase 35 extension (plan 35-02): the 24 links above stay byte-identical
+REM to the consigned 34-03 chain - Phase-35 links APPEND as GATE 25..31
+REM (DEC-32-10 consignment discipline: extend, never rewrite). The extended
+REM full-FU twins over the full state set, the dedicated real-caller stub
+REM battery, the compiled TAP battery, the engine marker census, the GUI
+REM ownership/ordering census and the cross-tier parity equality join the
+REM chain (DEC-35-12). The 35 extension rides BESIDE the frozen links - a
+REM gate that reaches green by dropping a legacy link is a failed
+REM verification (threat T-35-07).
+REM =======================================================================
+
+echo [GATE 25] CMD full-FU twin over the full state set (census + S1-S21 + stub section + 30-literal parity lock)...
+call tests\verify-fullupgrade-cycle.cmd > "%TEMP%\wou_gate_t25.log" 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 25 red - the CMD full-FU twin is not green over the full state set
+  type "%TEMP%\wou_gate_t25.log"
+  del "%TEMP%\wou_gate_t25.log" 2>nul
+  goto Fail
+)
+for /f %%N in ('findstr /C:"PASS" "%TEMP%\wou_gate_t25.log" ^| "%FIND_EXE%" /C /V ""') do set "CNT_T25=%%N"
+if not defined CNT_T25 set "CNT_T25=0"
+if %CNT_T25% LSS 21 (
+  echo FAIL: GATE 25 red - PASS census is "%CNT_T25%", expected at least 21
+  del "%TEMP%\wou_gate_t25.log" 2>nul
+  goto Fail
+)
+del "%TEMP%\wou_gate_t25.log" 2>nul
+echo [GATE 25] PASS
+
+echo [GATE 26] bash full-FU twin over the full state set (S1-S21 + 30-literal source census)...
+"%BASH_EXE%" sh/tests/verify-fullupgrade-cycle.bash > "%TEMP%\wou_gate_t26.log" 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 26 red - the bash full-FU twin is not green over the full state set
+  type "%TEMP%\wou_gate_t26.log"
+  del "%TEMP%\wou_gate_t26.log" 2>nul
+  goto Fail
+)
+for /f %%N in ('findstr /C:"PASS" "%TEMP%\wou_gate_t26.log" ^| "%FIND_EXE%" /C /V ""') do set "CNT_T26=%%N"
+if not defined CNT_T26 set "CNT_T26=0"
+if %CNT_T26% LSS 21 (
+  echo FAIL: GATE 26 red - PASS census is "%CNT_T26%", expected at least 21
+  del "%TEMP%\wou_gate_t26.log" 2>nul
+  goto Fail
+)
+del "%TEMP%\wou_gate_t26.log" 2>nul
+echo [GATE 26] PASS
+
+echo [GATE 27] the dedicated real-caller stub battery (C1-C7 + recorded can-fail)...
+call tests\verify-recall-stub-cycle.cmd > "%TEMP%\wou_gate_t27.log" 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 27 red - the real-caller stub battery is not green
+  type "%TEMP%\wou_gate_t27.log"
+  del "%TEMP%\wou_gate_t27.log" 2>nul
+  goto Fail
+)
+findstr /C:"RECALL-STUB-CYCLE-PASS" "%TEMP%\wou_gate_t27.log" >nul 2>&1
+if errorlevel 1 (
+  echo FAIL: GATE 27 red - the stub battery pass sentinel RECALL-STUB-CYCLE-PASS is absent
+  type "%TEMP%\wou_gate_t27.log"
+  del "%TEMP%\wou_gate_t27.log" 2>nul
+  goto Fail
+)
+del "%TEMP%\wou_gate_t27.log" 2>nul
+echo [GATE 27] PASS
+
+echo [GATE 28] compiled TAP battery (lazbuild i386; resume: upgrade cases included)...
+"%BASH_EXE%" ci/tests/test-native-installer-units.sh
+if errorlevel 1 (
+  echo FAIL: GATE 28 red - the compiled TAP battery is not green
+  goto Fail
+)
+echo [GATE 28] PASS
+
+echo [GATE 29] engine marker census (pose/clear/restore literals, :Cleanup zero-ratchet, stub guard, attempts 7)...
+for /f %%N in ('findstr /C:"wou_upgrade_in_progress.txt" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_MARKER=%%N"
+if not "%CNT_MARKER%"=="4" (
+  echo FAIL: GATE 29 red - marker filename census is "%CNT_MARKER%", expected exactly 4
+  goto Fail
+)
+for /f %%N in ('findstr /C:"FullUpgradeClearMarker" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_CLEAR=%%N"
+if not "%CNT_CLEAR%"=="3" (
+  echo FAIL: GATE 29 red - clear subroutine census is "%CNT_CLEAR%", expected exactly 3
+  goto Fail
+)
+for /f %%N in ('findstr /C:"FULLUPGRADE-MARKER-POSED" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_POSED=%%N"
+if not "%CNT_POSED%"=="2" (
+  echo FAIL: GATE 29 red - POSED sentinel census is "%CNT_POSED%", expected exactly 2 - the echo + Log pair
+  goto Fail
+)
+for /f %%N in ('findstr /C:"RECALL-RESTORED" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_RESTORED=%%N"
+if not "%CNT_RESTORED%"=="2" (
+  echo FAIL: GATE 29 red - RECALL-RESTORED census is "%CNT_RESTORED%", expected exactly 2 - the echo + Log pair
+  goto Fail
+)
+for /f %%N in ('findstr /C:"restoring safe state after failed upgrade" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_RESTOREINFO=%%N"
+if not "%CNT_RESTOREINFO%"=="2" (
+  echo FAIL: GATE 29 red - restore Info census is "%CNT_RESTOREINFO%", expected exactly 2 - the echo + Log pair
+  goto Fail
+)
+"%BASH_EXE%" -c "if awk '/^:Cleanup$/,/^:Installed$/' client/cmd/DoUpdate.cmd | grep -qF 'wou_upgrade_in_progress'; then echo marker literal found inside the :Cleanup region; exit 1; fi"
+if errorlevel 1 (
+  echo FAIL: GATE 29 red - the :Cleanup region gained a marker reference - the zero-census ratchet broke, a cleanup-deleted marker re-arms the machinery mid-upgrade
+  goto Fail
+)
+for /f %%N in ('findstr /C:"Upgrade in progress - automatic recall suppressed" "client\cmd\RecallStub.cmd" ^| "%FIND_EXE%" /C /V ""') do set "CNT_STUBGUARD=%%N"
+if not "%CNT_STUBGUARD%"=="1" (
+  echo FAIL: GATE 29 red - stub guard literal census is "%CNT_STUBGUARD%", expected exactly 1 in RecallStub.cmd
+  goto Fail
+)
+for /f %%N in ('findstr /C:"wou_fullupgrade_attempts.txt" "%ENGINE%" ^| "%FIND_EXE%" /C /V ""') do set "CNT_ATTEMPTS=%%N"
+if not "%CNT_ATTEMPTS%"=="7" (
+  echo FAIL: GATE 29 red - the frozen attempts census moved from 7 to "%CNT_ATTEMPTS%" - a disturbed 34 seam
+  goto Fail
+)
+echo [GATE 29] PASS
+
+echo [GATE 30] GUI census - RES_UPGRADE_MARKER ownership + decide-before-delete ordering in the /resume chain...
+for /f %%N in ('findstr /C:"RES_UPGRADE_MARKER" "src-native\installer\resume.pas" ^| "%FIND_EXE%" /C /V ""') do set "CNT_GUIMARKER=%%N"
+if not "%CNT_GUIMARKER%"=="3" (
+  echo FAIL: GATE 30 red - RES_UPGRADE_MARKER census in resume.pas is "%CNT_GUIMARKER%", expected exactly 3
+  goto Fail
+)
+set "LPR_DELETE="
+set "LPR_BLOCKED="
+set "LPR_PENDING="
+for /f "tokens=1 delims=:" %%N in ('findstr /N /C:"ResDeleteResume;" "src-native\installer\installer.lpr"') do set "LPR_DELETE=%%N"
+for /f "tokens=1 delims=:" %%N in ('findstr /N /C:"ResUpgradeResumeBlocked(DetectOsInfo.Build)" "src-native\installer\installer.lpr"') do set "LPR_BLOCKED=%%N"
+for /f "tokens=1 delims=:" %%N in ('findstr /N /C:"if ResumePending then" "src-native\installer\installer.lpr"') do set "LPR_PENDING=%%N"
+if not defined LPR_DELETE (
+  echo FAIL: GATE 30 red - ordering anchor ResDeleteResume; not found in installer.lpr
+  goto Fail
+)
+if not defined LPR_BLOCKED (
+  echo FAIL: GATE 30 red - ordering anchor ResUpgradeResumeBlocked with the DetectOsInfo.Build argument not found in installer.lpr
+  goto Fail
+)
+if not defined LPR_PENDING (
+  echo FAIL: GATE 30 red - ordering anchor "if ResumePending then" not found in installer.lpr
+  goto Fail
+)
+if %LPR_BLOCKED% LEQ %LPR_DELETE% (
+  echo FAIL: GATE 30 red - the stand-down branch line %LPR_BLOCKED% is not strictly after ResDeleteResume line %LPR_DELETE% - decide-before-delete ordering
+  goto Fail
+)
+if %LPR_PENDING% LEQ %LPR_BLOCKED% (
+  echo FAIL: GATE 30 red - the ResumePending branch line %LPR_PENDING% is not strictly after the stand-down branch line %LPR_BLOCKED% - converged falls through
+  goto Fail
+)
+echo [GATE 30] PASS
+
+echo [GATE 31] parity equality - 30 PARITY_LIT entries == 30 census entries, six new literals in BOTH twins...
+for /f %%N in ('findstr /R /C:"^set .PARITY_LIT_[0-9]*=" "tests\verify-fullupgrade-cycle.cmd" ^| "%FIND_EXE%" /C /V ""') do set "CNT_PLIT=%%N"
+if not "%CNT_PLIT%"=="30" (
+  echo FAIL: GATE 31 red - the CMD twin's PARITY_LIT list is "%CNT_PLIT%" entries, expected exactly 30
+  goto Fail
+)
+"%BASH_EXE%" -c "sed -n '/^census_literals=(/,/^)/p' sh/tests/verify-fullupgrade-cycle.bash | grep -c '^    '" > "%TEMP%\wou_gate_t31.log" 2>nul
+set /p CNT_CLIT=<"%TEMP%\wou_gate_t31.log"
+del "%TEMP%\wou_gate_t31.log" 2>nul
+if not "%CNT_CLIT%"=="30" (
+  echo FAIL: GATE 31 red - the bash twin's census_literals list is "%CNT_CLIT%" entries, expected exactly 30
+  goto Fail
+)
+for %%L in ("wou_upgrade_in_progress.txt" "FullUpgradeClearMarker" "FULLUPGRADE-MARKER-POSED" "RECALL-RESTORED" "restoring safe state after failed upgrade" "Upgrade in progress - automatic recall suppressed") do (
+  findstr /C:%%L "tests\verify-fullupgrade-cycle.cmd" >nul 2>&1
+  if errorlevel 1 (
+    echo FAIL: GATE 31 red - parity literal missing from the CMD twin: %%~L
+    goto Fail
+  )
+  findstr /C:%%L "sh\tests\verify-fullupgrade-cycle.bash" >nul 2>&1
+  if errorlevel 1 (
+    echo FAIL: GATE 31 red - parity literal missing from the bash twin: %%~L
+    goto Fail
+  )
+)
+echo [GATE 31] PASS
+
 echo.
 echo =======================================================================
-echo UPGRADE-PHASE-GATE-PASS: all 24 links green in one run.
+echo UPGRADE-PHASE-GATE-PASS: all 31 links green in one run.
 echo =======================================================================
 popd
 exit /b 0

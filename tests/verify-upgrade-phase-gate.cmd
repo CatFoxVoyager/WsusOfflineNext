@@ -2,7 +2,7 @@
 setlocal
 
 REM =======================================================================
-REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04, 34-03 and 35-02)
+REM WSUS Offline Update - Upgrade Phase Gate (consigned; extended by 33-04, 34-03, 35-02 and 36-05)
 REM File: tests\verify-upgrade-phase-gate.cmd
 REM
 REM Plan 32-04 / DEC-32-10: the full phase gate lives as THIS artifact -
@@ -79,6 +79,15 @@ REM MSYS2_ARG_CONV_EXCL='*' is inherited from the caller, the bash-side
 REM children that invoke Windows binaries with POSIX paths (the bash
 REM batteries' hashdeep calls) receive unconverted paths and fail - the
 REM gate was consigned green WITHOUT the exclusion (33-04 consigned run).
+REM
+REM MIXED-CASE OBSERVABLE (pinned by 36-05 - UI-SPEC unresolved row,
+REM DEC-36-07 adjacent): the os-upgrades selection grammar is a flat key
+REM list; the acquisition takes the FIRST selected key whose upgrades.txt
+REM row carries fu_media=1 AND whose arch matches the invocation's scope
+REM arch; every EKB key flows to the EKB lane. One full-FU target per
+REM medium - the one-per-medium rule is full-FU only, and no UI copy
+REM claims one-target-per-medium for EKB. Comment-only pin - zero engine
+REM edits.
 REM =======================================================================
 
 REM The pushd is HELD for the whole run: every link runs from the repo
@@ -549,9 +558,91 @@ for %%L in ("wou_upgrade_in_progress.txt" "FullUpgradeClearMarker" "FULLUPGRADE-
 )
 echo [GATE 31] PASS
 
+REM =======================================================================
+REM Phase 36 extension (plan 36-05): the 31 links above stay byte-identical
+REM to the consigned 35-02 chain - Phase-36 links APPEND as GATE 32..36
+REM (DEC-32-10 consignment discipline: extend, never rewrite). The six-test
+REM GUI contracts battery carrying the Phase-36 picker pins, the installer
+REM strings gate, the consent TAP floors over all eight floors, the SC4
+REM source pins over the generator host and its frontend, and the
+REM engines-untouched bash parse floor join the chain. The red run that
+REM preceded this consignment bit through the WSON_GENERATOR_HOST_CS
+REM scratch-copy override: in the full chain the frozen GATE 12 twin
+REM byte-shares the six-test battery and fail-closed first - a GATE 32
+REM named red is structurally unreachable in one sequential chain - and a
+REM scoped scratch copy of this gate carrying GATE 32..36 alone recorded
+REM the GATE 32 red by name (the 34-03 wrong-location-copy protocol, the
+REM copy never committed). The consigned green run covers all 36
+REM executable links.
+REM =======================================================================
+
+echo [GATE 32] GUI contracts six-test battery (picker pins included)...
+python tests\verify-gui-contracts.py
+if errorlevel 1 (
+  echo FAIL: GATE 32 red - the GUI contracts battery is not green
+  goto Fail
+)
+echo [GATE 32] PASS
+
+echo [GATE 33] installer strings gate - DE/EN bilingual parity...
+python ci\tests\test-native-installer-strings.py
+if errorlevel 1 (
+  echo FAIL: GATE 33 red - the installer strings gate is not green
+  goto Fail
+)
+echo [GATE 33] PASS
+
+echo [GATE 34] consent TAP floors - compiled units battery, all eight floors...
+"%BASH_EXE%" ci/tests/test-native-installer-units.sh
+if errorlevel 1 (
+  echo FAIL: GATE 34 red - the consent TAP floors are not green
+  goto Fail
+)
+echo [GATE 34] PASS
+
+echo [GATE 35] SC4 source pins - spread conditional, payload fragment, token prefix, env carriage...
+"%BASH_EXE%" -c "grep -cF 'upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget' src-modern/generator/src/App.tsx" > "%TEMP%\wou_gate_t35a.log" 2>nul
+set /p CNT_T35A=<"%TEMP%\wou_gate_t35a.log"
+del "%TEMP%\wou_gate_t35a.log" 2>nul
+if not "%CNT_T35A%"=="1" (
+  echo FAIL: GATE 35 red - the payload rule spread-conditional census is "%CNT_T35A%", expected exactly 1 in App.tsx
+  goto Fail
+)
+"%BASH_EXE%" -c "grep -cF 'upgrade: upgradeFullTarget' src-modern/generator/src/App.tsx" > "%TEMP%\wou_gate_t35b.log" 2>nul
+set /p CNT_T35B=<"%TEMP%\wou_gate_t35b.log"
+del "%TEMP%\wou_gate_t35b.log" 2>nul
+if not "%CNT_T35B%"=="1" (
+  echo FAIL: GATE 35 red - the upgrade payload property census is "%CNT_T35B%", expected exactly 1 in App.tsx
+  goto Fail
+)
+"%BASH_EXE%" -c "grep -cF '/includeupgrade:' src-modern/generator/host/Program.cs" > "%TEMP%\wou_gate_t35c.log" 2>nul
+set /p CNT_T35C=<"%TEMP%\wou_gate_t35c.log"
+del "%TEMP%\wou_gate_t35c.log" 2>nul
+if not defined CNT_T35C set "CNT_T35C=0"
+if %CNT_T35C% LSS 1 (
+  echo FAIL: GATE 35 red - the /includeupgrade: token composition census is "%CNT_T35C%", expected at least 1 in Program.cs
+  goto Fail
+)
+"%BASH_EXE%" -c "grep -F 'psi.EnvironmentVariables' src-modern/generator/host/Program.cs | grep -cF 'WOU_UPGRADE_LANG'" > "%TEMP%\wou_gate_t35d.log" 2>nul
+set /p CNT_T35D=<"%TEMP%\wou_gate_t35d.log"
+del "%TEMP%\wou_gate_t35d.log" 2>nul
+if not "%CNT_T35D%"=="1" (
+  echo FAIL: GATE 35 red - the WOU_UPGRADE_LANG env carriage census is "%CNT_T35D%", expected exactly 1 in Program.cs
+  goto Fail
+)
+echo [GATE 35] PASS
+
+echo [GATE 36] engines-untouched parse floor - bash -n over the consumed bash engines...
+"%BASH_EXE%" -n sh/download-updates.bash sh/update-generator.bash sh/libraries/upgrade-payloads.bash
+if errorlevel 1 (
+  echo FAIL: GATE 36 red - bash -n syntax check failed on a consumed bash engine file
+  goto Fail
+)
+echo [GATE 36] PASS
+
 echo.
 echo =======================================================================
-echo UPGRADE-PHASE-GATE-PASS: all 31 links green in one run.
+echo UPGRADE-PHASE-GATE-PASS: all 36 links green in one run.
 echo =======================================================================
 popd
 exit /b 0

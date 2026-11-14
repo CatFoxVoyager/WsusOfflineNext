@@ -19,6 +19,10 @@
       registry write
     - Start: the pure frozen argv emission, the engine spine run, and the
       bilingual summary line
+    - the OS Upgrade consent sheet (plan 36-04, GUI-01): dynamic tab over
+      the pure upgradesconsent layer (named target, five facts, opt-in
+      toggle, five-fact modal at Start) - the consent travels by argv
+      only (/upgradeos:<build>), never through INI read or write
 
     argv emission goes ONLY through the enginecontracts switch table keyed
     by checkbox state - never raw INI text (threat T-26-01). }
@@ -33,7 +37,7 @@ uses
   Classes, SysUtils, Windows, Messages, IniFiles,
   Forms, Controls, Graphics, Dialogs, StdCtrls, ComCtrls, Process, ShellApi,
   enginecontracts, strings_de_en, enginespine, detection, buildsupgrade,
-  resume, selfupdate;
+  upgradespredicates, upgradesconsent, resume, selfupdate;
 
 type
 
@@ -122,6 +126,29 @@ type
     sbMsi: TScrollBox;
     FMsiChecks: array of TCheckBox;
     FMsiNames: TStringList;
+    { OS Upgrade consent sheet (plan 36-04, GUI-01) - a dynamic tab over
+      the pure upgradesconsent layer (DEC-36-02/04/05). The named
+      target's build digits (FUpgradeTargetBuild) are the ONLY argv
+      source - verdict-sourced, never INI text (threat T-36-09); the
+      consent itself is session-local: FUpgradeOsConsented lives from
+      the five-fact modal to the argv build and is never persisted
+      (upgradeos is the second never-written INI key). }
+    tsUpgrade: TTabSheet;
+    lblUpgradeTarget: TLabel;
+    lblUpgradePath: TLabel;
+    lblUpgradeDisk: TLabel;
+    lblUpgradeDuration: TLabel;
+    lblUpgradeReboots: TLabel;
+    lblUpgradeReason: TLabel;
+    chkUpgradeOs: TCheckBox;
+    FUpgradeRows: TUpgradeRows;
+    FUpgradeTargetBuild: string;   { verdict-sourced digits -> /upgradeos:<digits> }
+    FUpgradeTargetDisplay: string; { manifest updateName or the bare digits }
+    FUpgradePathValue: string;     { modal fact: path value text }
+    FUpgradeDiskGb: string;        { modal fact: n.n / n,n per the active language }
+    FUpgradeDurationBand: string;  { modal fact: duration band text }
+    FUpgradeRebootsValue: string;  { modal fact: reboots value text }
+    FUpgradeOsConsented: Boolean;  { the five-fact modal said Yes - session-local only }
     { MyIniRead parity (au3:220-229) - client INI default, %TEMP% copy
       overrides per key. }
     function IniState(const ASection, AKey, ADefault: string): string;
@@ -137,6 +164,9 @@ type
       AWarning: Boolean);
     procedure ListMsiPackages;
     procedure BuildSoftwareTab;
+    procedure BuildUpgradeConsentTab;
+    function UpgradeConsentModalBody: string;
+    function FindUpgradeManifest(const ATargetBuild, AArch: string): string;
     procedure MsiAllClick(Sender: TObject);
     procedure MsiCheckClick(Sender: TObject);
     procedure IniCopyAll;
@@ -277,6 +307,11 @@ begin
 
   { Full option surface (au3:640-981). }
   ApplyToggleGating;
+
+  { OS Upgrade consent sheet (plan 36-04, GUI-01): built at construction,
+    beside ApplyToggleGating - the enumeration + gate answer ONCE here
+    (DEC-36-02), the five-fact modal re-checks the toggle at Start. }
+  BuildUpgradeConsentTab;
 
   { Informational dialogs (au3:1058-1096) - after the toggles, like the
     incumbent's pre-loop sequence. }
@@ -743,6 +778,309 @@ begin
   end;
 end;
 
+{ A fact LINE renders as 'Label: value' in both languages; the modal
+  body (siUpgradeConsentBody) names the label itself, so only the value
+  text travels into its placeholders. Both fact lines carry exactly one
+  ': ' separator. }
+function UpgradeFactValue(const ALine: string): string;
+var
+  P: Integer;
+begin
+  Result := ALine;
+  P := Pos(': ', ALine);
+  if P > 0 then
+    Result := Copy(ALine, P + 2, MaxInt);
+end;
+
+{ Meta-row reader over the staged upgrade manifest (DEC-33-07: consume
+  the total, never re-sum). Key|value rows answer updateName and
+  total_mib; payload rows share the pipe shape but never match the two
+  keys. Unreadable manifest = absent, fail-closed (threat T-31-08
+  mold). }
+procedure ReadUpgradeManifest(const AManifestPath: string;
+  out AUpdateName: string; out ATotalMib: Integer);
+var
+  Sl: TStringList;
+  I, P: Integer;
+  Key, Value: string;
+begin
+  AUpdateName := '';
+  ATotalMib := 0;
+  if not FileExists(AManifestPath) then
+    Exit;
+  Sl := TStringList.Create;
+  try
+    try
+      Sl.LoadFromFile(AManifestPath);
+    except
+      Exit;
+    end;
+    for I := 0 to Sl.Count - 1 do
+    begin
+      P := Pos('|', Sl.Strings[I]);
+      if P <= 0 then
+        Continue;
+      Key := Trim(Copy(Sl.Strings[I], 1, P - 1));
+      Value := Trim(Copy(Sl.Strings[I], P + 1, MaxInt));
+      if SameText(Key, 'updateName') then
+        AUpdateName := Value
+      else if SameText(Key, 'total_mib') then
+        ATotalMib := StrToIntDef(Value, 0);
+    end;
+  finally
+    Sl.Free;
+  end;
+end;
+
+procedure TMainForm.BuildUpgradeConsentTab;
+var
+  CurrPath: TUpgradePath;
+  Gate: TGateState;
+  Revision, Sep, EkbKb, ManifestPath, UpdateName, ReasonToken: string;
+  TotalMib: Integer;
+  I: Integer;
+  Offerable, HaveFacts: Boolean;
+begin
+  { GUI-01 consent sheet (plan 36-04, DEC-36-02/04/05): the tab is
+    always present; the five facts + toggle render only for an
+    upgEKB/upgFullFU verdict whose named target's staged manifest is
+    present, and a blocked verdict renders the mapped reason with the
+    toggle disabled+unchecked (the ineligible override idiom). Every
+    DECISION comes from the pure upgradesconsent layer - this method
+    only renders (research Pitfall 10). }
+  FUpgradeOsConsented := False;
+  FUpgradeTargetBuild := '';
+  FUpgradeTargetDisplay := '';
+  FUpgradePathValue := '';
+  FUpgradeDiskGb := '';
+  FUpgradeDurationBand := '';
+  FUpgradeRebootsValue := '';
+
+  { Tab shell - the tsSoftware dynamic precedent. }
+  tsUpgrade := TTabSheet.Create(Self);
+  tsUpgrade.Caption := StringsGet(siUpgradeTabCaption);
+  tsUpgrade.PageControl := pcTabs;
+
+  lblUpgradeTarget := TLabel.Create(tsUpgrade);
+  lblUpgradeTarget.Parent := tsUpgrade;
+  lblUpgradeTarget.Left := 8;
+  lblUpgradeTarget.Top := 8;
+  lblUpgradeTarget.Width := 528;
+  lblUpgradeTarget.AutoSize := False;
+  lblUpgradeTarget.Height := 30;
+  lblUpgradeTarget.WordWrap := True;
+
+  lblUpgradePath := TLabel.Create(tsUpgrade);
+  lblUpgradePath.Parent := tsUpgrade;
+  lblUpgradePath.Left := 8;
+  lblUpgradePath.Top := 44;
+  lblUpgradePath.Width := 528;
+
+  lblUpgradeDisk := TLabel.Create(tsUpgrade);
+  lblUpgradeDisk.Parent := tsUpgrade;
+  lblUpgradeDisk.Left := 8;
+  lblUpgradeDisk.Top := 64;
+  lblUpgradeDisk.Width := 528;
+
+  lblUpgradeDuration := TLabel.Create(tsUpgrade);
+  lblUpgradeDuration.Parent := tsUpgrade;
+  lblUpgradeDuration.Left := 8;
+  lblUpgradeDuration.Top := 84;
+  lblUpgradeDuration.Width := 528;
+
+  lblUpgradeReboots := TLabel.Create(tsUpgrade);
+  lblUpgradeReboots.Parent := tsUpgrade;
+  lblUpgradeReboots.Left := 8;
+  lblUpgradeReboots.Top := 104;
+  lblUpgradeReboots.Width := 528;
+  lblUpgradeReboots.AutoSize := False;
+  lblUpgradeReboots.Height := 30;
+  lblUpgradeReboots.WordWrap := True;
+
+  lblUpgradeReason := TLabel.Create(tsUpgrade);
+  lblUpgradeReason.Parent := tsUpgrade;
+  lblUpgradeReason.Left := 8;
+  lblUpgradeReason.Top := 8;
+  lblUpgradeReason.Width := 528;
+  lblUpgradeReason.AutoSize := False;
+  lblUpgradeReason.Height := 30;
+  lblUpgradeReason.WordWrap := True;
+  lblUpgradeReason.Visible := False;
+
+  chkUpgradeOs := TCheckBox.Create(tsUpgrade);
+  chkUpgradeOs.Parent := tsUpgrade;
+  chkUpgradeOs.Left := 8;
+  chkUpgradeOs.Top := 140;
+  chkUpgradeOs.Width := 528;
+  chkUpgradeOs.Height := 30;
+  { The opt-in default and ONLY resting state is unchecked (DEC-36-02:
+    consent is a user act, never a computed state - UcConsentGate
+    returns Checked=False for every input). }
+  chkUpgradeOs.Checked := False;
+
+  { The construction-time enumeration: the frozen layer answers ONE
+    verdict and names the target (DEC-36-02); the matrix lang slot
+    'glb' is passed inside the pure layer (DEC-33-01). Fail-closed
+    caller inputs per DEC-36-04: the revision probe answers '' on any
+    failure, which BLOCKS consent - it can never grant it. }
+  if FScriptDir <> '' then
+    FUpgradeRows := UpgParseUpgradesFile(
+      IncludeTrailingPathDelimiter(FScriptDir) + UP_FILE_REL, nil);
+  Revision := UcProbeCurrentRevision;
+  CurrPath := UcEnumerateConsentTarget(FUpgradeRows, IntToStr(FOs.Build),
+    Revision, FOsArch, FUpgradeTargetBuild);
+  Gate := UcConsentGate(CurrPath.Verdict);
+
+  Offerable := CurrPath.Verdict in [upgEKB, upgFullFU];
+  HaveFacts := False;
+  UpdateName := '';
+  TotalMib := 0;
+  if Offerable then
+  begin
+    ManifestPath := FindUpgradeManifest(FUpgradeTargetBuild, FOsArch);
+    ReadUpgradeManifest(ManifestPath, UpdateName, TotalMib);
+    { Fail-closed (DEC-36-05 amendment): a named target without its
+      readable staged manifest renders the no-media blocked state - the
+      sheet never invents a disk figure, and the wrong-input direction
+      can only BLOCK consent, never grant it (threat T-36-05). }
+    if (ManifestPath <> '') and (TotalMib > 0) then
+      HaveFacts := True;
+  end;
+
+  if Offerable and HaveFacts then
+  begin
+    { The five facts over the sheet string ids - never inline copy. }
+    if UpdateName <> '' then
+      FUpgradeTargetDisplay := UpdateName
+    else
+      FUpgradeTargetDisplay := FUpgradeTargetBuild;
+    lblUpgradeTarget.Caption :=
+      Format(StringsGet(siUpgradeTargetLine), [FUpgradeTargetDisplay]);
+
+    { The named row's EKB KB for the EKB path line - a display lookup
+      over the already-parsed roster, never a second verdict call. }
+    EkbKb := '';
+    for I := 0 to High(FUpgradeRows) do
+      if (FUpgradeRows[I].TargetBuild = FUpgradeTargetBuild)
+         and (FUpgradeRows[I].Arch = FOsArch) then
+      begin
+        EkbKb := FUpgradeRows[I].EkbKb;
+        Break;
+      end;
+    if CurrPath.Verdict = upgFullFU then
+    begin
+      lblUpgradePath.Caption := StringsGet(siUpgradePathFull);
+      FUpgradeDurationBand := StringsGet(siUpgradeDurationFullBand);
+      lblUpgradeReboots.Caption := StringsGet(siUpgradeRebootsFull);
+    end
+    else
+    begin
+      lblUpgradePath.Caption := Format(StringsGet(siUpgradePathEkb), [EkbKb]);
+      FUpgradeDurationBand := StringsGet(siUpgradeDurationEkbBand);
+      lblUpgradeReboots.Caption := StringsGet(siUpgradeRebootsEkb);
+    end;
+
+    { The decimal separator keys off the ACTIVE sheet language, never
+      the OS locale (UcDiskGbText contract). }
+    if StringsGermanActive then
+      Sep := ','
+    else
+      Sep := '.';
+    FUpgradeDiskGb := UcDiskGbText(TotalMib, Sep);
+    lblUpgradeDisk.Caption :=
+      Format(StringsGet(siUpgradeDiskLine), [FUpgradeDiskGb]);
+    lblUpgradeDuration.Caption :=
+      Format(StringsGet(siUpgradeDurationLine), [FUpgradeDurationBand]);
+
+    { Modal fact values = the fact lines minus their label prefixes. }
+    FUpgradePathValue := UpgradeFactValue(lblUpgradePath.Caption);
+    FUpgradeRebootsValue := UpgradeFactValue(lblUpgradeReboots.Caption);
+
+    chkUpgradeOs.Caption :=
+      Format(StringsGet(siUpgradeConsentCaption), [FUpgradeTargetDisplay]);
+    chkUpgradeOs.Enabled := Gate.Enabled;
+    chkUpgradeOs.Checked := Gate.Checked;
+    lblUpgradeReason.Visible := False;
+  end
+  else
+  begin
+    { Blocked rendering: the mapped reason line (UcReasonToDisplayId +
+      StringsGet - never a raw token), facts hidden, toggle
+      disabled+unchecked. A qualifying verdict whose manifest is
+      absent answers no-media (fail-closed above). }
+    if Offerable then
+      ReasonToken := 'no-media'
+    else
+      ReasonToken := CurrPath.Reason;
+    lblUpgradeReason.Caption := StringsGet(UcReasonToDisplayId(ReasonToken));
+    lblUpgradeReason.Visible := True;
+    lblUpgradeTarget.Visible := False;
+    lblUpgradePath.Visible := False;
+    lblUpgradeDisk.Visible := False;
+    lblUpgradeDuration.Visible := False;
+    lblUpgradeReboots.Visible := False;
+    chkUpgradeOs.Enabled := False;
+    chkUpgradeOs.Checked := False;
+    if FUpgradeTargetBuild <> '' then
+    begin
+      if UpdateName <> '' then
+        FUpgradeTargetDisplay := UpdateName
+      else
+        FUpgradeTargetDisplay := FUpgradeTargetBuild;
+      chkUpgradeOs.Caption :=
+        Format(StringsGet(siUpgradeConsentCaption), [FUpgradeTargetDisplay]);
+      chkUpgradeOs.Visible := True;
+    end
+    else
+      chkUpgradeOs.Visible := False;
+  end;
+end;
+
+function TMainForm.UpgradeConsentModalBody: string;
+begin
+  { The five facts + the replacement consequence (UI-SPEC Surface B
+    confirmation row), composed from the construction-time enumeration
+    only - no INI text, no re-enumeration at Start (threat T-36-09). }
+  Result := Format(StringsGet(siUpgradeConsentBody),
+    [FUpgradeTargetDisplay, FUpgradePathValue, FUpgradeDiskGb,
+     FUpgradeDurationBand, FUpgradeRebootsValue]);
+end;
+
+function TMainForm.FindUpgradeManifest(const ATargetBuild,
+  AArch: string): string;
+var
+  SR: TSearchRec;
+  Rc: Integer;
+  Base, LangDir: string;
+begin
+  { First staged manifest for the named target under client\upgrade\
+    <build>-<arch>\<lang>\manifest.txt - the language directory is
+    whatever the generator staged (DEC-33-01: the media language is
+    not a roster filter). '' = absent (fail-closed). }
+  Result := '';
+  if (FScriptDir = '') or (ATargetBuild = '') or (AArch = '') then
+    Exit;
+  Base := IncludeTrailingPathDelimiter(FScriptDir) + 'upgrade'
+    + '\' + ATargetBuild + '-' + AArch;
+  Rc := FindFirst(Base + '\' + '*', faDirectory, SR);
+  try
+    while Rc = 0 do
+    begin
+      if (SR.Attr and faDirectory) <> 0 then
+      begin
+        LangDir := Base + '\' + SR.Name;
+        if FileExists(LangDir + '\' + 'manifest.txt') then
+          Exit(LangDir + '\' + 'manifest.txt');
+      end;
+      Rc := FindNext(SR);
+    end;
+  finally
+    { SysUtils-qualified: the Windows unit's FindClose(THandle) overload
+      must not win the resolution over the TSearchRec variant. }
+    SysUtils.FindClose(SR);
+  end;
+end;
+
 procedure TMainForm.MsiAllClick(Sender: TObject);
 var
   I: Integer;
@@ -864,6 +1202,14 @@ begin
     ENG_INI_ENABLED);
   AToggles.MonitorOn := SameText(DefIniState(ENG_INI_SECTION_MISCELLANEOUS,
     'monitoron', ENG_INI_DISABLED), ENG_INI_ENABLED);
+  { The consented OS-upgrade target (plan 36-04): digits from the
+    construction-time enumeration ONLY (T-36-09 - never INI text),
+    carried only when the toggle is enabled AND checked AND the
+    five-fact modal said Yes. Otherwise the field stays empty (FillChar
+    above) and no token is emitted - the unconsented argv is
+    byte-identical (SC4). }
+  if chkUpgradeOs.Enabled and chkUpgradeOs.Checked and FUpgradeOsConsented then
+    AToggles.UpgradeOsBuild := FUpgradeTargetBuild;
 end;
 
 procedure TMainForm.btnExitClick(Sender: TObject);
@@ -1064,6 +1410,27 @@ begin
       ENG_REG_VAL_WUSTATUSSERVER, '');
     if StatusServer <> '' then
       DetectWriteWUStatusServer(StatusServer);
+
+    { Five-fact consent modal (plan 36-04, threat T-36-08): shown only
+      when the opt-in toggle is enabled AND checked; default button No,
+      and a No reverts the checkbox and aborts ONLY the upgrade leg -
+      the normal update run continues either way. The flag is
+      session-local: cleared at the start of every Start invocation and
+      never persisted (upgradeos is the second never-written INI key).
+      The /resume startup path can never see a checked toggle (nothing
+      restores one), so a headless resume never blocks on this modal. }
+    FUpgradeOsConsented := False;
+    if chkUpgradeOs.Enabled and chkUpgradeOs.Checked then
+    begin
+      if Application.MessageBox(
+          PChar(UpgradeConsentModalBody),
+          PChar(StringsGet(siUpgradeConsentTitle)),
+          MB_TASKMODAL or MB_DEFBUTTON2 or MB_ICONEXCLAMATION
+            or MB_YESNO) = IDYES then
+        FUpgradeOsConsented := True
+      else
+        chkUpgradeOs.Checked := False;
+    end;
 
     { /autoreboot emit decision (au3:1264-1269): emitting it REPLACES the
       INI copy (the engine's recall path re-reads the client INI). }

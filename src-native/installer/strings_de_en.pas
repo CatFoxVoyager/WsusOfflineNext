@@ -141,6 +141,13 @@ function StringsGet(Id: TStringId): string;
   default UI language has primary language id $07. }
 function StringsPrimaryLangIsGerman: Boolean;
 
+{ True when the ACTIVE string language is German (what StringsSetLanguage
+  set). Display-side helpers key off the ACTIVE language, never the OS
+  locale - e.g. the consent sheet's decimal separator (UcDiskGbText
+  contract: the separator is a parameter so neither language's locale
+  can leak into the sheet). }
+function StringsGermanActive: Boolean;
+
 { Pure language selection (au3:157-167 verbatim): the 'enu'/'deu' argv
   token wins, otherwise the UI primary language decides. Returns True =
   German. Unit-testable. }
@@ -375,6 +382,11 @@ function StringsPrimaryLangIsGerman: Boolean;
 begin
   { PRIMARYLANGID(langid) = langid and $3FF; $07 = German. }
   Result := (GetUserDefaultUILanguage and $3FF) = $07;
+end;
+
+function StringsGermanActive: Boolean;
+begin
+  Result := GGerman;
 end;
 
 end.

@@ -290,14 +290,23 @@ export default function App() {
     setUpgradeFullTarget(prev => (prev === key ? null : key));
   };
 
-  // Status/reason display label for a roster row - fixed wording, never a
-  // raw status or reason token (the map is finalized by the copy pass).
+  // Status/reason display label for a roster row - a fixed table per the
+  // UI-SPEC Copywriting Contract (Surface A): raw status or reason tokens
+  // never surface as UI copy. `ineligible` composes the row's own
+  // blocked_reason (live row: new-devices-only); unknown tokens fall to
+  // generic availability copy, never interpolation.
   const upgradeStatusLabel = (row: UpgradeRowState): string => {
     if (row.status === 'eol') return 'EOL';
     if (row.status === 'ineligible') {
       return row.reason ? `Ineligible: ${row.reason}` : 'Ineligible';
     }
-    return 'Not available';
+    const reasonLabels: Record<string, string> = {
+      'legacy-os': 'Not available: pre-Win10 OS',
+      'arch-unsupported': 'Not available on this architecture',
+      'baseline-unknown': 'EKB baseline unknown for this build',
+      'language-not-carried': 'Language not carried by this target'
+    };
+    return reasonLabels[row.reason] ?? reasonLabels[row.status] ?? 'Not available';
   };
 
   const handleStart = () => {
@@ -942,15 +951,15 @@ export default function App() {
           <div className="space-y-6 max-w-5xl mx-auto">
             {/* Panel header */}
             <div className="pb-3 border-b border-dark-800">
-              <h2 className="text-sm font-semibold text-zinc-100">Upgrade targets</h2>
-              <p className="text-xs text-zinc-400">Opt-in per run; nothing is downloaded until you start the run.</p>
+              <h2 className="text-sm font-semibold text-zinc-100">OS upgrade targets</h2>
+              <p className="text-xs text-zinc-400">Pick the Windows version this medium will carry for offline upgrades. Nothing is downloaded until you start the run, and nothing upgrades on a client machine without its own explicit consent.</p>
             </div>
 
             {/* Empty state: also the default state - the locked default is NO selection */}
             {upgradeSelection.length === 0 && upgradeFullTarget === null && (
               <div className="p-4 rounded-lg bg-dark-900 border border-dark-800">
-                <h3 className="text-sm font-semibold text-zinc-100">Nothing selected</h3>
-                <p className="text-xs text-zinc-400 mt-1">Choose a target below to add an offline upgrade path.</p>
+                <h3 className="text-sm font-semibold text-zinc-100">No upgrade selected</h3>
+                <p className="text-xs text-zinc-400 mt-1">This medium will carry servicing updates only. Choose a target below to add an offline upgrade path.</p>
               </div>
             )}
 
@@ -969,12 +978,14 @@ export default function App() {
               </select>
             </div>
 
+            {/* Selection groups at the declared xl spacing (EKB -> full-FU) */}
+            <div className="space-y-8">
             {/* Servicing hop group: zero-or-more EKB targets (checkbox rows) */}
             {upgradeEkbRows.length > 0 && (
               <div className="space-y-2">
                 <div className="pb-1 border-b border-dark-800">
-                  <h3 className="text-sm font-semibold text-zinc-100">Servicing hop</h3>
-                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">In-branch enablement package applied by the client installer.</p>
+                  <h3 className="text-sm font-semibold text-zinc-100">Servicing hop (EKB)</h3>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">In-branch enablement package. Downloads like an update and is applied by the client installer. One reboot expected.</p>
                 </div>
                 <div className="grid grid-cols-1 gap-2">
                   {upgradeEkbRows.map((row) => {
@@ -1023,8 +1034,8 @@ export default function App() {
             {upgradeFuRows.length > 0 && (
               <div className="space-y-2">
                 <div className="pb-1 border-b border-dark-800">
-                  <h3 className="text-sm font-semibold text-zinc-100">Full update</h3>
-                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">Staged Windows setup media applied by setup.exe on the client.</p>
+                  <h3 className="text-sm font-semibold text-zinc-100">OS migration (full update)</h3>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">Staged Windows setup media. Applied by setup.exe on the client; multiple reboots; one migration target per medium.</p>
                 </div>
                 <div className="grid grid-cols-1 gap-2">
                   {upgradeFuRows.map((row) => {
@@ -1110,6 +1121,7 @@ export default function App() {
                 </div>
               </div>
             )}
+            </div>
           </div>
         )}
 

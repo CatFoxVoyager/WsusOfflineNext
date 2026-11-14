@@ -190,6 +190,12 @@ export default function App() {
   const [upgradeLang, setUpgradeLang] = useState('en-us');
   const [upgradeSelection, setUpgradeSelection] = useState<string[]>([]);
   const [upgradeFullTarget, setUpgradeFullTarget] = useState<string | null>(null);
+  // Touched flag: set by EVERY picker interaction (checkbox toggle, radio
+  // pick, radio clear, language change) and never reset by render effects -
+  // it is the payload rule's other half (an untouched empty picker omits
+  // the upgrade property so the host legacy-save branch preserves the
+  // hand-seeded selection, the 26a0073 regression class).
+  const [upgradeTouched, setUpgradeTouched] = useState(false);
 
   // Native message sender
   const sendNative = (action: string, payload: any = {}) => {
@@ -283,11 +289,24 @@ export default function App() {
   const upgradeUnavailableRows = upgradeRows.filter(r => !r.ekbPresent && r.fuMedia !== '1' && r.status !== 'active');
 
   const toggleUpgradeEkb = (key: string) => {
+    setUpgradeTouched(true);
     setUpgradeSelection(prev => (prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]));
   };
 
   const pickUpgradeFull = (key: string) => {
+    setUpgradeTouched(true);
     setUpgradeFullTarget(prev => (prev === key ? null : key));
+  };
+
+  // Loose TS mirror of the host's IsUpgradeKeyShape grammar (Program.cs:
+  // one underscore, digits before it, alphanumeric arch token after it) -
+  // defense in depth ONLY: keys shown and sent come from the roster by
+  // construction, so this never rejects anything; the host's void-all
+  // grammar stays the trust boundary.
+  const upgradeKeyShapeOk = (key: string): boolean => {
+    const us = key.indexOf('_');
+    if (us <= 0 || us !== key.lastIndexOf('_') || us === key.length - 1) return false;
+    return /^\d+$/.test(key.slice(0, us)) && /^[A-Za-z0-9]+$/.test(key.slice(us + 1));
   };
 
   // Status/reason display label for a roster row - a fixed table per the
@@ -314,12 +333,26 @@ export default function App() {
     setIsTerminalOpen(true);
     setLogs(prev => [...prev, parseLogLine(`[START] Starting the download pipeline (${totalSelectedCount} product(s) selected)...`)]);
 
+    // Diagnostics only (never rejects): warn if a malformed key somehow
+    // reached composition; the host voids the whole selection anyway.
+    for (const key of [...upgradeSelection, ...(upgradeFullTarget !== null ? [upgradeFullTarget] : [])]) {
+      if (!upgradeKeyShapeOk(key)) console.warn(`[OS Upgrades] malformed key reached the payload: ${key}`);
+    }
+
     sendNative('start', {
       win11: win11Builds.reduce((acc, b) => ({ ...acc, [b.key]: b.enabled }), {}),
       win10: win10Builds.reduce((acc, b) => ({ ...acc, [b.key]: b.enabled }), {}),
       office: officeBuilds,
       legacy: legacyBuilds,
-      options
+      options,
+      // Legacy-save payload rule (UI-SPEC pin row 3; the 26a0073 class):
+      // the upgrade property is sent ONLY when the selection is non-empty
+      // OR the picker was touched this session - an untouched empty picker
+      // omits it entirely so the host takes the legacy-save branch and the
+      // live hand-seeded [OS Upgrades] selection survives. The value is
+      // the combined <build>_<arch> key array (EKB keys + the full-FU key
+      // when set); SC4: a run without upgrade behaves exactly as before.
+      ...(upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget ? { upgrade: upgradeFullTarget ? [...upgradeSelection, upgradeFullTarget] : upgradeSelection } : {})
     });
   };
 
@@ -969,7 +1002,7 @@ export default function App() {
               <select
                 id="upgrade-lang"
                 value={upgradeLang}
-                onChange={(e) => setUpgradeLang(e.target.value)}
+                onChange={(e) => { setUpgradeTouched(true); setUpgradeLang(e.target.value); }}
                 className="bg-dark-950 border border-dark-700 rounded-md px-3 py-1.5 text-xs font-mono text-zinc-200 focus:outline-hidden focus:border-accent-500"
               >
                 {Object.entries(upgradeLangs).map(([code, label]) => (

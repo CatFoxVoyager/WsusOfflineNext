@@ -915,6 +915,7 @@ namespace WSUSOffline.Generator
             {
                 try
                 {
+                    int failedSteps = 0;
                     // 1. Download Updates. The upgrade tokens are arch-routed
                     // onto these two w100-family argument strings ONLY (the
                     // DEC-36-01-widened guards let upgrade-only selections
@@ -923,26 +924,26 @@ namespace WSUSOffline.Generator
                     // [CMD] log line above is the UI-SPEC console observable.
                     if (job.HasWin11Or10x64 && !ct.IsCancellationRequested)
                     {
-                        await RunCommandAsync("DownloadUpdates.cmd", $"w100-x64 glb {job.Switches}{upgradeSwitchesX64}".Trim(), cmdDir, ct, upgradeLangValue);
+                        failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"w100-x64 glb {job.Switches}{upgradeSwitchesX64}".Trim(), cmdDir, ct, upgradeLangValue);
                     }
 
                     if (job.HasWin10x86 && !ct.IsCancellationRequested)
                     {
-                        await RunCommandAsync("DownloadUpdates.cmd", $"w100 glb {job.Switches}{upgradeSwitchesX86}".Trim(), cmdDir, ct, upgradeLangValue);
+                        failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"w100 glb {job.Switches}{upgradeSwitchesX86}".Trim(), cmdDir, ct, upgradeLangValue);
                     }
 
                     // Legacy targets (Windows 7, Windows Vista, 8.1, Server 2008/2012, XP)
                     foreach (var legTarget in job.LegacyTasks)
                     {
                         if (ct.IsCancellationRequested) break;
-                        await RunCommandAsync("DownloadUpdates.cmd", $"{legTarget} glb {job.Switches}".Trim(), cmdDir, ct);
+                        failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"{legTarget} glb {job.Switches}".Trim(), cmdDir, ct);
                     }
 
                     // 2. Download Office C2R
                     foreach (var offTask in job.OfficeC2RTasks)
                     {
                         if (ct.IsCancellationRequested) break;
-                        await RunCommandAsync("DownloadOfficeC2R.cmd", offTask, cmdDir, ct);
+                        failedSteps += await RunCommandAsync("DownloadOfficeC2R.cmd", offTask, cmdDir, ct);
                     }
 
                     // 3. Create ISO if requested
@@ -951,16 +952,16 @@ namespace WSUSOffline.Generator
                         LogToWeb("[ISO] Creating ISO images...");
                         if (job.HasWin11Or10x64)
                         {
-                            await RunCommandAsync("CreateISOImage.cmd", $"w100-x64 glb", cmdDir, ct);
+                            failedSteps += await RunCommandAsync("CreateISOImage.cmd", $"w100-x64 glb", cmdDir, ct);
                         }
                         if (job.HasWin10x86)
                         {
-                            await RunCommandAsync("CreateISOImage.cmd", $"w100 glb", cmdDir, ct);
+                            failedSteps += await RunCommandAsync("CreateISOImage.cmd", $"w100 glb", cmdDir, ct);
                         }
                         foreach (var legTarget in job.LegacyTasks)
                         {
                             if (ct.IsCancellationRequested) break;
-                            await RunCommandAsync("CreateISOImage.cmd", $"{legTarget} glb", cmdDir, ct);
+                            failedSteps += await RunCommandAsync("CreateISOImage.cmd", $"{legTarget} glb", cmdDir, ct);
                         }
                     }
 
@@ -970,20 +971,24 @@ namespace WSUSOffline.Generator
                         LogToWeb($"[USB] Copying updates to target media: {job.UsbPath}...");
                         if (job.HasWin11Or10x64)
                         {
-                            await RunCommandAsync("CopyToTarget.cmd", $"w100-x64 \"{job.UsbPath}\"", cmdDir, ct);
+                            failedSteps += await RunCommandAsync("CopyToTarget.cmd", $"w100-x64 \"{job.UsbPath}\"", cmdDir, ct);
                         }
                         if (job.HasWin10x86)
                         {
-                            await RunCommandAsync("CopyToTarget.cmd", $"w100 \"{job.UsbPath}\"", cmdDir, ct);
+                            failedSteps += await RunCommandAsync("CopyToTarget.cmd", $"w100 \"{job.UsbPath}\"", cmdDir, ct);
                         }
                         foreach (var legTarget in job.LegacyTasks)
                         {
                             if (ct.IsCancellationRequested) break;
-                            await RunCommandAsync("CopyToTarget.cmd", $"{legTarget} \"{job.UsbPath}\"", cmdDir, ct);
+                            failedSteps += await RunCommandAsync("CopyToTarget.cmd", $"{legTarget} \"{job.UsbPath}\"", cmdDir, ct);
                         }
                     }
 
-                    if (!ct.IsCancellationRequested)
+                    if (failedSteps > 0)
+                    {
+                        LogToWeb($"[ERROR] Download pipeline finished with {failedSteps} failed step(s) - review the [ERROR] lines above.");
+                    }
+                    else if (!ct.IsCancellationRequested)
                     {
                         LogToWeb("[SUCCESS] Download pipeline completed successfully!");
                     }
@@ -1622,7 +1627,7 @@ namespace WSUSOffline.Generator
             { "neutral", "Any Language (neutral)" }
         };
 
-        private async Task RunCommandAsync(string script, string arguments, string workingDir, CancellationToken ct, string? upgradeLang = null)
+        private async Task<int> RunCommandAsync(string script, string arguments, string workingDir, CancellationToken ct, string? upgradeLang = null)
         {
             LogToWeb($"[CMD] {script} {arguments}");
 
@@ -1684,6 +1689,17 @@ namespace WSUSOffline.Generator
             {
                 _activeProcess = null;
             }
+
+            // Exit-code propagation (issue #21 evidence): a pipeline that dies
+            // (parse error, missing script, fatal engine exit) used to be
+            // invisible — the job still reported SUCCESS. Cancellation never
+            // reaches here (WaitForExitAsync throws OperationCanceledException).
+            int exitCode = process.ExitCode;
+            if (exitCode != 0)
+            {
+                LogToWeb($"[ERROR] {script} exited with code {exitCode} - the step failed, see the log above.");
+            }
+            return exitCode;
         }
 
         [STAThread]

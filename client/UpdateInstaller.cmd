@@ -58,7 +58,7 @@ if not defined WEBVIEW2_PV call :ProbeWebView2Key "HKLM\SOFTWARE\Microsoft\EdgeU
 if not defined WEBVIEW2_PV call :ProbeWebView2Key "HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" ""
 if not defined WEBVIEW2_PV call :ProbeWebView2Key "HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-F55F-4E40-8A2F-69DF4B838507}" ""
 
-rem --- Capability gates (all four must pass for Modern) -------------------
+rem --- Capability gates (all five must pass for Modern) -------------------
 rem Gate 1, architecture: x64 or ARM64. PROCESSOR_ARCHITEW6432 covers the
 rem 32-bit cmd.exe on a 64-bit OS case (repo idiom).
 set "ARCH_OK=0"
@@ -97,19 +97,64 @@ set "CMP_RC=%errorlevel%"
 if "%CMP_RC%"=="0" set "WV2_OK=1"
 if "%CMP_RC%"=="2" set "WV2_OK=1"
 
+rem Gate 5, the .NET 8 desktop runtime must be installed. Presence-only:
+rem the host binary is resolved W6432-aware (mirroring Gate 1) and asked
+rem for its installed runtime families; a begin-anchored filter for the
+rem 8.x desktop-runtime listing line decides. On ARM64 only the x64
+rem runtime subfolder host is consulted (root listings there are
+rem arm64-flavored, i.e. ambiguous, and are ignored); any other
+rem architecture leaves the probe target empty, so the gate fails safe.
+set "DOTNET_PF=%ProgramFiles%"
+if defined ProgramW6432 set "DOTNET_PF=%ProgramW6432%"
+set "DOTNET_HOST="
+set "DOTNET8_OK=0"
+if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" set "DOTNET_HOST=%DOTNET_PF%\dotnet\dotnet.exe"
+if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" set "DOTNET_HOST=%DOTNET_PF%\dotnet\dotnet.exe"
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "DOTNET_HOST=%DOTNET_PF%\dotnet\x64\dotnet.exe"
+if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "DOTNET_HOST=%DOTNET_PF%\dotnet\x64\dotnet.exe"
+if not "%DOTNET_HOST%"=="" call :ProbeDotNet8 "%DOTNET_HOST%"
+
 set "CAN_MODERN=1"
 if "%ARCH_OK%"=="0" set "CAN_MODERN=0"
 if "%BUILD_OK%"=="0" set "CAN_MODERN=0"
 if "%MODERN_EXE_OK%"=="0" set "CAN_MODERN=0"
 if "%WV2_OK%"=="0" set "CAN_MODERN=0"
+if "%DOTNET8_OK%"=="0" set "CAN_MODERN=0"
+
+rem --- Offline runtime bootstrap evaluation (resolve only, never install) -
+rem When Gate 4 or Gate 5 failed but the tree carries the matching setup,
+rem the elevated handoff below can install it silently and re-decide the
+rem route afterwards. This block only RESOLVES candidate setup paths:
+rem force overrides skip it entirely (they bypass every capability gate),
+rem an already modern-capable machine skips it, the base gates must all be
+rem sound, and the OS must be AMD64 - ARM64 stays probe-only and never
+rem bootstraps. Nothing here elevates or installs anything.
+set "BOOTSTRAP_NEEDED=0"
+set "BOOTSTRAP_DOTNET=-"
+set "BOOTSTRAP_WV2=-"
+if "%FORCE_MODERN%"=="1" goto BootstrapEvaluated
+if "%FORCE_LEGACY%"=="1" goto BootstrapEvaluated
+if "%CAN_MODERN%"=="1" goto BootstrapEvaluated
+if "%ARCH_OK%"=="0" goto BootstrapEvaluated
+if "%BUILD_OK%"=="0" goto BootstrapEvaluated
+if "%MODERN_EXE_OK%"=="0" goto BootstrapEvaluated
+if /i not "%PROCESSOR_ARCHITECTURE%"=="AMD64" if /i not "%PROCESSOR_ARCHITEW6432%"=="AMD64" goto BootstrapEvaluated
+if "%DOTNET8_OK%"=="0" call :FindDotNet8Setup
+if "%WV2_OK%"=="0" if exist "%~dp0edge\MicrosoftEdgeWebView2RuntimeInstallerX64.exe" set "BOOTSTRAP_WV2=%~dp0edge\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+if not "%BOOTSTRAP_DOTNET%"=="-" set "BOOTSTRAP_NEEDED=1"
+if not "%BOOTSTRAP_WV2%"=="-" set "BOOTSTRAP_NEEDED=1"
+:BootstrapEvaluated
 
 rem --- Decision rule (exact incumbent parity) -----------------------------
 rem Modern iff FORCE_MODERN is set, or CAN_MODERN and not FORCE_LEGACY.
-rem A force-Modern override bypasses every capability gate.
+rem A force-Modern override bypasses every capability gate. A pending
+rem runtime bootstrap routes Modern provisionally - the bootstrap helper
+rem re-decides the route after its installs.
 set "ROUTE_MODERN=0"
 if "%FORCE_MODERN%"=="1" set "ROUTE_MODERN=1"
 if "%FORCE_LEGACY%"=="1" goto TargetResolved
 if "%CAN_MODERN%"=="1" set "ROUTE_MODERN=1"
+if "%BOOTSTRAP_NEEDED%"=="1" set "ROUTE_MODERN=1"
 :TargetResolved
 
 set "TARGET_NAME=UpdateInstallerLegacy.exe"
@@ -138,19 +183,46 @@ goto DoHandoff
 echo [launcher] Starte moderne Programmvariante...
 echo [launcher] Launching modern interface...
 :DoHandoff
+if "%BOOTSTRAP_NEEDED%"=="1" goto PrepBootstrapHandoff
+set "HANDOFF_EXE=%~dp0%TARGET_NAME%"
+set "HANDOFF_PREFIX="
+goto HandoffElevationGate
 
+:PrepBootstrapHandoff
+rem Offline runtime bootstrap handoff: the tree-resident helper installs
+rem the resolved setups silently and re-decides Modern/Legacy itself. It
+rem runs in the already-elevated context only - the unelevated branch below
+rem elevates the helper through the SAME single consent boundary as the
+rem installer (the helper's children inherit that elevation), so the total
+rem consent count stays at exactly one. The helper receives the WebView2
+rem floor positionally so that value keeps its single source, and the
+rem modern target name is provisional - the helper re-checks the gates.
+set "HANDOFF_EXE=%~dp0cmd\RuntimeBootstrap.cmd"
+set "HANDOFF_PREFIX=/apply "%BOOTSTRAP_DOTNET%" "%BOOTSTRAP_WV2%" "%MIN_WEBVIEW2_VERSION%" "UpdateInstallerModern.exe""
+
+:HandoffElevationGate
 rem --- Elevation-aware launch (LANC-03) -----------------------------------
 rem Both installer targets carry requireAdministrator manifests, so the UAC
 rem consent belongs at the target-exe manifest boundary: exactly ONE prompt
 rem per launch. This launcher stays non-elevated and never relaunches
-rem itself, so no second consent boundary can exist.
+rem itself, so no second consent boundary can exist; the probe below is the
+rem only elevation check in this file and every handoff shape reuses it.
 net session >nul 2>&1
 if errorlevel 1 goto UnelevatedHandoff
+if "%BOOTSTRAP_NEEDED%"=="1" goto ElevatedBootstrapLaunch
 
 rem Elevated session: an elevated parent launching a requireAdministrator
 rem child neither prompts nor hits system error 740, so the target is
 rem invoked directly with full wait and exit-code parity.
 "%~dp0%TARGET_NAME%" %*
+set "LAUNCH_RC=%errorlevel%"
+endlocal & exit /b %LAUNCH_RC%
+
+:ElevatedBootstrapLaunch
+rem Elevated parent: the helper batch is called directly - it inherits the
+rem elevated token, its own final exit code is the launched installer's,
+rem and the call waits for the whole chain (full wait parity).
+call "%HANDOFF_EXE%" %HANDOFF_PREFIX% %*
 set "LAUNCH_RC=%errorlevel%"
 endlocal & exit /b %LAUNCH_RC%
 
@@ -178,7 +250,7 @@ for %%I in ("%~dp0.") do set "LAUNCHER_DIR=%%~fI"
 >>"%TEMP_VBS%" echo   WScript.Quit 1
 >>"%TEMP_VBS%" echo End If
 >>"%TEMP_VBS%" echo WScript.Quit 0
-"%SystemRoot%\System32\cscript.exe" //nologo "%TEMP_VBS%" "%~dp0%TARGET_NAME%" "%LAUNCHER_DIR%" %*
+"%SystemRoot%\System32\cscript.exe" //nologo "%TEMP_VBS%" "%HANDOFF_EXE%" "%LAUNCHER_DIR%" %HANDOFF_PREFIX% %*
 set "ELEV_RC=%errorlevel%"
 del "%TEMP_VBS%" >nul 2>&1
 if not "%ELEV_RC%"=="0" goto ElevationDeclined
@@ -214,5 +286,33 @@ rem safe to Legacy, matching the incumbent's zero-count rule.
 set "WEBVIEW2_PV="
 for /f "tokens=2,*" %%A in ('reg query %1 /v pv %~2 2^>nul ^| findstr /C:"REG_SZ"') do (
     echo(%%B| findstr /r "^[0-9][0-9.]*$" >nul && set "WEBVIEW2_PV=%%B"
+)
+goto :eof
+
+:ProbeDotNet8
+rem Presence-only probe for the installed desktop runtime family at major
+rem version 8: run the host at %1 with --list-runtimes (stderr silenced)
+rem and set the presence flag only when a listing line names that family at
+rem the wanted major version (begin-anchored literal filter; the token is
+rem battery-counted and is deliberately not recopied in this comment). The
+rem flag starts at 0 on every call: an absent host, a failing listing and a
+rem hostile listing all fail safe. No captured value is stored or echoed.
+set "DOTNET8_OK=0"
+if not exist "%~1" goto :eof
+for /f "delims=" %%L in ('^""%~1" --list-runtimes 2^>nul ^| findstr /b /l /c:"Microsoft.WindowsDesktop.App 8."') do set "DOTNET8_OK=1"
+goto :eof
+
+:FindDotNet8Setup
+rem Resolve the newest name-sorted desktop-runtime setup in the tree's
+rem dotnet folder for the offline bootstrap. Every candidate filename must
+rem pass the strict anchored shape filter before it can be selected - a
+rem hostile medium filename never reaches the elevated install step:
+rem digits-only version, exact suffix, both ends anchored. The last
+rem name-sorted match wins; a mixed medium may pick a lower patch
+rem lexicographically, which stays safe because any 8.x desktop runtime
+rem satisfies the presence probe and a correct medium carries exactly the
+rem pinned build.
+for /f "delims=" %%F in ('dir /b /o:n "%~dp0dotnet\windowsdesktop-runtime-8.*-win-x64.exe" 2^>nul') do (
+    echo(%%F| findstr /r "^windowsdesktop-runtime-8\.[0-9][0-9]*\.[0-9][0-9]*-win-x64\.exe$" >nul && set "BOOTSTRAP_DOTNET=%~dp0dotnet\%%F"
 )
 goto :eof

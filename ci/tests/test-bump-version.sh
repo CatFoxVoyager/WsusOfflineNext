@@ -222,7 +222,12 @@ done
 # the last au3 (installer) left in Phase 26 plan 03. The *.au3 include in
 # the residue scan stays as zombie-defense: a tracked au3 carrying the old
 # version must fail the scan.
-grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
+# package-lock.json est exclu : le champ racine "version" y est une copie
+# dérivée de package.json (fichier DANS la matrice), réécrite par npm et par
+# les rebase Dependabot/Renovate — pas un zombie source. Sans cette exclusion,
+# toute branche de dépendance rebasee porte OLD dans le lock et fait mordre la
+# sonde sur main comme sur la PR (échec CI fixture-tests #30–#37, 2026-11).
+grep -rnF "${OLD}" --include="*.au3" --include="*.json" --include="*.csproj" --include="*.tsx" . 2>/dev/null | grep -vE "node_modules|dist/|bin/|obj/|RELEASE_NOTES|docs/|\.superpowers|\.planning|\.playwright|package-lock\.json" | head -1 | grep -q . && { echo "FAIL: residu d'ancienne version ${OLD}"; git checkout -- .; exit 1; }
 grep -q "${NEW}" cmd/DownloadUpdates.cmd || { echo "FAIL: nouvelle version absente du moteur"; git checkout -- .; exit 1; }
 # Invariant capture/compare (le littéral figé pourrit à chaque changement de
 # mois) : la capture du build tag doit être byte-identique avant/après.

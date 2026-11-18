@@ -2,6 +2,8 @@
 upx.exe
 StaticUpdateIds-MSIProducts-dotnet5_documented.txt
 StaticUpdateIds-MSIProducts-dotnet6_documented.txt
+StaticUpdateIds-MSIProducts-dotNET8_documented.txt
+StaticUpdateIds-MSIProducts-dotNET10_documented.txt
 StaticUpdateIds-MSIProducts-cpp2005_x64_documented.txt
 StaticUpdateIds-MSIProducts-cpp2005_x86_documented.txt
 StaticUpdateIds-MSIProducts-cpp2008_x64_documented.txt

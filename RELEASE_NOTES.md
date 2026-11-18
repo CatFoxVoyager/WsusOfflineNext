@@ -268,9 +268,36 @@ Thanks to Torsten Wittrock and the WSUS Offline Update Community Edition contrib
 
 ## 6.1.1+2026.11
 
-**Status:** current release.
+**Status:** superseded by 6.2.0+2026.11.
 
 ### Monthly update refresh
 
 - Static download links refreshed from the 2026-11 WSUS catalog: 0 links added, 2 retired links removed.
 
+## 6.2.0+2026.11
+
+**Status:** current release.
+
+### Bug fix: the installer no longer crashes on machines with Office installed (issue #29)
+
+- **Fixed a startup abort of the update engine** (`DoUpdate.cmd`) that hit every machine where an Office 2016-family product (Office 2016/2019, LTSC 2021/2024, Microsoft 365 Apps) was detected: the engine printed `) was unexpected at this time.` and exited (code 255) before installing anything. The Office information line was expanded inside a parenthesized `if` block while the Office end-of-life status itself contains parentheses ("EOL (End of Life - Oct 2025)"); the inner `)` closed the block early. The line now uses the parse-safe single-line form, and the displayed text is unchanged. A dedicated regression gate (`sh/tests/verify-office-eol-parens.bash`) replays the real engine lines against all four paren-bearing status values and both product-name shapes; it fails on the pre-fix engine (exit 255, 8/8 scenarios) and passes on the fixed one.
+
+### Offline OS upgrades: selection, consent and acquisition (milestone v5.0, opt-in and disabled by default)
+
+- **Windows OS upgrades are now a first-class, explicit choice.** Upgrades are never automatic: the capability stays **disabled by default** and requires explicit opt-in on every run. The generator GUI gains an **OS Upgrades tab** with a filtered list of eligible target builds (newest Enablement-first ordering), a media budget line with calm/warning/estimated states, a target-language rule, and arch-routed `/includeupgrade:<build>` spawn plumbing so the download pipeline acquires exactly the chosen upgrade payload.
+- **Consent before bytes:** the installer consent surface names the target build, the deduced path, the disk cost, the estimated duration and the expected reboot count before anything is staged; the chosen-target guard in both upgrade build loops refuses any row that was not explicitly selected (CSV-only selection file, no free-form targets), and bare, colon-truncated or malformed `/upgradeos` arguments are refused at parse time with named errors.
+- **UUP acquisition:** the download pipelines (CMD and bash twins) gained the upgrade acquisition task that fetches the chosen target's UUP payload and resolves its URL map, and the produced boot media carries the first-image flag (boot.wim index 9 setup requirement) so multi-edition upgrade media boots to the right image.
+- **Full-upgrade mono-pass lane:** the engine wires a dedicated full-upgrade lane with an attempts ledger — write-before-launch, build-keyed stall halt, and advancement clear — plus the marker lifecycle (pose, converged clear, stall restore, stay-out) and a stub short-circuit (a 3010 stub outcome resolves to the recall-precedence exit 3011) so the recall engine and the upgrade lane can never fight after a reboot.
+- **Media and gates:** the 37-link upgrade media gate (byte-frozen links 1-37, fail-closed) plus CMD/bash twin parity batteries cover the mapping, selection reader, resolver and refusal negatives (w61/wxp family exclusions, ineligible targets).
+
+### Requirements and upgrade guidance
+
+- Same requirements as 6.1.1: Windows 10 or 11 (x64) for the generator, .NET 8 and WebView2 for the modern interface (both bootstrapped from the tree when missing since 6.1.0), automatic fallback to the legacy native installer otherwise.
+- Drop-in replacement: replace the previous tree with this one; configuration (`UpdateGenerator.ini`, `UpdateInstaller.ini`) and existing download repositories are preserved. No configuration migration is required.
+- The OS-upgrade capability requires explicit opt-in and larger media budgets (the GUI budget line shows the estimate before download). Live multi-reboot upgrade acceptance runs on real VMs are still in progress and tracked in the project roadmap; until they complete, treat the upgrade lane as validated by the offline batteries and gates only.
+
+### Validation
+
+- Office-info regression gate: RED on the pre-fix engine (all 8 scenarios exit 255), GREEN after the fix; the merged tree passes.
+- The upgrade argv acceptance battery passes on the merged engine (5/5 `/upgradeos` cases), and the 37-link media gate is green end-to-end in a single run.
+- The release train runs the full batteries, the 15-file version bump, the build, the zip gates and the false-positive reputation gate before publishing.

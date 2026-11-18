@@ -293,8 +293,8 @@ upg_resolve() {
                 return
             fi
         fi
-        # R9 full feature update: same family + staged media
-        if [[ "${UP_FAMILY[$t]}" == "$curr_family" && "${UP_FUMEDIA[$t]}" == "1" ]]; then
+        # R9 full feature update: eligible family + staged media (R7 enforces arch matrix)
+        if [[ ("${UP_FAMILY[$t]}" == "win10" || "${UP_FAMILY[$t]}" == "win11") && "${UP_FUMEDIA[$t]}" == "1" ]]; then
             UP_V="upgFullFU"
             return
         fi
@@ -416,8 +416,13 @@ check_case 18 '26100' '5074' 'x64' 'deu' 'win11' '26200' upgBlocked false langua
 check_case 19 '19045' '1865' 'x86' 'glb' 'win10' '28000' upgBlocked false new-devices-only
 check_case 20 '19044' '1000' 'x64' 'glb' 'win10' '19045' upgEKB true ''
 
+# Cross-family Win10 -> Win11 x64 full FU when 26200 (row 0) carries fu_media=1
+UP_FUMEDIA[0]='1'
+check_case 22 '19045' '6456' 'x64' 'glb' 'win10' '26200' upgFullFU false ''
+UP_FUMEDIA[0]='0'
+
 A_PASS=$SECTION_PASS
-printf '[A] verdict evaluator parity: %s checks green (3 parser facts + 20 matrix cases)\n' "$A_PASS"
+printf '[A] verdict evaluator parity: %s checks green (3 parser facts + 21 matrix cases)\n' "$A_PASS"
 
 # -----------------------------------------------------------------------
 # Section B: generated contracts (read-only over the live tree)

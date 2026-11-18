@@ -921,14 +921,29 @@ if errorlevel 1 (
   goto :UpgAssembleFail
 )
 
-rem --- install.esd export: one per edition metadata ESD, appended ---
-rem --ref globs resolve the external blob resources that killed the DISM
-rem export (CONSIGN-DISM-FAILURE); wimlib expands the globs itself.
+rem --- winre.wim export (index 2 of first metadata ESD): setup.exe fails ---
+rem --- Downlevel with 0x80070003 if \Windows\System32\Recovery\winre.wim ---
+rem --- is missing from the edition images (live VM finding 2026-11-17). ---
+set "UUP_AM_WINRE=!UUP_AM_CONVERTED!\winre.wim"
+set "UUP_AM_TEMP_WIM=!UUP_AM_CONVERTED!\install_tmp.wim"
+if exist "!UUP_AM_WINRE!" del /f /q "!UUP_AM_WINRE!" >nul 2>&1
+if exist "!UUP_AM_TEMP_WIM!" del /f /q "!UUP_AM_TEMP_WIM!" >nul 2>&1
+echo Info: Exporting Windows Recovery Environment ^(winre.wim^) from index 2 of !UUP_AM_FIRST! ...
+call "!UUP_AM_WIMLIB!" export "!UUP_AM_PAYLOAD!\!UUP_AM_FIRST!" 2 "!UUP_AM_WINRE!" "Microsoft Windows Recovery Environment" --compress=LZX --boot --ref="!UUP_AM_PAYLOAD!\*.esd" --ref="!UUP_AM_CONVERTED!\*.esd" >nul
+if errorlevel 1 (
+  echo ERROR: winre.wim export failed - assembly refused, nothing staged.
+  goto :UpgAssembleFail
+)
+
+rem --- install.esd export: export each edition index 3 to intermediate ---
+rem --- WIM, inject winre.wim into \Windows\System32\Recovery\winre.wim, ---
+rem --- then solid-compress all editions into sources\install.esd.       ---
 set "UUP_AM_INSTALL=!UUP_AM_STAGE!\sources\install.esd"
 if not exist "!UUP_AM_STAGE!\sources\" (
   echo ERROR: the scaffold produced no sources\ directory - assembly refused.
   goto :UpgAssembleFail
 )
+set /a UUP_AM_ED_IDX=0
 for /F "usebackq delims=" %%e in ("!UUP_AM_META!.srt") do (
   set "UUP_AM_EDITION_ID="
   rem The extra quote pair defeats the cmd /c leading-quote stripping (a
@@ -941,19 +956,32 @@ for /F "usebackq delims=" %%e in ("!UUP_AM_META!.srt") do (
     echo ERROR: no Edition ID reported for %%e - assembly refused.
     goto :UpgAssembleFail
   )
-  echo Info: Exporting edition !UUP_AM_EDITION_ID! to sources\install.esd ...
+  echo Info: Exporting edition !UUP_AM_EDITION_ID! with winre.wim ...
   rem --ref IS the glob form on the Windows wimlib build (its usage line
   rem documents --ref="GLOB"): the patterns are expanded by wimlib itself -
   rem the shell never expands them on this side. The glob must NOT carry
   rem [eE] character classes (wimlib's glob rejects them - measured live);
   rem plain *.esd covers the .ESD payload files because Windows globbing is
   rem case-insensitive (the converter's classes exist for Linux shells).
-  call "!UUP_AM_WIMLIB!" export "!UUP_AM_PAYLOAD!\%%e" 3 "!UUP_AM_INSTALL!" "Windows 11 !UUP_AM_EDITION_ID!" --solid --ref="!UUP_AM_PAYLOAD!\*.esd" --ref="!UUP_AM_CONVERTED!\*.esd" >nul
+  call "!UUP_AM_WIMLIB!" export "!UUP_AM_PAYLOAD!\%%e" 3 "!UUP_AM_TEMP_WIM!" "Windows 11 !UUP_AM_EDITION_ID!" --compress=fast --ref="!UUP_AM_PAYLOAD!\*.esd" --ref="!UUP_AM_CONVERTED!\*.esd" >nul
   if errorlevel 1 (
     echo ERROR: install.esd export failed for %%e - assembly refused, nothing staged.
     goto :UpgAssembleFail
   )
+  set /a UUP_AM_ED_IDX+=1
+  call "!UUP_AM_WIMLIB!" update "!UUP_AM_TEMP_WIM!" !UUP_AM_ED_IDX! --command="add !UUP_AM_WINRE! \Windows\System32\Recovery\winre.wim" >nul
+  if errorlevel 1 (
+    echo ERROR: winre.wim injection failed for %%e - assembly refused, nothing staged.
+    goto :UpgAssembleFail
+  )
 )
+echo Info: Solid-compressing sources\install.esd ...
+call "!UUP_AM_WIMLIB!" export "!UUP_AM_TEMP_WIM!" all "!UUP_AM_INSTALL!" --solid >nul
+if errorlevel 1 (
+  echo ERROR: install.esd export failed ^(solid pass^) - assembly refused, nothing staged.
+  goto :UpgAssembleFail
+)
+del /f /q "!UUP_AM_TEMP_WIM!" "!UUP_AM_WINRE!" >nul 2>&1
 
 rem --- the census: image count must equal the exported edition count ---
 set "UUP_AM_IMAGECOUNT="
@@ -1035,6 +1063,8 @@ exit /b 0
 if exist "!UUP_AM_STAGE!\" rd /s /q "!UUP_AM_STAGE!" >nul 2>&1
 if exist "!UUP_AM_META!" del "!UUP_AM_META!" >nul 2>&1
 if exist "!UUP_AM_META!.srt" del "!UUP_AM_META!.srt" >nul 2>&1
+if exist "!UUP_AM_TEMP_WIM!" del /f /q "!UUP_AM_TEMP_WIM!" >nul 2>&1
+if exist "!UUP_AM_WINRE!" del /f /q "!UUP_AM_WINRE!" >nul 2>&1
 exit /b 1
 
 :UpgVerifySha256Pin

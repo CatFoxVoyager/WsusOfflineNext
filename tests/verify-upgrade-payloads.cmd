@@ -322,9 +322,16 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   ^>"%%~4\sources\setuphost.exe" echo STUB-SETUPHOST
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
 >>"%SB_STUBS%\wimlib-stub.cmd" echo )
+>>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="update" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo if /i "%%STUB_CMD%%"=="export" (
->>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="EXPORT-FAILS" exit /b 1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="EXPORT-FAILS" if "%%~3"=="3" exit /b 1
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%STUB_WIMLIB_MODE%%"=="BOOT-EXPORT-FAILS" if "%%~3"=="1" exit /b 1
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   if /i "%%~3"=="all" (
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     copy /y "%%~2" "%%~4" ^>nul
+>>"%SB_STUBS%\wimlib-stub.cmd" echo     exit /b 0
+>>"%SB_STUBS%\wimlib-stub.cmd" echo   )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   ^>^>"%%~4" echo %%~5
 >>"%SB_STUBS%\wimlib-stub.cmd" echo   exit /b 0
 >>"%SB_STUBS%\wimlib-stub.cmd" echo )
@@ -349,7 +356,7 @@ setlocal disabledelayedexpansion
 >>"%SB_STUBS%\wimlib-stub.cmd" echo )
 >>"%SB_STUBS%\wimlib-stub.cmd" echo exit /b 1
 >"%SB_STUBS%\sigcheck-stub.cmd" echo @echo off
->>"%SB_STUBS%\sigcheck-stub.cmd" echo type nul ^> "%%TEMP%%\wou-upg-sigcheck-stub-invoked"
+>>"%SB_STUBS%\sigcheck-stub.cmd" echo type nul ^> "%%TEMP%%\wou-test-sigcheck-stub-invoked"
 >>"%SB_STUBS%\sigcheck-stub.cmd" echo if /i "%%UUP_STUB_SIGCHECK_MODE%%"=="UNSIGNED-MUI" (
 >>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "Path","Company","Product","Version","Unsigned"
 >>"%SB_STUBS%\sigcheck-stub.cmd" echo   echo "D:\stage\sources\en-us\helper.mui","Microsoft","Resources","","Unsigned"
@@ -724,12 +731,12 @@ copy /y "%BIG%" "%SM_SPOOL%\files\big.esd" >nul 2>&1
 mkdir "%SANDBOX%\stage14" 2>nul
 >"%SANDBOX%\stage14\sources\setup.exe" echo STUB
 set "UUP_CLIENT_ROOT=%SANDBOX%\client"
-if exist "%TEMP%\wou-upg-sigcheck-stub-invoked" del "%TEMP%\wou-upg-sigcheck-stub-invoked" >nul 2>&1
+if exist "%TEMP%\wou-test-sigcheck-stub-invoked" del "%TEMP%\wou-test-sigcheck-stub-invoked" >nul 2>&1
 call cmd\UpgradePayloads.cmd :UpgStageMedia "%SANDBOX%\stage14" "%SM_SPOOL%\manifest.txt" 26200 x64 en-us >"%SB_OUT%\sm14.out" 2>&1
 set "SM14_RC=!errorlevel!"
 if "%SM14_RC%"=="0" (echo FAIL: a corrupted spool must refuse staging & goto Fail)
 if exist "%UUP_CLIENT_ROOT%\upgrade\26200-x64\en-us" (echo FAIL: the hash-gate refusal must move NOTHING into the tree & goto Fail)
-if exist "%TEMP%\wou-upg-sigcheck-stub-invoked" (echo FAIL: the hash gate must fire BEFORE the Authenticode scan - gate order violated & goto Fail)
+if exist "%TEMP%\wou-test-sigcheck-stub-invoked" (echo FAIL: the hash gate must fire BEFORE the Authenticode scan - gate order violated & goto Fail)
 findstr /C:"hash gate refused staging" "%SB_OUT%\sm14.out" >nul 2>&1
 if errorlevel 1 (echo FAIL: the gate-order refusal must be named & type "%SB_OUT%\sm14.out" & goto Fail)
 echo PASS: case 14 - hash gate precedes Authenticode and the move, nothing moved.

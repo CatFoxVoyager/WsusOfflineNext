@@ -149,6 +149,7 @@ type
     FUpgradeDurationBand: string;  { modal fact: duration band text }
     FUpgradeRebootsValue: string;  { modal fact: reboots value text }
     FUpgradeOsConsented: Boolean;  { the five-fact modal said Yes - session-local only }
+    FResumedTargetBuild: string;   { carried across /resume convergence after reboot }
     { MyIniRead parity (au3:220-229) - client INI default, %TEMP% copy
       overrides per key. }
     function IniState(const ASection, AKey, ADefault: string): string;
@@ -849,6 +850,7 @@ begin
     DECISION comes from the pure upgradesconsent layer - this method
     only renders (research Pitfall 10). }
   FUpgradeOsConsented := False;
+  FResumedTargetBuild := '';
   FUpgradeTargetBuild := '';
   FUpgradeTargetDisplay := '';
   FUpgradePathValue := '';
@@ -1209,7 +1211,9 @@ begin
     above) and no token is emitted - the unconsented argv is
     byte-identical (SC4). }
   if chkUpgradeOs.Enabled and chkUpgradeOs.Checked and FUpgradeOsConsented then
-    AToggles.UpgradeOsBuild := FUpgradeTargetBuild;
+    AToggles.UpgradeOsBuild := FUpgradeTargetBuild
+  else if FResumedTargetBuild <> '' then
+    AToggles.UpgradeOsBuild := FResumedTargetBuild;
 end;
 
 procedure TMainForm.btnExitClick(Sender: TObject);
@@ -1411,6 +1415,11 @@ begin
     if StatusServer <> '' then
       DetectWriteWUStatusServer(StatusServer);
 
+    FResumedTargetBuild := '';
+    if ResWantsResume and ResUpgradeInProgress
+       and (not ResUpgradeResumeBlocked(FOs.Build)) then
+      FResumedTargetBuild := IntToStr(ResUpgradeMarkerTarget);
+
     { Five-fact consent modal (plan 36-04, threat T-36-08): shown only
       when the opt-in toggle is enabled AND checked; default button No,
       and a No reverts the checkbox and aborts ONLY the upgrade leg -
@@ -1499,6 +1508,7 @@ begin
     { 3010/3011 reboot prompt (INST-05). }
     HandleRebootOutcome(Res);
   finally
+    FResumedTargetBuild := '';
     Selection.Free;
     btnCancel.Enabled := False;
     btnExit.Enabled := True;

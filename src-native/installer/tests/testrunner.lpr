@@ -402,6 +402,18 @@ begin
   P := Resolve('5151', '1', 'x86', 'glb', 'wxp', '19045');
   Check((P.Verdict = upgBlocked) and (P.Reason = 'legacy-os'),
     'upg-case-21-wxp-family-r4: 5151 wxp -> 19045 = blocked legacy-os (R4 family refusal)');
+
+  { Cross-family Win10 -> Win11 x64 full FU (VAL-03): when 26200 carries
+    fu_media=1, R7 allows x64 win10->win11 and R9 resolves upgFullFU
+    (regression guard against the same-family R9 lock-out found live on
+    19045). }
+  Rows := UpgParseUpgradesFile(
+    WriteFixture('upgrades-w10-w11.txt',
+      '26200|x64|glb|win11|26100|active|26100|kb5054156|5074|kb5064081|1|' + LineEnding),
+    @AlwaysProbe);
+  P := Resolve('19045', '6456', 'x64', 'glb', 'win10', '26200');
+  Check((P.Verdict = upgFullFU) and (not P.NeedsBaselineCU) and (P.Reason = ''),
+    'upg-case-22-win10-to-win11: 19045 x64 win10 -> 26200 win11 (fu_media=1) = upgFullFU');
 end;
 
 procedure TestConsentFamily;

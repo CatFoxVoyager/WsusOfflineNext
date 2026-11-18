@@ -1139,6 +1139,14 @@ rem no chosen target: the lane is a silent no-op (statu quo for the no-selection
 if not defined WOU_UPGRADE_TARGET goto FullUpgradeSkip
 if "%OS_VER_MAJOR%"=="" goto FullUpgradeSkip
 if %OS_VER_MAJOR% LSS 10 goto FullUpgradeSkip
+set "WOU_PERSIST_DIR="
+if not "%WOU_TEST_MODE%"=="1" if defined ProgramData set "WOU_PERSIST_DIR=%ProgramData%\WSUSOffline"
+if defined WOU_PERSIST_DIR (
+  if not exist "%WOU_TEMP_DIR%\" mkdir "%WOU_TEMP_DIR%" >nul 2>&1
+  for %%F in ("%WOU_PERSIST_DIR%\wou_fullupgrade_*" "%WOU_PERSIST_DIR%\wou_upgrade_in_*") do (
+    if not exist "%WOU_TEMP_DIR%\%%~nxF" copy /y "%%~F" "%WOU_TEMP_DIR%\" >nul 2>&1
+  )
+)
 if "!OS_EDITIONID:~0,11!"=="EnterpriseS" (
   echo Info: Skipping full upgrade as a LTSB-/LTSC-SKU has been detected
   call :Log "Info: Skipping full upgrade as a LTSB-/LTSC-SKU has been detected"
@@ -1258,6 +1266,11 @@ rem under test mode and real mode alike; its only legitimate deaths are the
 rem converged routing and the halt below (never :Cleanup, never a refusal pass).
 echo full,%WOU_UPGRADE_TARGET%,%OS_VER_REVIS%>%WOU_TEMP_DIR%\wou_upgrade_in_progress.txt
 (echo %DATE% %TIME%)>>%WOU_TEMP_DIR%\wou_upgrade_in_progress.txt
+if defined WOU_PERSIST_DIR (
+  if not exist "%WOU_PERSIST_DIR%\" mkdir "%WOU_PERSIST_DIR%" >nul 2>&1
+  copy /y "%WOU_TEMP_DIR%\wou_fullupgrade_*" "%WOU_PERSIST_DIR%\" >nul 2>&1
+  copy /y "%WOU_TEMP_DIR%\wou_upgrade_in_*" "%WOU_PERSIST_DIR%\" >nul 2>&1
+)
 echo FULLUPGRADE-MARKER-POSED
 call :Log "FULLUPGRADE-MARKER-POSED"
 rem Launch (APPLY-01): the frozen flag-set with NO additional flags - the launch
@@ -1273,6 +1286,7 @@ set "WOU_FU_LAUNCH_RC_RAW=%WOU_FU_TEST_LAUNCH_RC%"
 call :NormalizeFuRc %WOU_FU_LAUNCH_RC_RAW%
 call :DecodeFullUpgradeExit %WOU_FU_RC%
 if "%WOU_FU_RC%"=="3010" set REBOOT_REQUIRED=1
+if "%WOU_FU_RC%"=="0" set REBOOT_REQUIRED=1
 if "%REBOOT_REQUIRED%"=="1" (
   if "%RECALL_REQUIRED%" NEQ "1" set "RECALL_REQUIRED=1"
 )
@@ -1284,6 +1298,10 @@ rem stall halt) - same discipline as the attempts deletes; the marker never
 rem joins :Cleanup or the fresh-run deletion class (DEC-35-01, T-35-03).
 if exist %WOU_TEMP_DIR%\wou_upgrade_in_progress.txt del %WOU_TEMP_DIR%\wou_upgrade_in_progress.txt
 if exist %SystemRoot%\Temp\wou_upgrade_in_progress.txt del %SystemRoot%\Temp\wou_upgrade_in_progress.txt
+if not "%WOU_TEST_MODE%"=="1" if defined ProgramData (
+  if exist "%ProgramData%\WSUSOffline\wou_upgrade_in_*" del "%ProgramData%\WSUSOffline\wou_upgrade_in_*" >nul 2>&1
+  if exist "%ProgramData%\WSUSOffline\wou_fullupgrade_*" del "%ProgramData%\WSUSOffline\wou_fullupgrade_*" >nul 2>&1
+)
 goto :eof
 
 :NormalizeFuRc

@@ -686,8 +686,8 @@ if exist "%MOCK_TEMP%\MissingUpdateIds.txt" del "%MOCK_TEMP%\MissingUpdateIds.tx
 call "%MOCK_CMD%\DoUpdate.cmd" /testbuildupgrade /upgradeos:26200 >"%MOCK_TEMP%\s10_out.txt" 2>&1
 set "S10_EXIT=!errorlevel!"
 
-if "!S10_EXIT!" NEQ "0" (
-  echo FAIL: State S10 expected exit code 0, got !S10_EXIT!.
+if "!S10_EXIT!" NEQ "3011" (
+  echo FAIL: State S10 expected exit code 3011, got !S10_EXIT!.
   type "%MOCK_TEMP%\s10_out.txt"
   goto Fail
 )
@@ -709,7 +709,7 @@ if not errorlevel 1 (
   type "%MOCK_TEMP%\s10_out.txt"
   goto Fail
 )
-echo [PASS] State S10: suspect row fired with the never-success wording (exit 0).
+echo [PASS] State S10: suspect row fired with the never-success wording (exit 3011).
 
 REM -----------------------------------------------------------------------
 REM State S11: Rollback (0xC1900101)

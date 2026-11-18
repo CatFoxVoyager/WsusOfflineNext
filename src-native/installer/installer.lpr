@@ -44,6 +44,7 @@ uses
 var
   HealthyMarkerPath: string;
   I: Integer;
+  ResumeMutex: THandle;
   ResumePending, EngineRecall: Boolean;
 begin
   RequireDerivedFormResource := True;
@@ -97,6 +98,14 @@ begin
     adds no counter. }
   if ResWantsResume then
   begin
+    { Single-instance guard across RunOnce and Task Scheduler WOUResume
+      triggers firing together on logon. }
+    ResumeMutex := CreateMutexW(nil, False, 'Local\WOUResumeSingleInstance');
+    if (ResumeMutex <> 0) and (GetLastError = ERROR_ALREADY_EXISTS) then
+    begin
+      CloseHandle(ResumeMutex);
+      Halt(0);
+    end;
     { Decide BEFORE deleting: ResDeleteResume also removes the pending
       marker. A run is pending when the engine staged updates OR the GUI
       registered this very RunOnce (marker): reboots that happen before the

@@ -311,8 +311,12 @@ begin
       Result.NeedsBaselineCU := RevNum < MinRevNum;
       Exit;
     end;
-    { R9 full feature update: same family + staged media. }
-    if (ARows[T].OsFamily = ACurrOsFamily) and (ARows[T].FuMedia = '1') then
+    { R9 full feature update: eligible family + staged media. R7 already
+      enforces the x86->win10 and arm64->win11 matrix bounds and R3
+      forbids downgrades, so x64 win10->win11 resolves upgFullFU when
+      fu_media=1. }
+    if ((ARows[T].OsFamily = 'win10') or (ARows[T].OsFamily = 'win11'))
+       and (ARows[T].FuMedia = '1') then
     begin
       Result.Verdict := upgFullFU;
       Exit;

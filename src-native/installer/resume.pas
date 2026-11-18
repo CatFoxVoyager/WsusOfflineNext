@@ -41,6 +41,7 @@ const
   { The leading '!' defers deletion until after the command runs. }
   RES_RUNONCE_NAME = '!WOUResume';
   RES_RUNONCE_MAX = 260; { Microsoft: command line <= 260 chars }
+  RES_TASK_NAME = 'WOUResume';
   RES_RESUME_FLAG = '/resume';
   { GUI-written companion of the RunOnce value: written when it is
     registered, removed when it is deleted. Lives next to the engine staging
@@ -74,6 +75,11 @@ function ResRegisterResume(const AExePath: string): Boolean;
 { GUI-side cleanup (threat T-26-06): the value is deleted on successful
   resume AND on cancel/decline - never left dangling beyond the run. }
 procedure ResDeleteResume;
+
+{ Persistent state directory surviving Windows feature upgrades
+  (%ProgramData%\WSUSOffline, falling back to EngEngineTempDir when
+  ProgramData is unset). }
+function ResPersistDir: string;
 
 { True when '/resume' appears in the command-line parameters. }
 function ResWantsResume: Boolean;
@@ -161,9 +167,49 @@ begin
     AData := ''; { refusal clears the payload - never usable by accident }
 end;
 
+function ResPersistDir: string;
+var
+  ProgData: string;
+begin
+  ProgData := SysUtils.GetEnvironmentVariable('ProgramData');
+  if ProgData = '' then
+    ProgData := SysUtils.GetEnvironmentVariable('ALLUSERSPROFILE');
+  if ProgData <> '' then
+    Result := IncludeTrailingPathDelimiter(ProgData) + 'WSUSOffline'
+  else
+    Result := EngEngineTempDir;
+end;
+
+procedure RunSchtasks(const AArgs: string);
+var
+  SysDir: array[0..MAX_PATH] of WideChar;
+  ExePath, CmdLine: WideString;
+  Si: TStartupInfoW;
+  Pi: TProcessInformation;
+  Len: DWORD;
+begin
+  Len := GetSystemDirectoryW(@SysDir[0], MAX_PATH);
+  if (Len = 0) or (Len > MAX_PATH) then
+    Exit;
+  ExePath := WideString(IncludeTrailingPathDelimiter(string(PWideChar(@SysDir[0]))))
+    + 'schtasks.exe';
+  CmdLine := '"' + ExePath + '" ' + WideString(AArgs);
+  UniqueString(CmdLine);
+  FillChar(Si, SizeOf(Si), 0);
+  Si.cb := SizeOf(Si);
+  FillChar(Pi, SizeOf(Pi), 0);
+  if CreateProcessW(PWideChar(ExePath), PWideChar(CmdLine), nil, nil, False,
+    CREATE_NO_WINDOW, nil, nil, Si, Pi) then
+  begin
+    WaitForSingleObject(Pi.hProcess, 10000);
+    CloseHandle(Pi.hThread);
+    CloseHandle(Pi.hProcess);
+  end;
+end;
+
 function ResRegisterResume(const AExePath: string): Boolean;
 var
-  Name, Data: string;
+  Name, Data, EscapedData, PersistDir: string;
   R: TRegistry;
 begin
   Result := False;
@@ -180,16 +226,26 @@ begin
   finally
     R.Free;
   end;
-  { Companion marker AFTER the registry write: without it a reboot before the
-    engine staged anything would land on the nothing-to-resume dead end. A
-    marker failure degrades to that old behaviour, it never fails the run. }
+  { Companion marker + Task Scheduler fallback AFTER the registry write:
+    Windows 10 -> 11 Setup strips RunOnce and moves Windows\Temp into
+    Windows.old, whereas %ProgramData%\WSUSOffline and WOUResume survive
+    feature upgrades. }
   if Result then
+  begin
     ResMarkerWriteIn(EngEngineTempDir);
+    PersistDir := ResPersistDir;
+    if not SameText(PersistDir, EngEngineTempDir) then
+      ResMarkerWriteIn(PersistDir);
+    EscapedData := StringReplace(Data, '"', '\"', [rfReplaceAll]);
+    RunSchtasks('/Create /TN "' + RES_TASK_NAME
+      + '" /SC ONLOGON /RL HIGHEST /IT /F /TR "' + EscapedData + '"');
+  end;
 end;
 
 procedure ResDeleteResume;
 var
   R: TRegistry;
+  PersistDir: string;
 begin
   R := TRegistry.Create(KEY_WRITE);
   try
@@ -200,6 +256,10 @@ begin
     R.Free;
   end;
   ResMarkerDeleteIn(EngEngineTempDir);
+  PersistDir := ResPersistDir;
+  if not SameText(PersistDir, EngEngineTempDir) then
+    ResMarkerDeleteIn(PersistDir);
+  RunSchtasks('/Delete /TN "' + RES_TASK_NAME + '" /F');
 end;
 
 function ResWantsResume: Boolean;
@@ -262,8 +322,16 @@ begin
 end;
 
 function ResResumePending: Boolean;
+var
+  PersistDir: string;
 begin
   Result := ResResumePendingIn(EngEngineTempDir);
+  if not Result then
+  begin
+    PersistDir := ResPersistDir;
+    if not SameText(PersistDir, EngEngineTempDir) then
+      Result := ResResumePendingIn(PersistDir);
+  end;
 end;
 
 function ResEngineRecallPreparedIn(const ADir: string): Boolean;
@@ -284,8 +352,16 @@ begin
 end;
 
 function ResUpgradeInProgress: Boolean;
+var
+  PersistDir: string;
 begin
   Result := ResUpgradeInProgressIn(EngEngineTempDir);
+  if not Result then
+  begin
+    PersistDir := ResPersistDir;
+    if not SameText(PersistDir, EngEngineTempDir) then
+      Result := ResUpgradeInProgressIn(PersistDir);
+  end;
 end;
 
 function ResUpgradeMarkerTargetIn(const ADir: string): Integer;
@@ -322,8 +398,20 @@ begin
 end;
 
 function ResUpgradeMarkerTarget: Integer;
+var
+  PersistDir: string;
 begin
-  Result := ResUpgradeMarkerTargetIn(EngEngineTempDir);
+  if ResUpgradeInProgressIn(EngEngineTempDir) then
+    Result := ResUpgradeMarkerTargetIn(EngEngineTempDir)
+  else
+  begin
+    PersistDir := ResPersistDir;
+    if (not SameText(PersistDir, EngEngineTempDir))
+       and ResUpgradeInProgressIn(PersistDir) then
+      Result := ResUpgradeMarkerTargetIn(PersistDir)
+    else
+      Result := 0;
+  end;
 end;
 
 function ResUpgradeResumeBlockedIn(const ADir: string;
@@ -340,8 +428,19 @@ begin
 end;
 
 function ResUpgradeResumeBlocked(const AObservedBuild: Integer): Boolean;
+var
+  PersistDir: string;
 begin
-  Result := ResUpgradeResumeBlockedIn(EngEngineTempDir, AObservedBuild);
+  if ResUpgradeInProgressIn(EngEngineTempDir) then
+    Result := ResUpgradeResumeBlockedIn(EngEngineTempDir, AObservedBuild)
+  else
+  begin
+    PersistDir := ResPersistDir;
+    if not SameText(PersistDir, EngEngineTempDir) then
+      Result := ResUpgradeResumeBlockedIn(PersistDir, AObservedBuild)
+    else
+      Result := False;
+  end;
 end;
 
 end.

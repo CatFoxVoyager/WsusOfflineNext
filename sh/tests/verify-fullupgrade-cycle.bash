@@ -462,7 +462,7 @@ function run_fullupgrade_cycle_evaluator () {
     # Launch handshake: the pass terminates unconditionally whatever setup reports
     fu_rc="$(normalize_fu_rc "${test_launch_rc:-0}")"
     decode_full_upgrade_exit "$fu_rc"
-    if [[ "$fu_rc" == "3010" ]]; then
+    if [[ "$fu_rc" == "3010" || "$fu_rc" == "0" ]]; then
         FU_REBOOT_REQUIRED=1
     fi
     if [[ "$FU_REBOOT_REQUIRED" == "1" && "$FU_RECALL_REQUIRED" != "1" ]]; then
@@ -868,8 +868,8 @@ set +e
 run_fullupgrade_cycle_evaluator 26100 1000 en-us Professional 26200 0xC1900210 0 0 10 > "${tmp_dir}/s10.out" 2>&1
 set -e
 s10_exit="$FU_EXIT_CODE"
-if (( s10_exit != 0 )); then
-    echo "FAIL: State S10 expected exit code 0, got ${s10_exit}." >&2
+if (( s10_exit != 3011 )); then
+    echo "FAIL: State S10 expected exit code 3011, got ${s10_exit}." >&2
     cat "${tmp_dir}/s10.out" >&2
     exit 1
 fi
@@ -888,7 +888,7 @@ if grep -qF "FULLUPGRADE-STAGED" "${tmp_dir}/s10.out"; then
     cat "${tmp_dir}/s10.out" >&2
     exit 1
 fi
-echo "[PASS] State S10: suspect row fired with the never-success wording (exit 0)."
+echo "[PASS] State S10: suspect row fired with the never-success wording (exit 3011)."
 
 # -----------------------------------------------------------------------
 # State S11: Rollback (0xC1900101)

@@ -301,3 +301,12 @@ Thanks to Torsten Wittrock and the WSUS Offline Update Community Edition contrib
 - Office-info regression gate: RED on the pre-fix engine (all 8 scenarios exit 255), GREEN after the fix; the merged tree passes.
 - The upgrade argv acceptance battery passes on the merged engine (5/5 `/upgradeos` cases), and the 37-link media gate is green end-to-end in a single run.
 - The release train runs the full batteries, the 15-file version bump, the build, the zip gates and the false-positive reputation gate before publishing.
+
+## 6.2.0+2026.11
+
+**Status:** current release.
+
+### Monthly update refresh
+
+- Static download links refreshed from the 2026-11 WSUS catalog: 0 links added, 0 retired links removed.
+

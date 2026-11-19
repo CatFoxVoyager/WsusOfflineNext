@@ -95,6 +95,61 @@ if ! grep -q "dotNET10_DesktopRuntime_x64" "$msi_products"; then
     exit 1
 fi
 
+# dotNET8/dotNET10 MSI detection files: 12 product ids x old/new, every
+# line a well-formed GUID in braces, no duplicates, plus the three
+# live-confirmed 8.0.33 x64 control codes in their _new sets.
+for det_id in dotNET8_Runtime_x86 dotNET8_Runtime_x64 dotNET8_DesktopRuntime_x86 dotNET8_DesktopRuntime_x64 dotNET8_ASPNETRuntime_x86 dotNET8_ASPNETRuntime_x64 dotNET10_Runtime_x86 dotNET10_Runtime_x64 dotNET10_DesktopRuntime_x86 dotNET10_DesktopRuntime_x64 dotNET10_ASPNETRuntime_x86 dotNET10_ASPNETRuntime_x64; do
+    for det_kind in old new; do
+        det_file="${repo_root}/client/static/StaticUpdateIds-MSIProducts-${det_id}_${det_kind}.txt"
+        if [[ ! -s "$det_file" ]]; then
+            echo "FAIL: detection file missing or empty: ${det_id}_${det_kind}."
+            exit 1
+        fi
+        if [[ "$(grep -cvE '^\{[0-9A-Fa-f-]{36}\}' "$det_file")" -ne 0 ]]; then
+            echo "FAIL: detection file carries a non-GUID line: ${det_id}_${det_kind}."
+            exit 1
+        fi
+        if [[ "$(sort "$det_file" | uniq -d | wc -l)" -ne 0 ]]; then
+            echo "FAIL: detection file carries a duplicate code: ${det_id}_${det_kind}."
+            exit 1
+        fi
+    done
+done
+
+if ! grep -q "{711FC301-B296-4A6D-8A4F-EB1F70A2FCA3}" "${repo_root}/client/static/StaticUpdateIds-MSIProducts-dotNET8_DesktopRuntime_x64_new.txt"; then
+    echo "FAIL: dotNET8_DesktopRuntime_x64_new missing the live 8.0.33 control code."
+    exit 1
+fi
+if ! grep -q "{53C6CAB9-A77C-4590-BC3A-90ED427C536A}" "${repo_root}/client/static/StaticUpdateIds-MSIProducts-dotNET8_Runtime_x64_new.txt"; then
+    echo "FAIL: dotNET8_Runtime_x64_new missing the live 8.0.33 control code."
+    exit 1
+fi
+if ! grep -q "{BD2321D2-0D66-31A7-AD98-A36B7BF88304}" "${repo_root}/client/static/StaticUpdateIds-MSIProducts-dotNET8_ASPNETRuntime_x64_new.txt"; then
+    echo "FAIL: dotNET8_ASPNETRuntime_x64_new missing the live 8.0.33 control code."
+    exit 1
+fi
+
+# Provenance files (documentation-only) exist and never ship in a release
+# tree.
+doc8_file="${repo_root}/client/static/StaticUpdateIds-MSIProducts-dotNET8_documented.txt"
+doc10_file="${repo_root}/client/static/StaticUpdateIds-MSIProducts-dotNET10_documented.txt"
+if [[ ! -s "$doc8_file" ]]; then
+    echo "FAIL: provenance file missing or empty: dotNET8_documented."
+    exit 1
+fi
+if ! grep -q "StaticUpdateIds-MSIProducts-dotNET8_documented.txt" "${repo_root}/exclude/ExcludeList-ReleaseTree.txt"; then
+    echo "FAIL: provenance file not release-tree-excluded: dotNET8_documented."
+    exit 1
+fi
+if [[ ! -s "$doc10_file" ]]; then
+    echo "FAIL: provenance file missing or empty: dotNET10_documented."
+    exit 1
+fi
+if ! grep -q "StaticUpdateIds-MSIProducts-dotNET10_documented.txt" "${repo_root}/exclude/ExcludeList-ReleaseTree.txt"; then
+    echo "FAIL: provenance file not release-tree-excluded: dotNET10_documented."
+    exit 1
+fi
+
 echo "PASS: Static download catalogs and product manifests verified."
 
 # -----------------------------------------------------------------------

@@ -15,7 +15,9 @@ import {
   PackageCheck,
   Layers,
   Settings2,
-  LoaderCircle
+  LoaderCircle,
+  ArrowUpCircle,
+  AlertTriangle
 } from 'lucide-react';
 
 interface LogEntry {
@@ -65,6 +67,23 @@ interface SystemSpecs {
   dotnetVersion: string;
 }
 
+interface UpgradeOffer {
+  eligible: boolean;
+  verdict: 'fullfu' | 'ekb' | 'blocked';
+  targetBuild: string;
+  targetDisplay: string;
+  pathLabel: string;
+  diskGb: string;
+  durationBand: string;
+  rebootsLabel: string;
+  blockedReason: string;
+}
+
+interface RebootOutcome {
+  exitCode: number;
+  autoReboot: boolean;
+}
+
 export default function App() {
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const initialConsole = urlParams?.get('console') === 'true';
@@ -72,6 +91,20 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialConsole);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [upgradeOptIn, setUpgradeOptIn] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [rebootOutcome, setRebootOutcome] = useState<RebootOutcome | null>(null);
+  const [upgrade, setUpgrade] = useState<UpgradeOffer>({
+    eligible: false,
+    verdict: 'blocked',
+    targetBuild: '',
+    targetDisplay: '',
+    pathLabel: '',
+    diskGb: '',
+    durationBand: '',
+    rebootsLabel: '',
+    blockedReason: 'Upgrade media is not part of this medium'
+  });
   const [logs, setLogs] = useState<LogEntry[]>([
     parseLogLine('[INIT] WSUS Offline Next Installer initialized.'),
     parseLogLine('[INFO] System information and component options loaded.'),
@@ -122,8 +155,22 @@ export default function App() {
         } else if (data.type === 'state') {
           if (data.specs) setSpecs(data.specs);
           if (data.options) setOptions(prev => ({ ...prev, ...data.options }));
+          if (data.upgrade) {
+            setUpgrade(data.upgrade);
+            setUpgradeOptIn(false);
+          }
+          if (data.autoResume) {
+            setIsTerminalOpen(true);
+          }
         } else if (data.type === 'status') {
           setIsRunning(data.running);
+        } else if (data.type === 'outcome') {
+          if (data.kind === 'reboot') {
+            setRebootOutcome({
+              exitCode: data.exitCode ?? 3010,
+              autoReboot: Boolean(data.autoReboot)
+            });
+          }
         }
       } catch (err) {
         console.error('Error parsing native message', err);
@@ -148,11 +195,47 @@ export default function App() {
     }
   }, [logs, autoScroll]);
 
-  const handleStart = () => {
+  const launchStart = (upgradeConfirmed: boolean) => {
+    setRebootOutcome(null);
     setIsRunning(true);
     setIsTerminalOpen(true);
     setLogs(prev => [...prev, parseLogLine('[START] Starting offline update installation...')]);
-    sendNative('start', { options });
+    sendNative('start', {
+      options,
+      upgradeOsConfirmed: upgradeConfirmed,
+      upgradeOsBuild: upgradeConfirmed ? upgrade.targetBuild : ''
+    });
+    if (upgradeConfirmed) {
+      setUpgradeOptIn(false);
+    }
+  };
+
+  const handleStart = () => {
+    if (upgrade.eligible && upgradeOptIn) {
+      setShowUpgradeModal(true);
+      return;
+    }
+    launchStart(false);
+  };
+
+  const handleConfirmUpgrade = () => {
+    setShowUpgradeModal(false);
+    launchStart(true);
+  };
+
+  const handleCancelUpgradeModal = () => {
+    setShowUpgradeModal(false);
+    setUpgradeOptIn(false);
+  };
+
+  const handleConfirmReboot = () => {
+    setRebootOutcome(null);
+    sendNative('reboot', {});
+  };
+
+  const handleDeclineReboot = () => {
+    setRebootOutcome(null);
+    sendNative('rebootDecline', {});
   };
 
   const handleStop = () => {
@@ -219,9 +302,75 @@ export default function App() {
         </div>
       </div>
 
-      {/* 3. Main Options Body (3 Compartments) */}
-      <main className="flex-1 overflow-y-auto p-5 bg-dark-950 space-y-4">
-        <div className="max-w-5xl mx-auto space-y-4">
+      {/* 3. Main Options Body */}
+      <main className="flex-1 overflow-y-auto p-4 bg-dark-950 space-y-3">
+        <div className="max-w-5xl mx-auto space-y-3">
+          {/* Compartment 0: OS Upgrade (per-run opt-in, 5-fact consent sheet) */}
+          <div className="p-4 rounded-xl bg-dark-900 border border-dark-800 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-dark-800">
+              <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
+                <ArrowUpCircle className="w-4 h-4 text-accent-400" />
+                <span>OS Upgrade</span>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-dark-850 text-zinc-400 border border-dark-800">
+                {upgrade.eligible ? 'Opt-in (this run only)' : 'Unavailable'}
+              </span>
+            </div>
+
+            {upgrade.eligible ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-[11px]">
+                  <div className="px-2.5 py-1.5 rounded bg-dark-950/60 border border-dark-800/80">
+                    <span className="text-zinc-500">Target: </span>
+                    <span className="text-zinc-100 font-medium">{upgrade.targetDisplay}</span>
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded bg-dark-950/60 border border-dark-800/80">
+                    <span className="text-zinc-500">Path: </span>
+                    <span className="text-zinc-200">{upgrade.pathLabel}</span>
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded bg-dark-950/60 border border-dark-800/80">
+                    <span className="text-zinc-500">Disk space required: </span>
+                    <span className="text-zinc-200 font-mono">~{upgrade.diskGb} GB</span>
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded bg-dark-950/60 border border-dark-800/80">
+                    <span className="text-zinc-500">Estimated duration: </span>
+                    <span className="text-zinc-200">{upgrade.durationBand} (hardware-dependent)</span>
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded bg-dark-950/60 border border-dark-800/80 md:col-span-2">
+                    <span className="text-zinc-500">Expected reboots: </span>
+                    <span className="text-zinc-200">{upgrade.rebootsLabel}</span>
+                  </div>
+                </div>
+
+                <label
+                  className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
+                    upgradeOptIn
+                      ? 'bg-accent-600/10 border-accent-500/40'
+                      : 'bg-dark-950/40 border-dark-800/80 hover:bg-dark-850/70 hover:border-dark-700'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={upgradeOptIn}
+                    disabled={isRunning}
+                    onChange={(e) => setUpgradeOptIn(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-500 focus:ring-0 cursor-pointer"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-semibold text-zinc-100">
+                      Upgrade this computer to {upgrade.targetDisplay} (opt-in, this run only)
+                    </span>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">
+                      A confirmation prompt will appear before setup.exe starts. This setting is never saved across runs.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-400">{upgrade.blockedReason}</p>
+            )}
+          </div>
+
           {/* Top Row: 2 Main Columns */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Compartment 1: Operating System & Runtimes */}
@@ -494,6 +643,92 @@ export default function App() {
           )}
         </div>
       </footer>
+
+      {/* 6. OS Upgrade 5-Fact Consent Modal (Default button: Cancel) */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-xl bg-dark-900 border border-dark-700 shadow-2xl overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-dark-800 flex items-center gap-2.5 bg-dark-950/60">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <h2 className="text-sm font-semibold text-zinc-100">Confirm OS upgrade</h2>
+            </div>
+
+            <div className="p-5 space-y-3 text-xs text-zinc-300">
+              <p className="text-zinc-200 font-medium">
+                Upgrade this computer to <strong className="text-white">{upgrade.targetDisplay}</strong>?
+              </p>
+              <div className="rounded-lg bg-dark-950 border border-dark-800 p-3 space-y-1.5 text-[11px]">
+                <div><span className="text-zinc-500">Target: </span><span className="text-zinc-100">{upgrade.targetDisplay}</span></div>
+                <div><span className="text-zinc-500">Path: </span><span className="text-zinc-200">{upgrade.pathLabel}</span></div>
+                <div><span className="text-zinc-500">Disk space required: </span><span className="text-zinc-200 font-mono">~{upgrade.diskGb} GB</span></div>
+                <div><span className="text-zinc-500">Estimated duration: </span><span className="text-zinc-200">{upgrade.durationBand} (hardware-dependent)</span></div>
+                <div><span className="text-zinc-500">Expected reboots: </span><span className="text-zinc-200">{upgrade.rebootsLabel}</span></div>
+              </div>
+              <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                This replaces the current Windows installation. Apps and files are kept.
+              </p>
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-dark-800 bg-dark-950/40 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                autoFocus
+                onClick={handleCancelUpgradeModal}
+                className="px-4 py-2 rounded-md bg-dark-800 hover:bg-dark-700 border border-dark-700 text-zinc-200 text-xs font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUpgrade}
+                className="px-4 py-2 rounded-md bg-accent-600 hover:bg-accent-700 text-white text-xs font-medium transition-colors"
+              >
+                Confirm OS upgrade
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Restart Required Modal (Exit code 3010 / 3011) */}
+      {rebootOutcome && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl bg-dark-900 border border-amber-500/40 shadow-2xl overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-dark-800 flex items-center gap-2.5 bg-amber-500/10">
+              <RotateCcw className="w-4 h-4 text-amber-400 shrink-0" />
+              <h2 className="text-sm font-semibold text-zinc-100">Restart required (exit code {rebootOutcome.exitCode})</h2>
+            </div>
+
+            <div className="p-5 space-y-2.5 text-xs text-zinc-300 leading-relaxed">
+              <p className="text-zinc-100 font-medium">
+                A restart is required to complete the updates. Restart now?
+              </p>
+              <p className="text-[11px] text-zinc-400">
+                The system restarts after 30 seconds; Windows then shows a short cancel window.
+                Post-reboot resume will be registered automatically if you restart now.
+              </p>
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-dark-800 bg-dark-950/40 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={handleDeclineReboot}
+                className="px-4 py-2 rounded-md bg-dark-800 hover:bg-dark-700 border border-dark-700 text-zinc-200 text-xs font-medium transition-colors"
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                autoFocus
+                onClick={handleConfirmReboot}
+                className="px-4 py-2 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium transition-colors"
+              >
+                Restart now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

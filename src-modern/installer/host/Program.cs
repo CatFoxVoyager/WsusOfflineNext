@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +23,11 @@ namespace WSUSOffline.Installer
         private WebView2? _webView;
         private Process? _activeProcess;
         private CancellationTokenSource? _cts;
+        private readonly bool _autoResume;
+        private readonly string? _resumedTargetBuild;
+        private bool _resumeTriggered;
+        private string _upgradeTargetBuild = "";
+        private bool _upgradeEligible;
 
         // Static instance for the self-update check's owner-form provider:
         // set first in the ctor so the offer dialog can find the window as
@@ -45,8 +53,10 @@ namespace WSUSOffline.Installer
             return plus >= 0 ? info.Substring(0, plus) : info;
         }
 
-        public MainWindow()
+        public MainWindow(bool autoResume = false, string? resumedTargetBuild = null)
         {
+            _autoResume = autoResume;
+            _resumedTargetBuild = resumedTargetBuild;
             Instance = this;
             this.Text = $"WSUS Offline Next {GetDisplayVersion()} - Client Installer";
             this.Width = 1040;
@@ -609,6 +619,12 @@ namespace WSUSOffline.Installer
                     case "cancel":
                         HandleCancel();
                         break;
+                    case "reboot":
+                        HandleRebootConfirmed();
+                        break;
+                    case "rebootDecline":
+                        HandleRebootDeclined();
+                        break;
                 }
             }
             catch (Exception ex)
@@ -704,11 +720,18 @@ namespace WSUSOffline.Installer
                     {
                         var parts = trimmed.Split('=', 2);
                         string k = parts[0].Trim();
+                        // DEC-10 / PATH-03: upgradeos is per-run opt-in only, never restored from INI.
+                        if (k.Equals("upgradeos", StringComparison.OrdinalIgnoreCase)) continue;
                         bool v = parts[1].Trim().Equals("Enabled", StringComparison.OrdinalIgnoreCase);
                         opts[k] = v;
                     }
                 }
             }
+
+            // 3. Evaluate OS Upgrade offer (upgrades.txt + staged manifest.txt, fail-closed)
+            var offer = UpgradeResumeHelper.EvaluateUpgradeOffer(clientDir);
+            _upgradeEligible = offer.Eligible;
+            _upgradeTargetBuild = offer.TargetBuild;
 
             SendToWeb(new
             {
@@ -722,8 +745,27 @@ namespace WSUSOffline.Installer
                     officeName,
                     dotnetVersion = ".NET 4.8 / .NET 8.0"
                 },
-                options = opts
+                options = opts,
+                upgrade = new
+                {
+                    eligible = offer.Eligible,
+                    verdict = offer.Verdict,
+                    targetBuild = offer.TargetBuild,
+                    targetDisplay = offer.TargetDisplay,
+                    pathLabel = offer.PathLabel,
+                    diskGb = offer.DiskGb,
+                    durationBand = offer.DurationBand,
+                    rebootsLabel = offer.RebootsLabel,
+                    blockedReason = offer.BlockedReason
+                },
+                autoResume = _autoResume
             });
+
+            if (_autoResume && !_resumeTriggered)
+            {
+                _resumeTriggered = true;
+                StartResumeRun(clientDir, opts);
+            }
         }
 
         private void HandleCancel()
@@ -737,56 +779,131 @@ namespace WSUSOffline.Installer
                 }
             }
             catch { }
+            UpgradeResumeHelper.DeleteResume();
             SendToWeb(new { type = "status", running = false });
         }
 
-        private async void HandleStart(JsonElement payload)
+        private void HandleRebootConfirmed()
         {
-            _cts = new CancellationTokenSource();
-            var ct = _cts.Token;
+            string exePath = Environment.ProcessPath ?? Application.ExecutablePath;
+            if (!UpgradeResumeHelper.RegisterResume(exePath))
+            {
+                LogToWeb("[WARN] The resume registration could not be written.");
+            }
+            else
+            {
+                LogToWeb("[INFO] Post-reboot resume registered (RunOnce + WOUResume task).");
+            }
 
-            SendToWeb(new { type = "status", running = true });
+            LogToWeb("[INFO] Restarting system in 30 seconds (shutdown /r /t 30)...");
+            try
+            {
+                string sysDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = Path.Combine(sysDir, "shutdown.exe"),
+                    Arguments = "/r /t 30",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+            catch (Exception ex)
+            {
+                LogToWeb($"[ERROR] Failed to trigger restart: {ex.Message}");
+            }
+        }
 
+        private void HandleRebootDeclined()
+        {
+            UpgradeResumeHelper.DeleteResume();
+            LogToWeb("[INFO] Restart deferred by user. Resume registration cleared.");
+        }
+
+        private static readonly string[] EngineBoolKeys = {
+            "upgradebuilds", "updatercerts", "updatecpp", "updatedotnet5",
+            "instdotnet4", "instdotnet35", "instedge", "instwebview2",
+            "instoffice", "verify", "seconly", "autoreboot", "shutdown", "auditonly"
+        };
+
+        private void StartResumeRun(string clientDir, Dictionary<string, bool> savedOpts)
+        {
+            var switches = new List<string>();
+            bool autoReboot = false;
+            foreach (var k in EngineBoolKeys)
+            {
+                if (savedOpts.TryGetValue(k, out bool enabled) && enabled)
+                {
+                    if (k == "instoffice") switches.Add("/updateoffice");
+                    else switches.Add($"/{k}");
+                    if (k == "autoreboot") autoReboot = true;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(_resumedTargetBuild) && _resumedTargetBuild.All(char.IsDigit))
+            {
+                switches.Add($"/upgradeos:{_resumedTargetBuild}");
+                LogToWeb($"[INFO] Resuming OS upgrade convergence for target build {_resumedTargetBuild}...");
+            }
+            else
+            {
+                LogToWeb("[INFO] Resuming staged installation after reboot...");
+            }
+
+            RunEngineAsync(clientDir, switches, autoReboot);
+        }
+
+        private void HandleStart(JsonElement payload)
+        {
             string clientDir = GetClientDirectory();
-            string cmdDir = Path.Combine(clientDir, "cmd");
 
             // Extract switches synchronously before entering background task
             var switches = new List<string>();
+            bool autoReboot = false;
             if (payload.TryGetProperty("options", out var opts))
             {
-                string[] boolKeys = {
-                    "upgradebuilds", "updatercerts", "updatecpp", "updatedotnet5",
-                    "instdotnet4", "instdotnet35", "instedge", "instwebview2",
-                    "instoffice", "verify", "seconly", "autoreboot", "shutdown", "auditonly"
-                };
-
-                foreach (var k in boolKeys)
+                foreach (var k in EngineBoolKeys)
                 {
                     if (opts.TryGetProperty(k, out var prop) && prop.GetBoolean())
                     {
                         if (k == "instoffice") switches.Add("/updateoffice");
                         else switches.Add($"/{k}");
+                        if (k == "autoreboot") autoReboot = true;
                     }
                 }
             }
 
-            string switchStr = string.Join(" ", switches);
+            // Explicit per-run OS Upgrade opt-in (confirmed via 5-fact modal;
+            // validated against construction-time enumeration, never persisted).
+            if (payload.TryGetProperty("upgradeOsConfirmed", out var upgConf)
+                && upgConf.ValueKind == JsonValueKind.True
+                && payload.TryGetProperty("upgradeOsBuild", out var upgBuildProp))
+            {
+                string requestedBuild = upgBuildProp.GetString()?.Trim() ?? "";
+                if (_upgradeEligible
+                    && !string.IsNullOrEmpty(_upgradeTargetBuild)
+                    && string.Equals(requestedBuild, _upgradeTargetBuild, StringComparison.Ordinal)
+                    && requestedBuild.All(char.IsDigit))
+                {
+                    switches.Add($"/upgradeos:{requestedBuild}");
+                }
+            }
 
-            // Save settings to UpdateInstaller.ini synchronously
+            // Save settings to UpdateInstaller.ini synchronously (NEVER persist upgradeos)
             try
             {
                 string iniPath = Path.Combine(clientDir, "UpdateInstaller.ini");
                 if (File.Exists(iniPath) && payload.TryGetProperty("options", out var saveOpts))
                 {
                     var lines = new List<string>(File.ReadAllLines(iniPath));
-                    // Update key values if present
                     for (int i = 0; i < lines.Count; i++)
                     {
                         if (lines[i].Contains("="))
                         {
                             var parts = lines[i].Split('=', 2);
                             string k = parts[0].Trim();
-                            if (saveOpts.TryGetProperty(k, out var bVal))
+                            if (k.Equals("upgradeos", StringComparison.OrdinalIgnoreCase)) continue;
+                            if (saveOpts.TryGetProperty(k, out var bVal)
+                                && (bVal.ValueKind == JsonValueKind.True || bVal.ValueKind == JsonValueKind.False))
                             {
                                 lines[i] = $"{k}={(bVal.GetBoolean() ? "Enabled" : "Disabled")}";
                             }
@@ -796,6 +913,33 @@ namespace WSUSOffline.Installer
                 }
             }
             catch { }
+
+            RunEngineAsync(clientDir, switches, autoReboot);
+        }
+
+        private async void RunEngineAsync(string clientDir, List<string> switches, bool autoReboot)
+        {
+            _cts = new CancellationTokenSource();
+            var ct = _cts.Token;
+
+            SendToWeb(new { type = "status", running = true });
+
+            string cmdDir = Path.Combine(clientDir, "cmd");
+            string switchStr = string.Join(" ", switches);
+
+            // Register resume BEFORE spawning DoUpdate.cmd when /autoreboot is active on Win10+
+            if (autoReboot && UpgradeResumeHelper.ReadCurrentBuildNumber() >= 10240)
+            {
+                string exePath = Environment.ProcessPath ?? Application.ExecutablePath;
+                if (!UpgradeResumeHelper.RegisterResume(exePath))
+                {
+                    LogToWeb("[WARN] The resume registration could not be written.");
+                }
+                else
+                {
+                    LogToWeb("[INFO] Resume registered for post-reboot continuation.");
+                }
+            }
 
             // Run execution in background Task
             await Task.Run(async () =>
@@ -847,18 +991,42 @@ namespace WSUSOffline.Installer
 
                     await process.WaitForExitAsync(ct);
 
-                    if (!ct.IsCancellationRequested)
+                    int rc = process.ExitCode;
+                    if (ct.IsCancellationRequested)
                     {
-                        LogToWeb("[SUCCESS] Installation process completed.");
+                        UpgradeResumeHelper.DeleteResume();
+                        LogToWeb("[ABORT] Installation cancelled by user.");
+                        SendToWeb(new { type = "outcome", kind = "canceled", exitCode = rc });
+                    }
+                    else if (rc == 0)
+                    {
+                        UpgradeResumeHelper.DeleteResume();
+                        LogToWeb("[SUCCESS] Installation process completed (exit code 0).");
+                        SendToWeb(new { type = "outcome", kind = "completed", exitCode = 0 });
+                    }
+                    else if (rc == 3010 || rc == 3011)
+                    {
+                        LogToWeb($"[WARN] Engine run finished (exit code {rc}): A restart is required to complete the updates.");
+                        SendToWeb(new { type = "outcome", kind = "reboot", exitCode = rc, autoReboot });
+                    }
+                    else
+                    {
+                        UpgradeResumeHelper.DeleteResume();
+                        LogToWeb($"[ERROR] Installation process ended with exit code {rc}.");
+                        SendToWeb(new { type = "outcome", kind = "error", exitCode = rc });
                     }
                 }
                 catch (OperationCanceledException)
                 {
+                    UpgradeResumeHelper.DeleteResume();
                     LogToWeb("[ABORT] Installation cancelled by user.");
+                    SendToWeb(new { type = "outcome", kind = "canceled", exitCode = -1 });
                 }
                 catch (Exception ex)
                 {
+                    UpgradeResumeHelper.DeleteResume();
                     LogToWeb($"[ERROR] Error during installation: {ex.Message}");
+                    SendToWeb(new { type = "outcome", kind = "error", exitCode = -1 });
                 }
                 finally
                 {
@@ -907,37 +1075,81 @@ namespace WSUSOffline.Installer
                 }
             }
 
-            // Self-update check starts ONLY in the surviving elevated
-            // instance, after the elevation gate and before the window:
-            // fire-and-forget, never delays launch, any offer appears only
-            // over the already-open main window. InstallRoot is the parent
-            // of the exe directory because this host ships inside client\.
-            // Strict-newer decision is the existing WebView2Compat
-            // comparator in both directions.
-            _ = SelfUpdateCheck.RunAsync(new SelfUpdateOptions
+            bool wantsResume = args.Any(a =>
+                string.Equals(a, "/resume", StringComparison.OrdinalIgnoreCase));
+            Mutex? resumeMutex = null;
+            bool autoResume = false;
+            string? resumedTargetBuild = null;
+
+            if (wantsResume)
             {
-                LocalVersion = GetDisplayVersion(),
-                InstallRoot = System.IO.Path.GetFullPath(
-                    System.IO.Path.Combine(AppContext.BaseDirectory, "..")),
-                Actor = "installer",
-                HostExePath = Environment.ProcessPath ?? Application.ExecutablePath,
-                IsChannelNewer = (channel, local) =>
-                    WebView2Compat.IsVersionAtLeast(channel, local)
-                    && !WebView2Compat.IsVersionAtLeast(local, channel),
-                OwnerFormProvider = () => Instance,
-            });
-            // Healthy-first-launch marker (Phase 28), parsed only in the
-            // surviving elevated instance - the argument already rode the
-            // elevation re-pass above. When present, the file is written
-            // only after the main window has opened successfully - never in
-            // Main. A normal launch ignores the whole mechanism.
-            string? healthyMarkerPath = ParseHealthyMarkerArg(args);
-            MainWindow mainWindow = new MainWindow();
-            if (healthyMarkerPath != null)
-            {
-                mainWindow.Shown += (sender, e) => WriteHealthyMarker(healthyMarkerPath);
+                resumeMutex = new Mutex(true, @"Local\WOUResumeSingleInstance", out bool createdNew);
+                if (!createdNew)
+                {
+                    resumeMutex.Dispose();
+                    return;
+                }
+
+                bool pending = UpgradeResumeHelper.IsResumePending();
+                bool engineRecall = UpgradeResumeHelper.IsEngineRecallPrepared();
+                int observedBuild = UpgradeResumeHelper.ReadCurrentBuildNumber();
+                bool upgradeBlocked = UpgradeResumeHelper.IsUpgradeResumeBlocked(observedBuild);
+                int markerTarget = UpgradeResumeHelper.ReadUpgradeMarkerTarget();
+
+                UpgradeResumeHelper.DeleteResume();
+
+                if (engineRecall || upgradeBlocked || !pending)
+                {
+                    resumeMutex.Dispose();
+                    return;
+                }
+
+                autoResume = true;
+                if (markerTarget > 0)
+                {
+                    resumedTargetBuild = markerTarget.ToString(CultureInfo.InvariantCulture);
+                }
             }
-            Application.Run(mainWindow);
+
+            try
+            {
+                // Self-update check starts ONLY in the surviving elevated
+                // instance, after the elevation gate and before the window:
+                // fire-and-forget, never delays launch, any offer appears only
+                // over the already-open main window. Skip on /resume so an
+                // unattended post-reboot resume never pops an update prompt.
+                if (!wantsResume)
+                {
+                    _ = SelfUpdateCheck.RunAsync(new SelfUpdateOptions
+                    {
+                        LocalVersion = GetDisplayVersion(),
+                        InstallRoot = System.IO.Path.GetFullPath(
+                            System.IO.Path.Combine(AppContext.BaseDirectory, "..")),
+                        Actor = "installer",
+                        HostExePath = Environment.ProcessPath ?? Application.ExecutablePath,
+                        IsChannelNewer = (channel, local) =>
+                            WebView2Compat.IsVersionAtLeast(channel, local)
+                            && !WebView2Compat.IsVersionAtLeast(local, channel),
+                        OwnerFormProvider = () => Instance,
+                    });
+                }
+                // Healthy-first-launch marker (Phase 28), parsed only in the
+                // surviving elevated instance - the argument already rode the
+                // elevation re-pass above. When present, the file is written
+                // only after the main window has opened successfully - never in
+                // Main. A normal launch ignores the whole mechanism.
+                string? healthyMarkerPath = ParseHealthyMarkerArg(args);
+                MainWindow mainWindow = new MainWindow(autoResume, resumedTargetBuild);
+                if (healthyMarkerPath != null)
+                {
+                    mainWindow.Shown += (sender, e) => WriteHealthyMarker(healthyMarkerPath);
+                }
+                Application.Run(mainWindow);
+            }
+            finally
+            {
+                resumeMutex?.Dispose();
+            }
         }
 
         /// <summary>
@@ -1035,6 +1247,549 @@ namespace WSUSOffline.Installer
         private static int ParseNumericPart(string part)
         {
             return int.TryParse(part, out int value) ? value : 0;
+        }
+    }
+
+    public sealed class UpgradeOffer
+    {
+        public bool Eligible { get; init; }
+        public string Verdict { get; init; } = "blocked";
+        public string TargetBuild { get; init; } = "";
+        public string TargetDisplay { get; init; } = "";
+        public string PathLabel { get; init; } = "";
+        public string DiskGb { get; init; } = "";
+        public string DurationBand { get; init; } = "";
+        public string RebootsLabel { get; init; } = "";
+        public string BlockedReason { get; init; } = "";
+    }
+
+    // Pure upgrade-path deduction, manifest inspection, and post-reboot /resume
+    // persistence (parity with src-native/installer/{upgradespredicates,upgradesconsent,resume}.pas).
+    public static class UpgradeResumeHelper
+    {
+        private const string RunOnceKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce";
+        private const string RunOnceName = "!WOUResume";
+        private const int RunOnceMaxChars = 260;
+        private const string ResumeTaskName = "WOUResume";
+        private const string PendingMarkerName = "WOUResumePending.txt";
+        private const string UpgradeMarkerName = "wou_upgrade_in_progress.txt";
+        private const string EngineRecallRel = @"WOURecall\RecallUpdate.cmd";
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetShortPathNameW(string lpszLongPath, StringBuilder lpszShortPath, uint cchBuffer);
+
+        private sealed record UpgradeRow(
+            string TargetBuild,
+            string Arch,
+            string Lang,
+            string OsFamily,
+            string ServicingBranch,
+            string Status,
+            string EkbSourceBuild,
+            string EkbKb,
+            string EkbMinRevision,
+            string EkbPrereqKb,
+            string FuMedia,
+            string BlockedReason);
+
+        private enum UpgradeVerdict { Ekb, FullFu, Blocked }
+
+        private readonly record struct UpgradePath(UpgradeVerdict Verdict, bool NeedsBaselineCU, string Reason);
+
+        public static string EngineTempDir =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
+
+        public static string PersistDir
+        {
+            get
+            {
+                string? progData = Environment.GetEnvironmentVariable("ProgramData");
+                if (string.IsNullOrWhiteSpace(progData))
+                {
+                    progData = Environment.GetEnvironmentVariable("ALLUSERSPROFILE");
+                }
+                return !string.IsNullOrWhiteSpace(progData)
+                    ? Path.Combine(progData, "WSUSOffline")
+                    : EngineTempDir;
+            }
+        }
+
+        public static int ReadCurrentBuildNumber()
+        {
+            try
+            {
+                using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                using var key = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+                if (key != null)
+                {
+                    string? raw = key.GetValue("CurrentBuild")?.ToString()
+                        ?? key.GetValue("CurrentBuildNumber")?.ToString();
+                    if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int build) && build > 0)
+                    {
+                        return build;
+                    }
+                }
+            }
+            catch { }
+            return Environment.OSVersion.Version.Build;
+        }
+
+        public static string ReadCurrentRevision()
+        {
+            try
+            {
+                using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                using var key = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+                if (key != null)
+                {
+                    object? val = key.GetValue("UBR");
+                    if (val != null)
+                    {
+                        int ubr = Convert.ToInt32(val, CultureInfo.InvariantCulture);
+                        if (ubr >= 0) return ubr.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private static string CurrentArchToken()
+        {
+            if (RuntimeInformation.OSArchitecture == Architecture.Arm64) return "arm64";
+            return Environment.Is64BitOperatingSystem ? "x64" : "x86";
+        }
+
+        private static string DeriveOsFamily(string buildStr)
+        {
+            if (!int.TryParse(buildStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out int buildNum))
+                return "";
+            if (buildNum >= 22000) return "win11";
+            if (buildNum >= 0) return "win10";
+            return "";
+        }
+
+        private static List<UpgradeRow> ParseUpgradesFile(string path)
+        {
+            var rows = new List<UpgradeRow>();
+            if (!File.Exists(path)) return rows;
+            try
+            {
+                foreach (string rawLine in File.ReadAllLines(path))
+                {
+                    string line = rawLine.Trim();
+                    if (string.IsNullOrEmpty(line) || line.StartsWith("#", StringComparison.Ordinal))
+                        continue;
+                    string[] parts = line.Split('|');
+                    if (parts.Length != 12) continue;
+                    rows.Add(new UpgradeRow(
+                        parts[0].Trim(), parts[1].Trim(), parts[2].Trim(), parts[3].Trim(),
+                        parts[4].Trim(), parts[5].Trim(), parts[6].Trim(), parts[7].Trim(),
+                        parts[8].Trim(), parts[9].Trim(), parts[10].Trim(), parts[11].Trim()));
+                }
+            }
+            catch { }
+            return rows;
+        }
+
+        private static UpgradePath ResolvePath(
+            List<UpgradeRow> rows,
+            string currBuild,
+            string currRevision,
+            string currArch,
+            string currLang,
+            string currOsFamily,
+            string targetBuild)
+        {
+            if (!int.TryParse(currBuild, NumberStyles.Integer, CultureInfo.InvariantCulture, out int currNum) || currNum <= 0)
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "unknown-current");
+            if (!int.TryParse(targetBuild, NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetNum) || targetNum <= 0)
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "bad-target");
+            if (targetNum == currNum)
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "already-on-target");
+            if (targetNum < currNum)
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "downgrade");
+            if (currOsFamily != "win10" && currOsFamily != "win11")
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "legacy-os");
+
+            int t2 = -1;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i].TargetBuild == targetBuild)
+                {
+                    if (t2 < 0) t2 = i;
+                    if (rows[i].Status == "ineligible")
+                    {
+                        string reason = string.IsNullOrEmpty(rows[i].BlockedReason) ? "ineligible" : rows[i].BlockedReason;
+                        return new UpgradePath(UpgradeVerdict.Blocked, false, reason);
+                    }
+                }
+            }
+            if (t2 < 0) return new UpgradePath(UpgradeVerdict.Blocked, false, "no-media");
+
+            if ((currArch == "x86" && rows[t2].OsFamily == "win11")
+                || (currArch == "arm64" && rows[t2].OsFamily == "win10"))
+            {
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "arch-unsupported");
+            }
+
+            int t = -1;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i].TargetBuild == targetBuild && rows[i].Arch == currArch && rows[i].Lang == currLang)
+                {
+                    t = i;
+                    break;
+                }
+            }
+
+            if (t >= 0)
+            {
+                var row = rows[t];
+                int.TryParse(row.EkbSourceBuild, NumberStyles.Integer, CultureInfo.InvariantCulture, out int srcNum);
+                if ((row.EkbSourceBuild == currBuild || (srcNum > 0 && srcNum <= currNum && currNum < targetNum))
+                    && !string.IsNullOrEmpty(row.EkbKb))
+                {
+                    if (string.IsNullOrEmpty(row.EkbMinRevision) || string.IsNullOrEmpty(row.EkbPrereqKb))
+                        return new UpgradePath(UpgradeVerdict.Blocked, false, "baseline-unknown");
+                    if (!int.TryParse(currRevision, NumberStyles.Integer, CultureInfo.InvariantCulture, out int revNum) || revNum <= 0)
+                        return new UpgradePath(UpgradeVerdict.Blocked, false, "baseline-unknown");
+                    int.TryParse(row.EkbMinRevision, NumberStyles.Integer, CultureInfo.InvariantCulture, out int minRevNum);
+                    return new UpgradePath(UpgradeVerdict.Ekb, revNum < minRevNum, "");
+                }
+
+                if ((row.OsFamily == "win10" || row.OsFamily == "win11") && row.FuMedia == "1")
+                    return new UpgradePath(UpgradeVerdict.FullFu, false, "");
+
+                return new UpgradePath(UpgradeVerdict.Blocked, false, "no-media");
+            }
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i].TargetBuild == targetBuild && rows[i].Arch == currArch)
+                    return new UpgradePath(UpgradeVerdict.Blocked, false, "language-not-carried");
+            }
+            return new UpgradePath(UpgradeVerdict.Blocked, false, "no-media");
+        }
+
+        private static string? FindUpgradeManifest(string clientDir, string targetBuild, string arch)
+        {
+            string baseDir = Path.Combine(clientDir, "upgrade", $"{targetBuild}-{arch}");
+            if (!Directory.Exists(baseDir)) return null;
+            try
+            {
+                foreach (string langDir in Directory.GetDirectories(baseDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+                {
+                    string manifest = Path.Combine(langDir, "manifest.txt");
+                    if (File.Exists(manifest)) return manifest;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static void ReadUpgradeManifest(string manifestPath, out string updateName, out int totalMib)
+        {
+            updateName = "";
+            totalMib = 0;
+            if (string.IsNullOrEmpty(manifestPath) || !File.Exists(manifestPath)) return;
+            try
+            {
+                foreach (string line in File.ReadAllLines(manifestPath))
+                {
+                    int p = line.IndexOf('|');
+                    if (p <= 0) continue;
+                    string key = line.Substring(0, p).Trim();
+                    string val = line.Substring(p + 1).Trim();
+                    if (key.Equals("updateName", StringComparison.OrdinalIgnoreCase))
+                        updateName = val;
+                    else if (key.Equals("total_mib", StringComparison.OrdinalIgnoreCase))
+                        int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out totalMib);
+                }
+            }
+            catch { }
+        }
+
+        private static string FormatDiskGb(int totalMib)
+        {
+            int tenths = (totalMib * 10 + 512) / 1024;
+            return $"{tenths / 10}.{tenths % 10}";
+        }
+
+        private static string ReasonToDisplayText(string reason) => reason switch
+        {
+            "unknown-current" => "Upgrade check unavailable for this version of Windows",
+            "bad-target" => "Target version not offered for this computer",
+            "already-on-target" => "This computer is already on or above the target version",
+            "downgrade" => "Target version is older than the installed version",
+            "legacy-os" => "Not available: pre-Win10 OS",
+            "ineligible" => "Not eligible for this upgrade target",
+            "no-media" => "Upgrade media is not part of this medium",
+            "arch-unsupported" => "Not available on this architecture",
+            "baseline-unknown" => "EKB baseline unknown for this build",
+            "language-not-carried" => "Language not carried by this target",
+            _ => $"Upgrade not available for this computer ({reason})"
+        };
+
+        public static UpgradeOffer EvaluateUpgradeOffer(string clientDir)
+        {
+            string currBuild = ReadCurrentBuildNumber().ToString(CultureInfo.InvariantCulture);
+            string currRevision = ReadCurrentRevision();
+            string currArch = CurrentArchToken();
+            string currFamily = DeriveOsFamily(currBuild);
+
+            var rows = ParseUpgradesFile(Path.Combine(clientDir, "UpdateTable", "upgrades.txt"));
+
+            string targetBuild = "";
+            UpgradePath chosen = new(UpgradeVerdict.Blocked, false, "no-media");
+            UpgradePath firstPath = chosen;
+            bool haveCandidate = false;
+
+            foreach (var row in rows)
+            {
+                bool isCandidate = row.Arch == currArch
+                    && row.Status == "active"
+                    && (!string.IsNullOrEmpty(row.EkbSourceBuild)
+                        || !string.IsNullOrEmpty(row.EkbKb)
+                        || !string.IsNullOrEmpty(row.EkbMinRevision)
+                        || !string.IsNullOrEmpty(row.EkbPrereqKb)
+                        || row.FuMedia == "1");
+                if (!isCandidate) continue;
+
+                var path = ResolvePath(rows, currBuild, currRevision, currArch, "glb", currFamily, row.TargetBuild);
+                if (!haveCandidate)
+                {
+                    haveCandidate = true;
+                    firstPath = path;
+                    targetBuild = row.TargetBuild;
+                }
+                if (path.Verdict != UpgradeVerdict.Blocked)
+                {
+                    targetBuild = row.TargetBuild;
+                    chosen = path;
+                    break;
+                }
+            }
+            if (chosen.Verdict == UpgradeVerdict.Blocked && haveCandidate)
+            {
+                chosen = firstPath;
+            }
+
+            bool offerable = chosen.Verdict == UpgradeVerdict.Ekb || chosen.Verdict == UpgradeVerdict.FullFu;
+            string? manifestPath = offerable ? FindUpgradeManifest(clientDir, targetBuild, currArch) : null;
+            string updateName = "";
+            int totalMib = 0;
+            if (manifestPath != null)
+            {
+                ReadUpgradeManifest(manifestPath, out updateName, out totalMib);
+            }
+
+            if (offerable && manifestPath != null && totalMib > 0)
+            {
+                string display = string.IsNullOrEmpty(updateName) ? targetBuild : updateName;
+                string ekbKb = rows.FirstOrDefault(r => r.TargetBuild == targetBuild && r.Arch == currArch)?.EkbKb ?? "";
+                bool isFull = chosen.Verdict == UpgradeVerdict.FullFu;
+                return new UpgradeOffer
+                {
+                    Eligible = true,
+                    Verdict = isFull ? "fullfu" : "ekb",
+                    TargetBuild = targetBuild,
+                    TargetDisplay = display,
+                    PathLabel = isFull ? "Full update (setup.exe media)" : $"Enablement package {ekbKb}",
+                    DiskGb = FormatDiskGb(totalMib),
+                    DurationBand = isFull ? "30–90 minutes" : "a few minutes",
+                    RebootsLabel = isFull
+                        ? "at least 2 (setup.exe owns the restart chain)"
+                        : "1 (plus resume)",
+                    BlockedReason = ""
+                };
+            }
+
+            string reasonToken = offerable ? "no-media" : chosen.Reason;
+            return new UpgradeOffer
+            {
+                Eligible = false,
+                Verdict = "blocked",
+                TargetBuild = targetBuild,
+                TargetDisplay = string.IsNullOrEmpty(updateName) ? targetBuild : updateName,
+                BlockedReason = ReasonToDisplayText(reasonToken)
+            };
+        }
+
+        private static bool BuildRunOnceValue(string exePath, out string data)
+        {
+            data = "";
+            string shortPath = exePath;
+            try
+            {
+                var sb = new StringBuilder(260);
+                uint len = GetShortPathNameW(exePath, sb, (uint)sb.Capacity);
+                if (len > sb.Capacity)
+                {
+                    sb = new StringBuilder((int)len + 1);
+                    len = GetShortPathNameW(exePath, sb, (uint)sb.Capacity);
+                }
+                if (len > 0) shortPath = sb.ToString();
+            }
+            catch { }
+
+            string candidate = $"\"{shortPath}\" /resume";
+            if (candidate.Length > RunOnceMaxChars) return false;
+            data = candidate;
+            return true;
+        }
+
+        private static void RunSchtasks(string arguments)
+        {
+            try
+            {
+                string sysDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                using var proc = Process.Start(new ProcessStartInfo
+                {
+                    FileName = Path.Combine(sysDir, "schtasks.exe"),
+                    Arguments = arguments,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+                proc?.WaitForExit(10000);
+            }
+            catch { }
+        }
+
+        private static void WritePendingMarker(string dir)
+        {
+            try
+            {
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, PendingMarkerName),
+                    DateTime.Now.ToString("o", CultureInfo.InvariantCulture) + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        private static void DeletePendingMarker(string dir)
+        {
+            try
+            {
+                string p = Path.Combine(dir, PendingMarkerName);
+                if (File.Exists(p)) File.Delete(p);
+            }
+            catch { }
+        }
+
+        public static bool RegisterResume(string exePath)
+        {
+            if (!BuildRunOnceValue(exePath, out string data)) return false;
+
+            bool regOk = false;
+            try
+            {
+                using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                using var key = hklm.CreateSubKey(RunOnceKey, writable: true);
+                if (key != null)
+                {
+                    key.SetValue(RunOnceName, data, RegistryValueKind.String);
+                    regOk = true;
+                }
+            }
+            catch { }
+
+            if (!regOk) return false;
+
+            // Companion pending markers + Task Scheduler fallback: Windows 10 -> 11
+            // Setup strips RunOnce and moves Windows\Temp into Windows.old, whereas
+            // %ProgramData%\WSUSOffline and \WOUResume survive feature upgrades.
+            WritePendingMarker(EngineTempDir);
+            string persistDir = PersistDir;
+            if (!persistDir.Equals(EngineTempDir, StringComparison.OrdinalIgnoreCase))
+            {
+                WritePendingMarker(persistDir);
+            }
+
+            string escaped = data.Replace("\"", "\\\"");
+            RunSchtasks($"/Create /TN \"{ResumeTaskName}\" /SC ONLOGON /RL HIGHEST /IT /F /TR \"{escaped}\"");
+            return true;
+        }
+
+        public static void DeleteResume()
+        {
+            try
+            {
+                using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                using var key = hklm.OpenSubKey(RunOnceKey, writable: true);
+                key?.DeleteValue(RunOnceName, throwOnMissingValue: false);
+            }
+            catch { }
+
+            DeletePendingMarker(EngineTempDir);
+            string persistDir = PersistDir;
+            if (!persistDir.Equals(EngineTempDir, StringComparison.OrdinalIgnoreCase))
+            {
+                DeletePendingMarker(persistDir);
+            }
+
+            RunSchtasks($"/Delete /TN \"{ResumeTaskName}\" /F");
+        }
+
+        private static bool IsResumePendingIn(string dir)
+        {
+            return File.Exists(Path.Combine(dir, "WOUpdatesToInstall.txt"))
+                || File.Exists(Path.Combine(dir, "SetWOUpdateStage.cmd"))
+                || File.Exists(Path.Combine(dir, PendingMarkerName));
+        }
+
+        public static bool IsResumePending()
+        {
+            if (IsResumePendingIn(EngineTempDir)) return true;
+            string persistDir = PersistDir;
+            return !persistDir.Equals(EngineTempDir, StringComparison.OrdinalIgnoreCase)
+                && IsResumePendingIn(persistDir);
+        }
+
+        public static bool IsEngineRecallPrepared()
+        {
+            return File.Exists(Path.Combine(EngineTempDir, EngineRecallRel));
+        }
+
+        private static string? FindUpgradeMarkerPath()
+        {
+            string p1 = Path.Combine(EngineTempDir, UpgradeMarkerName);
+            if (File.Exists(p1)) return p1;
+            string persistDir = PersistDir;
+            if (!persistDir.Equals(EngineTempDir, StringComparison.OrdinalIgnoreCase))
+            {
+                string p2 = Path.Combine(persistDir, UpgradeMarkerName);
+                if (File.Exists(p2)) return p2;
+            }
+            return null;
+        }
+
+        public static int ReadUpgradeMarkerTarget()
+        {
+            string? path = FindUpgradeMarkerPath();
+            if (path == null) return 0;
+            try
+            {
+                string? firstLine = File.ReadLines(path).FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(firstLine)) return 0;
+                string[] parts = firstLine.Split(',');
+                if (parts.Length < 2) return 0;
+                return int.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int target)
+                    ? target
+                    : 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        public static bool IsUpgradeResumeBlocked(int observedBuild)
+        {
+            if (FindUpgradeMarkerPath() == null) return false;
+            int target = ReadUpgradeMarkerTarget();
+            if (target <= 0) return true;
+            return observedBuild != target;
         }
     }
 }

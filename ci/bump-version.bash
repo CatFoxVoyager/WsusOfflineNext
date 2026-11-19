@@ -153,7 +153,14 @@ for f in ${VERSION_FILES}; do
   substitute_numeric_versions "${numeric_src_esc}" "${new_core}" "${f}"
   after_full="$(count_occurrences "(^|[^0-9])${new_esc}([^0-9]|\$)" "${f}")"
   after_num="$(count_numeric_anchored "${new_core_esc}" "${f}")"
-  core_after="$(count_occurrences "(^|[^0-9])${new_core_esc}([^0-9]|\$)" "${f}")"
+  case "${f}" in
+    */package.json)
+      core_after="$(count_occurrences "\"version\"[[:space:]]*:[[:space:]]*\"${new_core_esc}([^0-9]|\")" "${f}")"
+      ;;
+    *)
+      core_after="$(count_occurrences "(^|[^0-9])${new_core_esc}([^0-9]|\$)" "${f}")"
+      ;;
+  esac
   full_before_total=$(( full_before_total + before_full ))
   num_before_total=$(( num_before_total + before_num ))
   full_after_total=$(( full_after_total + after_full ))

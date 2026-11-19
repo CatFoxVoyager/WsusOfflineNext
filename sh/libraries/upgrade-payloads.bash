@@ -314,7 +314,7 @@ function uup_extract_url_map ()
         || (( matched != field_hits ))
     then
         printf 'url map does not cover every files-map entry (%s/%s entries carry a url)\n' \
-            "${matched}" "${#entries[@]}" "${field_hits}" >&2
+            "${matched}" "${#entries[@]}" >&2
         return 1
     fi
 
@@ -831,7 +831,7 @@ function uup_hash_gate ()
     local manifest="$1" spool_dir="$2"
     local hashdeep_bin="" exp_dir="" exp_file=""
     local name="" hash="" size="" rest=""
-    local bad=0 rows=0 audit_rc=0
+    local bad=0 row_count=0 audit_rc=0
 
     if [[ ! -s "${manifest}" ]]
     then
@@ -870,10 +870,10 @@ function uup_hash_gate ()
             break
         fi
         printf '%s,%s,%s\n' "${size}" "${hash}" "${name}" >> "${exp_file}"
-        rows=$(( rows + 1 ))
+        row_count=$(( row_count + 1 ))
     done < "${manifest}"
 
-    if (( bad == 1 )) || (( rows == 0 ))
+    if (( bad == 1 )) || (( row_count == 0 ))
     then
         rm -rf "${exp_dir}"
         [[ "${bad}" == "1" ]] || printf 'manifest carries no payload rows: %s\n' "${manifest}" >&2

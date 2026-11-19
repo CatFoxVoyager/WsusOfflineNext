@@ -20,11 +20,23 @@ Independent successor to WSUS Offline Update Community Edition. Current version:
 ## Features
 
 - **Windows updates** from Microsoft's `wsusscn2.cab` catalog: Windows 11 (24H2, 25H2, 26H2), Windows 10 (x86/x64), Server 2016/2019/2022. Checkpoint-first ordering of cumulative updates and enablement-package eligibility checks on the 26100 branch.
+- **Offline OS upgrades (Windows 10 & 11)**: in-branch enablement packages (EKB) and full feature-update media (`setup.exe`, including Windows 10 → Windows 11 25H2) selected in the Generator's **OS Upgrades** tab and applied on the client via an explicit 5-fact opt-in confirmation (never persisted across runs).
+- **Post-reboot resume**: handles `3010`/`3011` restarts with an in-app restart prompt and upgrade-surviving `/resume` persistence (`RunOnce`, `\WOUResume` Scheduled Task, `%ProgramData%\WSUSOffline`).
 - **Office**: 2016 MSI through the WSUS catalog; 2019, LTSC 2021, and LTSC 2024 Click-to-Run through the Office Deployment Tool (ODT).
 - **Optional packages**: Edge, WebView2, Defender definitions, Visual C++, .NET Framework, .NET 8/10 runtimes.
 - **Audit mode**: `/auditonly` reports applicable updates without installing anything.
 - **Integrity**: hash verification, fail-closed servicing paths, restart-loop protection.
 - **Offline runtime bootstrap**: the client launcher installs missing .NET 8 Desktop and WebView2 runtimes from the media itself, otherwise it falls back to the native installer.
+
+## Screenshots
+
+| Generator — OS Upgrades | Modern Installer — OS Upgrade offer |
+| :---: | :---: |
+| ![Generator OS Upgrades tab](doc/screenshots/generator-upgrades.png) | ![Modern Installer showing the 5-fact OS Upgrade card](doc/screenshots/installer-main.png) |
+
+| 5-fact OS Upgrade confirmation | Post-upgrade console & EKB adaptation |
+| :---: | :---: |
+| ![Modern Installer 5-fact OS Upgrade confirmation modal](doc/screenshots/installer-upgrade-modal.png) | ![Modern Installer running on Windows 11 with live console](doc/screenshots/installer-console.png) |
 
 ## Quick start
 
@@ -36,9 +48,9 @@ Download the latest archive from [Releases](https://github.com/CatFoxVoyager/Wsu
 UpdateGenerator.cmd
 ```
 
-Select Windows builds and Office products, keep **Verify downloaded files** enabled, click **Start download**. Check `log/download.log` for errors.
+Select Windows builds, Office products, and any optional **OS Upgrades** targets, keep **Verify downloaded files** enabled, click **Start download**. Check `log/download.log` for errors.
 
-**2. Copy the whole `client/` directory** to a USB drive or other media.
+**2. Copy the whole `client/` directory** to a USB drive or other media (exFAT/NTFS recommended for >4 GB upgrade media).
 
 **3. On the offline computer** (accept the UAC prompt):
 
@@ -46,7 +58,7 @@ Select Windows builds and Office products, keep **Verify downloaded files** enab
 client\UpdateInstaller.cmd
 ```
 
-Keep **Verify package integrity** enabled and click **Start installation**. If a restart is required, restart and run it again, or enable **Automatic restart and resume**.
+Keep **Verify package integrity** enabled, opt in to **OS Upgrade** if staged media is available and desired (confirmed by a 5-fact prompt), and click **Start installation**. If a restart is required (`3010`/`3011`), accept the restart prompt or enable **Automatic restart and resume**.
 
 ## Requirements
 
@@ -65,6 +77,9 @@ Download (from the project root):
 rem Windows x64 (includes Windows 11) with .NET, Defender, Edge, WebView2
 cmd\DownloadUpdates.cmd w100-x64 glb /includedotnet /includewddefs /includeedge /includewebview2 /verify
 
+rem Stage offline OS upgrade media (example: Windows 11 25H2 build 26200)
+cmd\DownloadUpdates.cmd w100-x64 glb /includeupgrade:26200 /verify
+
 rem Office Click-to-Run: o2k19 | o2k21 | o2k24, then x86 | x64, optional language
 cmd\DownloadOfficeC2R.cmd o2k24 x64 en-us
 
@@ -80,16 +95,18 @@ Install or audit (elevated prompt):
 ```cmd
 client\cmd\DoUpdate.cmd /auditonly
 client\cmd\DoUpdate.cmd /verify /updateoffice /showlog
+client\cmd\DoUpdate.cmd /upgradeos:26200 /autoreboot
 ```
 
 | Option | Effect |
 | :--- | :--- |
 | `/auditonly` | Write an applicability report, install nothing. |
+| `/upgradeos:<build>` | Opt-in offline OS upgrade to `<build>` (per-run only, never persisted to INI). |
 | `/verify` | Verify package integrity before installation. |
 | `/updateoffice` | Service detected Office installations. |
 | `/updatecpp` | Install Visual C++ redistributables. |
 | `/updatedotnet5` | Install modern .NET runtimes (legacy switch name). |
-| `/autoreboot` | Temporary autologon with restart/resume. |
+| `/autoreboot` | Register post-reboot restart/resume (`RunOnce` + `\WOUResume` on Win10+). |
 | `/shutdown` | Shut down when done. |
 | `/showlog` | Open the log when done. |
 
@@ -146,6 +163,7 @@ Tests:
 
 ```powershell
 .\tests\verify-gui-contracts.cmd
+.\tests\verify-upgrade-phase-gate.cmd
 .\tests\verify-offline-audit.cmd
 .\tests\verify-checkpoint-servicing.cmd
 .\tests\verify-win11-26h1.cmd

@@ -1,6 +1,7 @@
 # Deploy and local overrides
 deploy-local.cmd
 static/custom/StaticDownloadLinks-w100-x64-glb.txt
+static/custom/StaticDownloadLinks-w100-x86-glb.txt
 
 # Agent, orchestration & local tool state
 .agents/
@@ -39,7 +40,10 @@ client/w62-x64/
 client/w63/
 client/w63-x64/
 client/w60-x64/
+client/w60/
+client/w61/
 client/w61-x64/
+client/wxp/
 static/sdd/
 client/o2k*/
 client/dotnet/

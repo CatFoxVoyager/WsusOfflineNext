@@ -2048,31 +2048,22 @@ rem only, to get the final list of valid dynamic download links
 rem echo Creating ValidDynamicLinks-%1-%2.txt...
 call :Log "Info: Creating ValidDynamicLinks-%1-%2.txt..."
 if exist "%TEMP%\ExcludeList-%1.txt" del "%TEMP%\ExcludeList-%1.txt"
-if exist ..\exclude\ExcludeList-%TMP_PLATFORM%.txt (
-  type ..\exclude\ExcludeList-%TMP_PLATFORM%.txt >>"%TEMP%\ExcludeList-%1.txt"
-  if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%.txt >>"%TEMP%\ExcludeList-%1.txt"
-)
-if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%3.txt (
-  type ..\exclude\ExcludeList-%TMP_PLATFORM%-%3.txt >> "%TEMP%\ExcludeList-%1.txt"
-  if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3.txt >>"%TEMP%\ExcludeList-%1.txt"
-)
-if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%2.txt (
-  type ..\exclude\ExcludeList-%TMP_PLATFORM%-%2.txt >>"%TEMP%\ExcludeList-%1.txt"
-  if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%2.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%2.txt >>"%TEMP%\ExcludeList-%1.txt"
-)
-if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-%2.txt (
-  type ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-%2.txt >> "%TEMP%\ExcludeList-%1.txt"
-  if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-%2.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-%2.txt >>"%TEMP%\ExcludeList-%1.txt"
-)
+rem Each list is consumed independently of the corresponding base list
+rem (parity with the bash pipeline, which reads base and custom lists
+rem as a flat, independently checked set of files).
+if exist ..\exclude\ExcludeList-%TMP_PLATFORM%.txt type ..\exclude\ExcludeList-%TMP_PLATFORM%.txt >>"%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%.txt >>"%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%3.txt type ..\exclude\ExcludeList-%TMP_PLATFORM%-%3.txt >> "%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3.txt >>"%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%2.txt type ..\exclude\ExcludeList-%TMP_PLATFORM%-%2.txt >>"%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%2.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%2.txt >>"%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-%2.txt type ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-%2.txt >> "%TEMP%\ExcludeList-%1.txt"
+if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-%2.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-%2.txt >>"%TEMP%\ExcludeList-%1.txt"
 if not "%2"=="glb" (
-  if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-lng.txt (
-    type ..\exclude\ExcludeList-%TMP_PLATFORM%-lng.txt >>"%TEMP%\ExcludeList-%1.txt"
-    if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-lng.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-lng.txt >>"%TEMP%\ExcludeList-%1.txt"
-  )
-  if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-lng.txt (
-    type ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-lng.txt >> "%TEMP%\ExcludeList-%1.txt"
-    if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-lng.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-lng.txt >>"%TEMP%\ExcludeList-%1.txt"
-  )
+  if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-lng.txt type ..\exclude\ExcludeList-%TMP_PLATFORM%-lng.txt >>"%TEMP%\ExcludeList-%1.txt"
+  if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-lng.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-lng.txt >>"%TEMP%\ExcludeList-%1.txt"
+  if exist ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-lng.txt type ..\exclude\ExcludeList-%TMP_PLATFORM%-%3-lng.txt >> "%TEMP%\ExcludeList-%1.txt"
+  if exist ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-lng.txt type ..\exclude\custom\ExcludeList-%TMP_PLATFORM%-%3-lng.txt >>"%TEMP%\ExcludeList-%1.txt"
 )
 
 if "%TMP_PLATFORM%"=="w63" (

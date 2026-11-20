@@ -641,7 +641,7 @@ export default function App() {
                   })))}
                   className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-200 border border-dark-800 transition-colors"
                 >
-                  Serveurs uniquement
+                  Servers only
                 </button>
                 <button
                   onClick={() => setWin10Builds(prev => prev.map(b => ({

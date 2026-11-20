@@ -15,6 +15,7 @@
 */w62-x64/*
 */w63-x64/*
 *w100*
+*/upgrade/*
 */*/x64-glb/*
 *vcredist*_x64*
 *dotnetfx35*

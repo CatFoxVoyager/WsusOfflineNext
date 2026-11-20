@@ -1,0 +1,15 @@
+*o2k*
+*oxp*
+*ofc*
+*w2k*
+*wxp*
+*/w60/*
+*w61*
+*w62*
+*w63*
+*w100*
+*/upgrade/*
+*/*/x86-glb/*
+*MSEInstall*
+*.au3
+*.cpp

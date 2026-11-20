@@ -391,8 +391,7 @@ del /Q ..\xslt\*w2k-*.* >nul 2>&1
 rem *** Windows XP stuff ***
 if exist ..\client\static\StaticUpdateIds-wxp-x86.txt del ..\client\static\StaticUpdateIds-wxp-x86.txt
 if exist ..\exclude\ExcludeList-wxp-x86.txt del ..\exclude\ExcludeList-wxp-x86.txt
-if exist ..\exclude\ExcludeListISO-wxp-x86.txt del ..\exclude\ExcludeListISO-wxp-x86.txt
-if exist ..\exclude\ExcludeListUSB-wxp-x86.txt del ..\exclude\ExcludeListUSB-wxp-x86.txt
+rem Keep ExcludeListISO/USB-wxp-x86.txt (legacy XP support restored; issue #38)
 rem del /Q ..\static\*-wxp-x86-*.* >nul 2>&1
 del /Q ..\xslt\*-wxp-x86-*.* >nul 2>&1
 
@@ -418,10 +417,7 @@ if exist ..\client\static\StaticUpdateIds-w60-x86.txt del ..\client\static\Stati
 if exist ..\client\static\StaticUpdateIds-wupre-w60.txt del ..\client\static\StaticUpdateIds-wupre-w60.txt
 if exist ..\exclude\ExcludeList-w60-x64.txt del ..\exclude\ExcludeList-w60-x64.txt
 if exist ..\exclude\ExcludeList-w60-x86.txt del ..\exclude\ExcludeList-w60-x86.txt
-if exist ..\exclude\ExcludeListISO-w60-x64.txt del ..\exclude\ExcludeListISO-w60-x64.txt
-if exist ..\exclude\ExcludeListISO-w60-x86.txt del ..\exclude\ExcludeListISO-w60-x86.txt
-if exist ..\exclude\ExcludeListUSB-w60-x64.txt del ..\exclude\ExcludeListUSB-w60-x64.txt
-if exist ..\exclude\ExcludeListUSB-w60-x86.txt del ..\exclude\ExcludeListUSB-w60-x86.txt
+rem Keep ExcludeListISO/USB-w60-*.txt (legacy Vista/2008 support restored; issue #38)
 for %%i in (enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve trk ell ara heb dan nor fin) do (
   if exist ..\static\StaticDownloadLinks-ie8-w60-x64-%%i.txt del ..\static\StaticDownloadLinks-ie8-w60-x64-%%i.txt
   if exist ..\static\StaticDownloadLinks-ie8-w60-x86-%%i.txt del ..\static\StaticDownloadLinks-ie8-w60-x86-%%i.txt
@@ -451,10 +447,7 @@ for %%i in (379893 393297 394271 394806 460805 461310 461814 528049) do (
 if exist ..\client\static\StaticUpdateIds-wupre-w61.txt del ..\client\static\StaticUpdateIds-wupre-w61.txt
 if exist ..\exclude\ExcludeList-w61-x64.txt del ..\exclude\ExcludeList-w61-x64.txt
 if exist ..\exclude\ExcludeList-w61-x86.txt del ..\exclude\ExcludeList-w61-x86.txt
-if exist ..\exclude\ExcludeListISO-w61-x64.txt del ..\exclude\ExcludeListISO-w61-x64.txt
-if exist ..\exclude\ExcludeListISO-w61-x86.txt del ..\exclude\ExcludeListISO-w61-x86.txt
-if exist ..\exclude\ExcludeListUSB-w61-x64.txt del ..\exclude\ExcludeListUSB-w61-x64.txt
-if exist ..\exclude\ExcludeListUSB-w61-x86.txt del ..\exclude\ExcludeListUSB-w61-x86.txt
+rem Keep ExcludeListISO/USB-w61-*.txt (Windows 7 / 2008 R2 support restored; issue #38)
 for %%i in (enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve trk ell ara heb dan nor fin) do (
   if exist ..\static\StaticDownloadLinks-ie9-w61-x64-%%i.txt del ..\static\StaticDownloadLinks-ie9-w61-x64-%%i.txt
   if exist ..\static\StaticDownloadLinks-ie9-w61-x86-%%i.txt del ..\static\StaticDownloadLinks-ie9-w61-x86-%%i.txt

@@ -87,11 +87,17 @@ shift /3
 goto V2EvalParams
 
 :CopyFilter
-rem *** Copy ISO filter ***
+rem *** Copy ISO filter (fail-closed: never build an unfiltered ISO) ***
 if exist ..\exclude\ExcludeListISO-%1.txt (
   copy /Y ..\exclude\ExcludeListISO-%1.txt %ISO_FILTER% >nul
-) else (
+) else if exist ..\exclude\ExcludeListISO-%1-x86.txt (
   copy /Y ..\exclude\ExcludeListISO-%1-x86.txt %ISO_FILTER% >nul
+) else (
+  echo.
+  echo ERROR: Exclusion list ..\exclude\ExcludeListISO-%1.txt not found.
+  echo %DATE% %TIME% - Error: Exclusion list ..\exclude\ExcludeListISO-%1.txt not found>>%DOWNLOAD_LOGFILE%
+  echo.
+  exit /b 1
 )
 if exist ..\exclude\custom\ExcludeListISO-%1.txt (
   type ..\exclude\custom\ExcludeListISO-%1.txt >>%ISO_FILTER%
@@ -147,6 +153,7 @@ goto CreateImage
 set ISO_NAME=wsusoffline-%1
 set ISO_VOLID=WOU_%1
 call :CopyFilter %1
+if errorlevel 1 goto Error
 call :ExtendFilter %1
 goto CreateImage
 
@@ -157,6 +164,7 @@ set ISO_FILTER="%TEMP%\ExcludeListISO-%1-%2.txt"
 set ISO_NAME=wsusoffline-%1-%2
 set ISO_VOLID=WOU_%1_%2
 call :CopyFilter %1
+if errorlevel 1 goto Error
 call :LocaleFilter %2
 call :ExtendFilter %1
 goto CreateImage

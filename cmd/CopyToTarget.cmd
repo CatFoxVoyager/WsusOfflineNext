@@ -87,11 +87,17 @@ shift /3
 goto V2EvalParams
 
 :CopyFilter
-rem *** Copy USB filter ***
+rem *** Copy USB filter (fail-closed: never copy an unfiltered client tree) ***
 if exist ..\exclude\ExcludeListUSB-%1.txt (
   copy /Y ..\exclude\ExcludeListUSB-%1.txt %USB_FILTER% >nul
-) else (
+) else if exist ..\exclude\ExcludeListUSB-%1-x86.txt (
   copy /Y ..\exclude\ExcludeListUSB-%1-x86.txt %USB_FILTER% >nul
+) else (
+  echo.
+  echo ERROR: Exclusion list ..\exclude\ExcludeListUSB-%1.txt not found.
+  echo %DATE% %TIME% - Error: Exclusion list ..\exclude\ExcludeListUSB-%1.txt not found>>%DOWNLOAD_LOGFILE%
+  echo.
+  exit /b 1
 )
 if exist ..\exclude\custom\ExcludeListUSB-%1.txt (
   type ..\exclude\custom\ExcludeListUSB-%1.txt >>%USB_FILTER%
@@ -136,6 +142,7 @@ goto CreateImage
 
 :V1CopyFilter
 call :CopyFilter %1
+if errorlevel 1 goto Error
 call :ExtendFilter
 goto CreateImage
 
@@ -144,6 +151,7 @@ rem *** Create USB filter ***
 echo Creating USB filter for %1 %2...
 set USB_FILTER="%TEMP%\ExcludeListUSB-%1-%2.txt"
 call :CopyFilter %1
+if errorlevel 1 goto Error
 call :LocaleFilter %2
 call :ExtendFilter
 goto CreateImage

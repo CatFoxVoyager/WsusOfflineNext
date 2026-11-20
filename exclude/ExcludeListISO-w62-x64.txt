@@ -12,6 +12,7 @@
 */w62/*
 *w63*
 *w100*
+*/upgrade/*
 */*/x86-glb/*
 *dotnetfx35*
 *MSEInstall*

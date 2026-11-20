@@ -7,7 +7,7 @@
 Downloads Windows and Office updates on a connected machine and packages them into a portable `client/` directory that installs them on computers without Internet access.
 Batch download and install engines, .NET 8 / WebView2 (React) desktop apps, and a native Free Pascal/Lazarus fallback installer.
 
-[![Version](https://img.shields.io/badge/version-6.3.0+2026.11-2563eb?style=flat-square)](RELEASE_NOTES.md)
+[![Version](https://img.shields.io/badge/version-6.3.1+2026.11-2563eb?style=flat-square)](RELEASE_NOTES.md)
 [![Platform](https://img.shields.io/badge/platform-Windows_x64-2563eb?style=flat-square)](#requirements)
 [![License](https://img.shields.io/badge/license-GPLv3-15803d?style=flat-square)](doc/license.txt)
 
@@ -15,7 +15,7 @@ Batch download and install engines, .NET 8 / WebView2 (React) desktop apps, and 
 
 </div>
 
-Independent successor to WSUS Offline Update Community Edition. Current version: **6.3.0+2026.11** ([release notes](RELEASE_NOTES.md)).
+Independent successor to WSUS Offline Update Community Edition. Current version: **6.3.1+2026.11** ([release notes](RELEASE_NOTES.md)).
 
 ## Features
 

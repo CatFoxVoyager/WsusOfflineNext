@@ -58,6 +58,7 @@ client/UpdateTable/*.csv
 exclude/ExcludeList-superseded.txt
 exclude/ExcludeList-superseded-seconly.txt
 iso/*.iso
+iso/*-hashes.txt
 usb/*
 !iso/dummy.txt
 !usb/dummy.txt

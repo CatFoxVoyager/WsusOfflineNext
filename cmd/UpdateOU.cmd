@@ -135,7 +135,7 @@ rd /S /Q ..\wsusoffline
 echo %DATE% %TIME% - Info: Updated WSUS Offline Next>>%DOWNLOAD_LOGFILE%
 echo Restoring custom language and architecture additions and removals...
 if "%REMOVE_CMD%" NEQ "" (
-  for %%i in (%REMOVE_CMD%) do call %%i /quiet
+  for %%i in (%REMOVE_CMD%) do call "%~dps0%%i" /quiet
 )
 if "%CUST_LANG%" NEQ "" (
   for %%i in (%CUST_LANG%) do call "%~dps0AddCustomLanguageSupport.cmd" %%i /quiet

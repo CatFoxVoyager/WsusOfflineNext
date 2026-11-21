@@ -207,12 +207,12 @@ goto InstFailure
 echo Installing %FILE_FULL_PATH_DISPLAY%...
 set ERR_LEVEL=0
 for /F "tokens=3 delims=\." %%i in ("%FILE_FULL_PATH_DISPLAY%") do (
-  call SafeRmDir.cmd "%TEMP%\%%i"
+  call "%~dps0SafeRmDir.cmd" "%TEMP%\%%i"
   md "%TEMP%\%%i"
   %SystemRoot%\System32\expand.exe -R "%FILE_FULL_PATH%" -F:* "%TEMP%\%%i" >nul
   for /F %%j in ('dir /A:-D /B "%TEMP%\%%i\*.msp"') do %SystemRoot%\System32\msiexec.exe /qn /norestart /update "%TEMP%\%%i\%%j"
   set ERR_LEVEL=%errorlevel%
-  call SafeRmDir.cmd "%TEMP%\%%i"
+  call "%~dps0SafeRmDir.cmd" "%TEMP%\%%i"
 )
 rem echo InstallOfficeUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="0" (

@@ -371,12 +371,12 @@ echo Installing %FILE_FULL_PATH_DISPLAY%...
 set ERR_LEVEL=0
 if "%OS_ARCH%"=="x64" (set TOKEN_KB=3) else (set TOKEN_KB=2)
 for /F "tokens=%TOKEN_KB% delims=-" %%i in ("%FILE_FULL_PATH_DISPLAY%") do (
-  call SafeRmDir.cmd "%TEMP%\%%i"
+  call "%~dps0SafeRmDir.cmd" "%TEMP%\%%i"
   md "%TEMP%\%%i"
   %SystemRoot%\System32\expand.exe "%FILE_FULL_PATH%" -F:* "%TEMP%\%%i" >nul
   %SystemRoot%\System32\PkgMgr.exe /ip /m:"%TEMP%\%%i" /quiet /norestart
   set ERR_LEVEL=%errorlevel%
-  call SafeRmDir.cmd "%TEMP%\%%i"
+  call "%~dps0SafeRmDir.cmd" "%TEMP%\%%i"
 )
 rem echo InstallOSUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="0" (

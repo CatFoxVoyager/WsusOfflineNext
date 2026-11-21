@@ -22,7 +22,7 @@ if not exist ReconnectNetDrive.cmd goto SkipReconnect
 %SystemRoot%\System32\timeout.exe /T 2 >nul
 for /F "tokens=3*" %%i in (ReconnectNetDrive.cmd) do (
   echo Reconnecting network drive %%i to %%j...
-  call ReconnectNetDrive.cmd
+  call "%~dps0ReconnectNetDrive.cmd"
   if errorlevel 1 (
     echo %DATE% %TIME% - Error: Reconnection of network drive %%i to %%j failed>>%UPDATE_LOGFILE%
     goto Cleanup
@@ -31,12 +31,12 @@ for /F "tokens=3*" %%i in (ReconnectNetDrive.cmd) do (
 )
 :SkipReconnect
 echo Recalling update...
-RecallUpdate.cmd
+"%~dps0RecallUpdate.cmd"
 goto EoF
 
 :Cleanup
 echo Cleaning up automatic recall...
-call CleanupRecall.cmd
+call "%~dps0CleanupRecall.cmd"
 if exist %SystemRoot%\System32\bcdedit.exe (
   echo Adjusting boot sequence for next reboot...
   %SystemRoot%\System32\bcdedit.exe /bootsequence {current}

@@ -141,23 +141,23 @@ for /F "usebackq tokens=1,2 delims=," %%i in ("%TEMP%\MissingUpdateIds.txt") do 
             if "%%l"=="%%j" (
               if "%OS_NAME%"=="w100" (
                 if exist "..\%OS_SEARCH_DIR%\%%k\%OS_VER_BUILD_INTERNAL%" (
-                  call ListUpdateFile.cmd %%m ..\%OS_SEARCH_DIR%\%%k\%OS_VER_BUILD_INTERNAL% /searchleftmost /append
+                  call "%~dps0ListUpdateFile.cmd" %%m ..\%OS_SEARCH_DIR%\%%k\%OS_VER_BUILD_INTERNAL% /searchleftmost /append
                   if errorlevel 1 (
-                    call ListUpdateFile.cmd %%m ..\%OS_SEARCH_DIR%\%%k /searchleftmost /append
+                    call "%~dps0ListUpdateFile.cmd" %%m ..\%OS_SEARCH_DIR%\%%k /searchleftmost /append
                     if errorlevel 1 (
                       rem echo Warning: Update file %%m ^(id: %%j^) not found.
                       echo %DATE% %TIME% - Warning: Update file %%m ^(id: %%j^) not found>>%UPDATE_LOGFILE%
                     )
                   )
                 ) else (
-                  call ListUpdateFile.cmd %%m ..\%OS_SEARCH_DIR%\%%k /searchleftmost /append
+                  call "%~dps0ListUpdateFile.cmd" %%m ..\%OS_SEARCH_DIR%\%%k /searchleftmost /append
                   if errorlevel 1 (
                     rem echo Warning: Update file %%m ^(id: %%j^) not found.
                     echo %DATE% %TIME% - Warning: Update file %%m ^(id: %%j^) not found>>%UPDATE_LOGFILE%
                   )
                 )
               ) else (
-                call ListUpdateFile.cmd %%m ..\%OS_SEARCH_DIR%\%%k /searchleftmost /append
+                call "%~dps0ListUpdateFile.cmd" %%m ..\%OS_SEARCH_DIR%\%%k /searchleftmost /append
                 if errorlevel 1 (
                   rem echo Warning: Update file %%m ^(id: %%j^) not found.
                   echo %DATE% %TIME% - Warning: Update file %%m ^(id: %%j^) not found>>%UPDATE_LOGFILE%
@@ -172,7 +172,7 @@ for /F "usebackq tokens=1,2 delims=," %%i in ("%TEMP%\MissingUpdateIds.txt") do 
           if exist ..\UpdateTable\UpdateTable-o2k16-%%k.csv (
             for /F "tokens=1,2 delims=," %%l in (..\UpdateTable\UpdateTable-o2k16-%%k.csv) do (
               if "%%l"=="%%j" (
-                call ListUpdateFile.cmd %%m ..\o2k16\%%k /searchleftmost /append
+                call "%~dps0ListUpdateFile.cmd" %%m ..\o2k16\%%k /searchleftmost /append
                 if errorlevel 1 (
                   rem echo Warning: Update file %%m ^(id: %%j^) not found.
                   echo %DATE% %TIME% - Warning: Update file %%m ^(id: %%j^) not found>>%UPDATE_LOGFILE%
@@ -189,29 +189,29 @@ for /F "usebackq tokens=1,2 delims=," %%i in ("%TEMP%\MissingUpdateIds.txt") do 
         if "%OS_NAME%"=="w100" (
           if exist "..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%" (
             if %IE_VER_MAJOR%%IE_VER_MINOR%0 GEQ 9100 (
-              call ListUpdateFile.cmd ie%IE_VER_MINOR%-*%%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%
+              call "%~dps0ListUpdateFile.cmd" ie%IE_VER_MINOR%-*%%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%
             ) else (
-              call ListUpdateFile.cmd ie%IE_VER_MAJOR%-*%%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%
+              call "%~dps0ListUpdateFile.cmd" ie%IE_VER_MAJOR%-*%%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%
             )
-            call ListUpdateFile.cmd windows*%%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL% /searchleftmost
-            call ListUpdateFile.cmd %%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%
+            call "%~dps0ListUpdateFile.cmd" windows*%%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL% /searchleftmost
+            call "%~dps0ListUpdateFile.cmd" %%i ..\%OS_SEARCH_DIR%\%%l\%OS_VER_BUILD_INTERNAL%
           )
         )
         if %IE_VER_MAJOR%%IE_VER_MINOR%0 GEQ 9100 (
-          call ListUpdateFile.cmd ie%IE_VER_MINOR%-*%%i ..\%OS_SEARCH_DIR%\%%l
+          call "%~dps0ListUpdateFile.cmd" ie%IE_VER_MINOR%-*%%i ..\%OS_SEARCH_DIR%\%%l
         ) else (
-          call ListUpdateFile.cmd ie%IE_VER_MAJOR%-*%%i ..\%OS_SEARCH_DIR%\%%l
+          call "%~dps0ListUpdateFile.cmd" ie%IE_VER_MAJOR%-*%%i ..\%OS_SEARCH_DIR%\%%l
         )
-        call ListUpdateFile.cmd windows*%%i ..\%OS_SEARCH_DIR%\%%l /searchleftmost
-        call ListUpdateFile.cmd %%i ..\%OS_SEARCH_DIR%\%%l
+        call "%~dps0ListUpdateFile.cmd" windows*%%i ..\%OS_SEARCH_DIR%\%%l /searchleftmost
+        call "%~dps0ListUpdateFile.cmd" %%i ..\%OS_SEARCH_DIR%\%%l
       )
     )
     rem statisch definierte Office-Updates als EXE
     if not exist "%TEMP%\Update.txt" (
       if not "%O2K16_VER_MAJOR%"=="" (
         for %%k in (%O2K16_LANG% glb) do (
-          call ListUpdateFile.cmd %%i*%O2K16_ARCH% ..\o2k16\%%k
-          call ListUpdateFile.cmd %%i ..\o2k16\%%k
+          call "%~dps0ListUpdateFile.cmd" %%i*%O2K16_ARCH% ..\o2k16\%%k
+          call "%~dps0ListUpdateFile.cmd" %%i ..\o2k16\%%k
         )
       )
     )

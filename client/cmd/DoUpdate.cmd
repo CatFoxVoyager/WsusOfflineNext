@@ -81,7 +81,7 @@ rem *** Execute custom initialization hook ***
 if exist .\custom\InitializationHook.cmd (
   echo Executing custom initialization hook...
   pushd .\custom
-  call InitializationHook.cmd
+  call "%~dps0custom\InitializationHook.cmd"
   set ERR_LEVEL=%errorlevel%
   popd
 )
@@ -238,7 +238,7 @@ if /i "%OS_ARCH%"=="x64" (set HASHDEEP_PATH=..\bin\hashdeep64.exe) else (set HAS
 
 rem *** Set target environment variables ***
 if "%OS_VER_MAJOR%"=="" goto UnsupOS
-call SetTargetEnvVars.cmd
+call "%~dps0SetTargetEnvVars.cmd"
 
 rem *** Check Operating System ***
 if "%OS_NAME%"=="" goto UnsupOS
@@ -473,12 +473,12 @@ if exist "%TEMP%\InstalledUpdateIds.txt" (
 )
 for %%i in ("%TEMP%\MissingUpdateIds.txt") do if %%~zi==0 del %%i
 if not exist "%TEMP%\MissingUpdateIds.txt" goto Upd2w63
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing Windows 8.1 / Server 2012 R2 Update Rollup April 2014...
   call :Log "Info: Installing Windows 8.1 / Server 2012 R2 Update Rollup April 2014"
-  call InstallListedUpdates.cmd %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
+  call "%~dps0InstallListedUpdates.cmd" %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   if "!ERR_LEVEL!"=="3010" (
@@ -521,12 +521,12 @@ if exist "%TEMP%\InstalledUpdateIds.txt" (
 del "%TEMP%\StaticUpdateIds-w63-upd2.txt"
 for %%i in ("%TEMP%\MissingUpdateIds.txt") do if %%~zi==0 del %%i
 if not exist "%TEMP%\MissingUpdateIds.txt" goto SkipSPInst
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing Windows 8.1 / Server 2012 R2 Update Rollup Nov. 2014...
   call :Log "Info: Installing Windows 8.1 / Server 2012 R2 Update Rollup Nov. 2014"
-  call InstallListedUpdates.cmd %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
+  call "%~dps0InstallListedUpdates.cmd" %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   if "!ERR_LEVEL!"=="3010" (
@@ -619,12 +619,12 @@ if exist ..\static\StaticUpdateIds-servicing-%OS_NAME%-%OS_VER_BUILD%.txt (
 )
 goto ServicingStackInstalled
 :InstallServicingStack
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if not exist "%TEMP%\UpdatesToInstall.txt" (
   goto SkipServicingStack
 )
-call InstallListedUpdates.cmd %VERIFY_MODE% %DISM_MODE%
+call "%~dps0InstallListedUpdates.cmd" %VERIFY_MODE% %DISM_MODE%
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -1015,8 +1015,8 @@ echo. >%WOU_TEMP_DIR%\wou_buildupgrade_prep_tried.txt
 echo Preparing feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD%...
 call :Log "Info: Preparing feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD%"
 echo %WOU_BUILDUPGRADE_PREUPD%>"%TEMP%\MissingUpdateIds.txt"
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
-call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
+call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -1069,8 +1069,8 @@ echo. >%WOU_TEMP_DIR%\wou_buildupgrade_tried.txt
 echo Performing feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD%...
 call :Log "Info: Performing feature upgrade from build %WOU_BUILDUPGRADE_OLDBUILD% to %WOU_BUILDUPGRADE_NEWBUILD%"
 echo %WOU_BUILDUPGRADE_EPKGID%>>"%TEMP%\MissingUpdateIds.txt"
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
-call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
+call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -1253,7 +1253,7 @@ if defined WOU_FU_PREV_COUNT if "!WOU_FU_PREV_LEG!"=="full" if "!WOU_FU_PREV_BUI
     if exist "%SystemRoot%\Temp\WOURecall" (
       echo Info: Armed recall state found - restoring safe state after failed upgrade
       call :Log "Info: Armed recall state found - restoring safe state after failed upgrade"
-      call CleanupRecall.cmd
+      call "%~dps0CleanupRecall.cmd"
     )
     goto FullUpgradeSkip
   )
@@ -1461,11 +1461,11 @@ if "%WUA_TARGET_ID%"=="" (
   goto SkipWUAInst
 )
 echo %WUA_TARGET_ID%>"%TEMP%\MissingUpdateIds.txt"
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing most recent Windows Update Agent...
-  call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
+  call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
   if "!ERR_LEVEL!"=="3010" (
@@ -1639,11 +1639,11 @@ if exist "%TEMP%\InstalledUpdateIds.txt" (
 ) else (
   copy /Y ..\static\StaticUpdateIds-ie11-w62.txt "%TEMP%\MissingUpdateIds.txt" >nul
 )
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing Internet Explorer 11 prerequisites...
-  call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
+  call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   if "!ERR_LEVEL!"=="3010" (
@@ -1667,7 +1667,7 @@ if exist "%TEMP%\UpdatesToInstall.txt" (
 :SkipIEw62Pre
 echo Installing Internet Explorer 11...
 for /F %%i in ('dir /B %IE_FILENAME%') do (
-  call InstallOSUpdate.cmd "..\%OS_NAME%-%OS_ARCH%\glb\%%i" %VERIFY_MODE% /ignoreerrors
+  call "%~dps0InstallOSUpdate.cmd" "..\%OS_NAME%-%OS_ARCH%\glb\%%i" %VERIFY_MODE% /ignoreerrors
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   if "!ERR_LEVEL!"=="3010" (
@@ -1687,7 +1687,7 @@ for /F %%i in ('dir /B %IE_FILENAME%') do (
   if not errorlevel 1 (
     echo Installing Internet Explorer 11 language pack...
     for /F %%i in ('dir /B %IE_LANG_FILENAME%') do (
-      call InstallOSUpdate.cmd "..\%OS_NAME%-%OS_ARCH%\glb\%%i" %VERIFY_MODE% /ignoreerrors
+      call "%~dps0InstallOSUpdate.cmd" "..\%OS_NAME%-%OS_ARCH%\glb\%%i" %VERIFY_MODE% /ignoreerrors
       set ERR_LEVEL=!errorlevel!
       rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
       if "!ERR_LEVEL!"=="3010" (
@@ -1739,7 +1739,7 @@ if %OS_VER_MAJOR% LSS 10 (
 if exist "..\edge\MicrosoftEdgeEnterprise%OS_ARCH%.msi" (
   if exist %SystemRoot%\Temp\wou_msedge_tried.txt goto SkipMSEdgeInst
   echo Installing Microsoft Edge Enterprise...
-  call InstallOSUpdate.cmd "..\edge\MicrosoftEdgeEnterprise%OS_ARCH%.msi" %VERIFY_MODE% /errorsaswarnings
+  call "%~dps0InstallOSUpdate.cmd" "..\edge\MicrosoftEdgeEnterprise%OS_ARCH%.msi" %VERIFY_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
   echo. >%SystemRoot%\Temp\wou_msedge_tried.txt
@@ -1780,7 +1780,7 @@ if %MSEDGE_VER_REVIS% GEQ %MSEDGE_VER_TARGET_REVIS% goto SkipMSEdgeInst
 :InstallMSEdge
 if exist %SystemRoot%\Temp\wou_msedge_tried.txt goto SkipMSEdgeInst
 echo Installing most recent Edge (Chromium)...
-call InstallOSUpdate.cmd "..\msedge\%MSEDGE_FILENAME%" %VERIFY_MODE% /copytotemp /errorsaswarnings --msedge --verbose-logging --do-not-launch-msedge --system-level
+call "%~dps0InstallOSUpdate.cmd" "..\msedge\%MSEDGE_FILENAME%" %VERIFY_MODE% /copytotemp /errorsaswarnings --msedge --verbose-logging --do-not-launch-msedge --system-level
 set ERR_LEVEL=%errorlevel%
 if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
 echo. >%SystemRoot%\Temp\wou_msedge_tried.txt
@@ -1841,8 +1841,8 @@ echo Installing most recent Edge (Chromium) Updater...
 rem This line is intentionally implemented twice
 if exist %SystemRoot%\Temp\wou_msedgeupdate_tried.txt goto SkipMSEdgeUpdateInst
 rem The official updating mechanism uses this command line: "...\MicrosoftEdgeUpdateSetup.exe" /install "runtime=true&needsadmin=true" /installsource chromerecovery /silent
-rem call InstallOSUpdate.cmd "..\msedge\%MSEDGEUPDATE_FILENAME%" %VERIFY_MODE% /errorsaswarnings /recover /machine
-call InstallOSUpdate.cmd "..\msedge\%MSEDGEUPDATE_FILENAME%" %VERIFY_MODE% /errorsaswarnings /install "runtime=true&needsadmin=true" /silent
+rem call "%~dps0InstallOSUpdate.cmd" "..\msedge\%MSEDGEUPDATE_FILENAME%" %VERIFY_MODE% /errorsaswarnings /recover /machine
+call "%~dps0InstallOSUpdate.cmd" "..\msedge\%MSEDGEUPDATE_FILENAME%" %VERIFY_MODE% /errorsaswarnings /install "runtime=true&needsadmin=true" /silent
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -1885,7 +1885,7 @@ if "%WEBVIEW2_FILENAME%"=="" (
   goto SkipWebView2Inst
 )
 echo Installing Microsoft Edge WebView2 Runtime...
-call InstallOSUpdate.cmd "%WEBVIEW2_FILENAME%" %VERIFY_MODE% /errorsaswarnings /silent /install
+call "%~dps0InstallOSUpdate.cmd" "%WEBVIEW2_FILENAME%" %VERIFY_MODE% /errorsaswarnings /silent /install
 set ERR_LEVEL=!errorlevel!
 if not exist %SystemRoot%\Temp\nul md %SystemRoot%\Temp
 echo. >%SystemRoot%\Temp\wou_webview2_tried.txt
@@ -2026,7 +2026,7 @@ if not exist %DOTNET4_FILENAME% (
   goto SkipDotNet4Inst
 )
 echo Installing .NET Framework 4...
-call InstallOSUpdate.cmd "%DOTNET4_FILENAME%" %VERIFY_MODE% /errorsaswarnings %DOTNET4_INSTOPTS% /lcid 1033
+call "%~dps0InstallOSUpdate.cmd" "%DOTNET4_FILENAME%" %VERIFY_MODE% /errorsaswarnings %DOTNET4_INSTOPTS% /lcid 1033
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -2040,7 +2040,7 @@ if "%OS_LANG%" NEQ "enu" (
   if exist %DOTNET4LP_FILENAME% (
     echo Installing .NET Framework 4 Language Pack...
     for /F %%i in ('dir /B %DOTNET4LP_FILENAME%') do (
-      call InstallOSUpdate.cmd "..\dotnet\%%i" %VERIFY_MODE% /errorsaswarnings %DOTNET4_INSTOPTS%
+      call "%~dps0InstallOSUpdate.cmd" "..\dotnet\%%i" %VERIFY_MODE% /errorsaswarnings %DOTNET4_INSTOPTS%
       set ERR_LEVEL=!errorlevel!
       rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
       if "!ERR_LEVEL!"=="3010" (
@@ -2075,11 +2075,11 @@ if exist "%TEMP%\InstalledUpdateIds.txt" (
 ) else (
   copy /Y ..\static\custom\StaticUpdateIds-dotnet35.txt "%TEMP%\MissingUpdateIds.txt" >nul
 )
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing .NET Framework 3.5 custom updates...
-  call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
+  call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
 )
@@ -2105,11 +2105,11 @@ if exist "%TEMP%\InstalledUpdateIds.txt" (
 ) else (
   copy /Y ..\static\custom\StaticUpdateIds-dotnet4.txt "%TEMP%\MissingUpdateIds.txt" >nul
 )
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing .NET Framework 4 custom updates...
-  call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
+  call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
 )
@@ -2154,11 +2154,11 @@ if "%WMF_TARGET_ID%"=="" (
 )
 echo. >%SystemRoot%\Temp\wou_wmf_tried_kb%WMF_TARGET_ID%.txt
 echo %WMF_TARGET_ID%>"%TEMP%\MissingUpdateIds.txt"
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing Windows Management Framework...
-  call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
+  call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
 ) else (
@@ -2281,7 +2281,7 @@ for /f "tokens=1,2,3 delims=," %%a in (..\static\StaticUpdateIds-MSIProducts.txt
       if not "!CURRENT_MSIPRODUCT_FILENAME_FINAL!"=="" (
         rem using full file name, try to install
         echo Installing most recent version of %%b...
-        call InstallOSUpdate.cmd "!CURRENT_MSIPRODUCT_FILEDIRECTORY_FINAL!\!CURRENT_MSIPRODUCT_FILENAME_FINAL!" %VERIFY_MODE% /errorsaswarnings
+        call "%~dps0InstallOSUpdate.cmd" "!CURRENT_MSIPRODUCT_FILEDIRECTORY_FINAL!\!CURRENT_MSIPRODUCT_FILENAME_FINAL!" %VERIFY_MODE% /errorsaswarnings
         set ERR_LEVEL=!errorlevel!
         rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
         if "!ERR_LEVEL!"=="3010" (
@@ -2334,7 +2334,7 @@ if %WDDEFS_VER_BUILD% GTR %WDDEFS_VER_TARGET_BUILD% goto SkipWDInst
 if %WDDEFS_VER_REVIS% GEQ %WDDEFS_VER_TARGET_REVIS% goto SkipWDInst
 :InstallWDDefs
 echo Installing Windows Defender definition file...
-call InstallOSUpdate.cmd "%WDDEFS_FILENAME%" %VERIFY_MODE% /ignoreerrors -q
+call "%~dps0InstallOSUpdate.cmd" "%WDDEFS_FILENAME%" %VERIFY_MODE% /ignoreerrors -q
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -2358,11 +2358,11 @@ if "%O2K16_VER_MAJOR%"=="" goto SkipSPo2k16
 if %O2K16_SP_VER% LSS %O2K16_SP_VER_TARGET% echo %O2K16_SP_TARGET_ID%>>"%TEMP%\MissingUpdateIds.txt"
 :SkipSPo2k16
 if not exist "%TEMP%\MissingUpdateIds.txt" goto SkipSPOfc
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Installing most recent Office Service Pack^(s^)...
-  call InstallListedUpdates.cmd %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
+  call "%~dps0InstallListedUpdates.cmd" %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
 ) else (
@@ -2385,7 +2385,7 @@ set RECALL_REQUIRED=1
 rem *** Install MSI packages and custom software ***
 if exist %SystemRoot%\Temp\wouselmsi.txt (
   echo Installing selected MSI packages...
-  call TouchMSITree.cmd /instselected
+  call "%~dps0TouchMSITree.cmd" /instselected
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   call :Log "Info: Installed selected MSI packages"
@@ -2394,7 +2394,7 @@ if exist %SystemRoot%\Temp\wouselmsi.txt (
 ) else (
   if "%INSTALL_MSI%"=="/instmsi" (
     echo Installing all MSI packages...
-    call TouchMSITree.cmd /install
+    call "%~dps0TouchMSITree.cmd" /install
     set ERR_LEVEL=!errorlevel!
     rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
     call :Log "Info: Installed all MSI packages"
@@ -2409,7 +2409,7 @@ if "%ERR_LEVEL%"=="3010" (
 if exist ..\software\custom\InstallCustomSoftware.cmd (
   echo Installing custom software...
   pushd ..\software\custom
-  call InstallCustomSoftware.cmd
+  call "%~dps0..\software\custom\InstallCustomSoftware.cmd"
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   popd
@@ -2580,14 +2580,14 @@ if exist ..\static\StaticUpdateIds-wupre-%OS_NAME%-%OS_VER_BUILD%.txt (
   )
 )
 call :Log "Info: Checked Windows Update scan prerequisites"
-call ListUpdatesToInstall.cmd /excludestatics /ignoreblacklist
+call "%~dps0ListUpdatesToInstall.cmd" /excludestatics /ignoreblacklist
 if errorlevel 1 goto ListError
 if exist "%TEMP%\UpdatesToInstall.txt" (
   echo Adjusting service 'Windows Update'...
   call :EnableWUSvc
   call :AdjustWUSvc
   echo Installing Windows Update scan prerequisites...
-  call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
+  call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /ignoreerrors
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   if "!ERR_LEVEL!"=="3010" (
@@ -2842,7 +2842,7 @@ call :Log "Info: Listed ids of installed updates"
 :ListInstFiles
 rem *** List update files ***
 echo Listing update files...
-call ListUpdatesToInstall.cmd %LIST_MODE_IDS% %LIST_MODE_UPDATES%
+call "%~dps0ListUpdatesToInstall.cmd" %LIST_MODE_IDS% %LIST_MODE_UPDATES%
 if errorlevel 1 goto ListError
 call :Log "Info: Listed update files"
 
@@ -2953,7 +2953,7 @@ if errorlevel 1 (
 
 echo Installing extracted servicing stack updates...
 for /f "delims=" %%f in ('dir /b "%TEMP%\wou_SSU\SSU*.cab"') do (
-  call InstallOSUpdate.cmd "%TEMP%\wou_SSU\%%f" /selectoptions %DISM_MODE% /errorsaswarnings
+  call "%~dps0InstallOSUpdate.cmd" "%TEMP%\wou_SSU\%%f" /selectoptions %DISM_MODE% /errorsaswarnings
   set ERR_LEVEL=!errorlevel!
   rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
   if "!ERR_LEVEL!"=="3010" (
@@ -2991,7 +2991,7 @@ if not exist "%TEMP%\UpdatesToInstall.txt" goto SkipUpdates
 call :StopWUSvc
 set WUSVC_STOPPED=1
 echo Installing updates...
-call InstallListedUpdates.cmd /selectoptions %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
+call "%~dps0InstallListedUpdates.cmd" /selectoptions %VERIFY_MODE% %DISM_MODE% /errorsaswarnings
 set ERR_LEVEL=%errorlevel%
 rem echo DoUpdate: ERR_LEVEL=%ERR_LEVEL%
 if "%ERR_LEVEL%"=="3010" (
@@ -3027,7 +3027,7 @@ rem *** Execute custom finalization hook ***
 if exist .\custom\FinalizationHook.cmd (
   echo Executing custom finalization hook...
   pushd .\custom
-  call FinalizationHook.cmd
+  call "%~dps0custom\FinalizationHook.cmd"
   popd
   call :Log "Info: Executed custom finalization hook (Errorlevel: %errorlevel%)"
 )
@@ -3035,7 +3035,7 @@ if "%RECALL_REQUIRED%" NEQ "1" (
   if exist .\custom\FinalizationHookFinal.cmd (
     echo Executing final custom finalization hook...
     pushd .\custom
-    call FinalizationHookFinal.cmd
+    call "%~dps0custom\FinalizationHookFinal.cmd"
     popd
     call :Log "Info: Executed final custom finalization hook (Errorlevel: %errorlevel%)"
   )
@@ -3043,7 +3043,7 @@ if "%RECALL_REQUIRED%" NEQ "1" (
 goto :eof
 
 :RebootOrShutdown
-if "%SHOW_LOG%"=="/showlog" call PrepareShowLogFile.cmd
+if "%SHOW_LOG%"=="/showlog" call "%~dps0PrepareShowLogFile.cmd"
 if "%FINISH_MODE%"=="/shutdown" (
   echo Shutting down...
   %SystemRoot%\System32\shutdown.exe /s /f /t 3
@@ -3232,7 +3232,7 @@ if exist "%TEMP%\UpdateInstaller.ini" del "%TEMP%\UpdateInstaller.ini"
 call :CleanupPwrCfg
 if "%USERNAME%"=="WOUTempAdmin" (
   echo Cleaning up automatic recall...
-  call CleanupRecall.cmd
+  call "%~dps0CleanupRecall.cmd"
   call :FinalHooks
   call :RebootOrShutdown
 )
@@ -3270,7 +3270,7 @@ if "%RECALL_REQUIRED%"=="1" (
     )
     if "%USERNAME%" NEQ "WOUTempAdmin" (
       echo Preparing automatic recall...
-      call PrepareRecall.cmd "%~f0" %DO_UPGRADES% %UPDATE_RCERTS% %INSTALL_DOTNET35% %INSTALL_DOTNET4% %INSTALL_WMF% %UPDATE_DOTNET5% %UPDATE_CPP% %SKIP_IEINST% %SKIP_DEFS% %SKIP_DYNAMIC% %LIST_MODE_IDS% %LIST_MODE_UPDATES% %VERIFY_MODE% %BOOT_MODE% %FINISH_MODE% %SHOW_LOG% %DISM_MODE% %MONITOR_ON% %INSTALL_MSI% %INSTALL_EDGE% %INSTALL_WEBVIEW2% %UPDATE_OFFICE% %WOU_UPGRADE_TARGET%
+      call "%~dps0PrepareRecall.cmd" "%~f0" %DO_UPGRADES% %UPDATE_RCERTS% %INSTALL_DOTNET35% %INSTALL_DOTNET4% %INSTALL_WMF% %UPDATE_DOTNET5% %UPDATE_CPP% %SKIP_IEINST% %SKIP_DEFS% %SKIP_DYNAMIC% %LIST_MODE_IDS% %LIST_MODE_UPDATES% %VERIFY_MODE% %BOOT_MODE% %FINISH_MODE% %SHOW_LOG% %DISM_MODE% %MONITOR_ON% %INSTALL_MSI% %INSTALL_EDGE% %INSTALL_WEBVIEW2% %UPDATE_OFFICE% %WOU_UPGRADE_TARGET%
     )
     if exist %SystemRoot%\System32\bcdedit.exe (
       echo Adjusting boot sequence for next reboot...

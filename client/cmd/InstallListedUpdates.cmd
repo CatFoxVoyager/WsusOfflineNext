@@ -42,7 +42,7 @@ for /F "tokens=1* delims=:" %%i in ('%SystemRoot%\System32\findstr.exe /N $ "%TE
 
     if defined IS_OFFICE_UPDATE (
       echo !TIME! - Installing update %%i of %LINES_COUNT% ^(stage size: %UPDATES_PER_STAGE%^)...
-      call InstallOfficeUpdate.cmd "%%j" %*
+      call "%~dps0InstallOfficeUpdate.cmd" "%%j" %*
       set ERR_LEVEL=!errorlevel!
       rem echo InstallListedUpdates: ERR_LEVEL=!ERR_LEVEL!
       if "!ERR_LEVEL!"=="3010" (
@@ -57,7 +57,7 @@ for /F "tokens=1* delims=:" %%i in ('%SystemRoot%\System32\findstr.exe /N $ "%TE
       echo %%j | %SystemRoot%\System32\find.exe /I "\%%k\" >nul 2>&1
       if not errorlevel 1 (
         echo !TIME! - Installing update %%i of %LINES_COUNT% ^(stage size: %UPDATES_PER_STAGE%^)...
-        call InstallOSUpdate.cmd "%%j" %*
+        call "%~dps0InstallOSUpdate.cmd" "%%j" %*
         set ERR_LEVEL=!errorlevel!
         rem echo InstallListedUpdates: ERR_LEVEL=!ERR_LEVEL!
         if "!ERR_LEVEL!"=="3010" (

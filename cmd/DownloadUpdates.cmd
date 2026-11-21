@@ -2476,7 +2476,7 @@ echo Adjusting UpdateInstaller.ini file...
 if exist ..\client\UpdateInstaller.ini (
   if exist ..\client\UpdateInstaller.ori del ..\client\UpdateInstaller.ori
   ren ..\client\UpdateInstaller.ini UpdateInstaller.ori
-  for /F "tokens=1* delims==" %%i in (..\client\UpdateInstaller.ori) do (
+  for /F "eol=| tokens=1* delims==" %%i in (..\client\UpdateInstaller.ori) do (
     if /i "%%i"=="seconly" (
       if "%SECONLY%"=="1" (
         echo seconly=Enabled>>..\client\UpdateInstaller.ini

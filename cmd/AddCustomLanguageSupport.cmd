@@ -12,7 +12,7 @@ for %%i in (fra esn jpn kor rus ptg ptb nld ita chs cht plk hun csy sve trk ell 
 goto InvalidParams
 
 :ValidParams
-call RemoveCustomLanguageSupport.cmd %1 /quiet
+call "%~dps0RemoveCustomLanguageSupport.cmd" %1 /quiet
 
 rem *** Add support for %1 to .NET custom URL files ***
 if /i "%2" NEQ "/quiet" echo Adding support for %1 to .NET custom URL files...

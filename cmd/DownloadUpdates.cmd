@@ -50,7 +50,7 @@ rem *** Execute custom initialization hook ***
 if exist .\custom\InitializationHook.cmd (
   echo Executing custom initialization hook...
   pushd .\custom
-  call InitializationHook.cmd
+  call "%~dps0custom\InitializationHook.cmd"
   set ERR_LEVEL=%errorlevel%
   popd
 )
@@ -242,7 +242,7 @@ del "%TEMP%\SetTZVariable.cmd"
 call :Log "Info: Set time zone to !TZ!"
 :SkipTZ
 if exist custom\SetAria2EnvVars.cmd (
-  if "%http_proxy%" NEQ "" (call ActivateAria2Downloads.cmd /reload /proxy %http_proxy%) else (call ActivateAria2Downloads.cmd /reload)
+  if "%http_proxy%" NEQ "" (call "%~dps0ActivateAria2Downloads.cmd" /reload /proxy %http_proxy%) else (call "%~dps0ActivateAria2Downloads.cmd" /reload)
   call custom\SetAria2EnvVars.cmd
 ) else (
   set DLDR_PATH=%WGET_PATH%
@@ -262,7 +262,7 @@ if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (set HASHDEEP_EXE=hashdeep64.exe) else
 )
 
 rem ** disable SDD, if local version != most recent version ***
-if "%http_proxy%" NEQ "" (call CheckOUVersion.cmd /mode:different /quiet /proxy %http_proxy%) else (call CheckOUVersion.cmd /mode:different /quiet)
+if "%http_proxy%" NEQ "" (call "%~dps0CheckOUVersion.cmd" /mode:different /quiet /proxy %http_proxy%) else (call "%~dps0CheckOUVersion.cmd" /mode:different /quiet)
 if not "%errorlevel%"=="0" (
   set SKIP_SDD=1
   call :Log "Info: Disabled static and exclude definitions update due to version mismatch"
@@ -641,7 +641,7 @@ if exist ..\static\custom\StaticDownloadLinks-dotnet.txt (
     %SystemRoot%\System32\find.exe /I "%%i" ..\static\custom\StaticDownloadLinks-dotnet.txt >nul 2>&1
     if not errorlevel 1 (
       set CUST_LANG=%%i !CUST_LANG!
-      call RemoveCustomLanguageSupport.cmd %%i /quiet
+      call "%~dps0RemoveCustomLanguageSupport.cmd" %%i /quiet
     )
   )
 )
@@ -769,10 +769,10 @@ call :Log "Info: Updated static and exclude definitions for download and update"
 
 echo Restoring custom language and architecture additions and removals...
 if "%CUST_LANG%" NEQ "" (
-  for %%i in (%CUST_LANG%) do call AddCustomLanguageSupport.cmd %%i /quiet
+  for %%i in (%CUST_LANG%) do call "%~dps0AddCustomLanguageSupport.cmd" %%i /quiet
 )
 if "%OX64_LANG%" NEQ "" (
-  for %%i in (%OX64_LANG%) do call AddOffice2010x64Support.cmd %%i /quiet
+  for %%i in (%OX64_LANG%) do call "%~dps0AddOffice2010x64Support.cmd" %%i /quiet
 )
 set CUST_LANG=
 set OX64_LANG=
@@ -2922,7 +2922,7 @@ rem *** Execute custom finalization hook ***
 if exist .\custom\FinalizationHook.cmd (
   echo Executing custom finalization hook...
   pushd .\custom
-  call FinalizationHook.cmd
+  call "%~dps0custom\FinalizationHook.cmd"
   popd
   call :Log "Info: Executed custom finalization hook (Errorlevel: %errorlevel%)"
 )

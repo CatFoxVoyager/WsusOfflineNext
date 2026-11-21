@@ -49,7 +49,7 @@ goto EvalParams
 :NoMoreParams
 rem *** Update WSUS Offline Next ***
 title Updating WSUS Offline Next...
-if "%http_proxy%" NEQ "" (call CheckOUVersion.cmd /mode:newer /proxy %http_proxy%) else (call CheckOUVersion.cmd /mode:newer)
+if "%http_proxy%" NEQ "" (call "%~dps0CheckOUVersion.cmd" /mode:newer /proxy %http_proxy%) else (call "%~dps0CheckOUVersion.cmd" /mode:newer)
 if not "%errorlevel%"=="1" goto NoNewVersion
 if not exist ..\static\SelfUpdateVersion-recent.txt goto DownloadError
 echo Downloading most recent released version of WSUS Offline Next...
@@ -117,7 +117,7 @@ if exist ..\static\custom\StaticDownloadLinks-dotnet.txt (
     %SystemRoot%\System32\find.exe /I "%%i" ..\static\custom\StaticDownloadLinks-dotnet.txt >nul 2>&1
     if not errorlevel 1 (
       set CUST_LANG=%%i !CUST_LANG!
-      call RemoveCustomLanguageSupport.cmd %%i /quiet
+      call "%~dps0RemoveCustomLanguageSupport.cmd" %%i /quiet
     )
   )
 )
@@ -125,7 +125,7 @@ set OX64_LANG=
 for %%i in (enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve trk ell ara heb dan nor fin) do (
   if exist ..\static\custom\StaticDownloadLinks-o2k13-%%i.txt (
     set OX64_LANG=%%i !OX64_LANG!
-    call RemoveOffice2010x64Support.cmd %%i /quiet
+    call "%~dps0RemoveOffice2010x64Support.cmd" %%i /quiet
   )
 )
 echo %DATE% %TIME% - Info: Preserved custom language and architecture additions and removals>>%DOWNLOAD_LOGFILE%
@@ -138,10 +138,10 @@ if "%REMOVE_CMD%" NEQ "" (
   for %%i in (%REMOVE_CMD%) do call %%i /quiet
 )
 if "%CUST_LANG%" NEQ "" (
-  for %%i in (%CUST_LANG%) do call AddCustomLanguageSupport.cmd %%i /quiet
+  for %%i in (%CUST_LANG%) do call "%~dps0AddCustomLanguageSupport.cmd" %%i /quiet
 )
 if "%OX64_LANG%" NEQ "" (
-  for %%i in (%OX64_LANG%) do call AddOffice2010x64Support.cmd %%i /quiet
+  for %%i in (%OX64_LANG%) do call "%~dps0AddOffice2010x64Support.cmd" %%i /quiet
 )
 echo %DATE% %TIME% - Info: Restored custom language and architecture additions and removals>>%DOWNLOAD_LOGFILE%
 if exist ..\exclude\ExcludeList-superseded.txt (

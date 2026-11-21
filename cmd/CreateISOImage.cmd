@@ -23,7 +23,7 @@ rem *** Execute custom initialization hook ***
 if exist .\custom\InitializationHook.cmd (
   echo Executing custom initialization hook...
   pushd .\custom
-  call InitializationHook.cmd
+  call "%~dps0custom\InitializationHook.cmd"
   set ERR_LEVEL=%errorlevel%
   popd
 )
@@ -278,7 +278,7 @@ rem *** Execute custom finalization hook ***
 if exist .\custom\FinalizationHook.cmd (
   echo Executing custom finalization hook...
   pushd .\custom
-  call FinalizationHook.cmd
+  call "%~dps0custom\FinalizationHook.cmd"
   popd
   echo %DATE% %TIME% - Info: Executed custom finalization hook ^(Errorlevel: %errorlevel%^)>>%DOWNLOAD_LOGFILE%
 )

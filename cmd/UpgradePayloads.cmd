@@ -578,7 +578,7 @@ if !UUP_AQ_ARIA_ROWS! GTR 0 (
   rem sets UUP_ARIA2_FETCH=0 to skip the fetch. Still absent = loud failure:
   rem a multi-GiB payload is NEVER downgraded to a non-resumable download.
   if not exist "!UUP_DLDR_PATH!" (
-    if not "!UUP_ARIA2_FETCH!"=="0" call ActivateAria2Downloads.cmd
+    if not "!UUP_ARIA2_FETCH!"=="0" call "%~dps0ActivateAria2Downloads.cmd"
   )
   if not exist "!UUP_DLDR_PATH!" (
     echo ERROR: aria2 is not available and could not be fetched - refusing to download a multi-GiB payload non-resumably ^(no wget downgrade^).

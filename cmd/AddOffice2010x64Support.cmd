@@ -11,7 +11,7 @@ for %%i in (enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve 
 goto InvalidParams
 
 :ValidParams
-call RemoveOffice2010x64Support.cmd %1 /quiet
+call "%~dps0RemoveOffice2010x64Support.cmd" %1 /quiet
 
 rem *** Add x64 support for %1 to Office 2013 custom URL files ***
 if exist ..\static\StaticDownloadLinks-o2k13-x64-%1.txt (

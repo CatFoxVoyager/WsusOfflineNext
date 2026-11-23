@@ -103,11 +103,25 @@ export default function App() {
   const flushTimerRef = useRef<number | null>(null);
 
   const flushLogs = () => {
-    flushTimerRef.current = null;
+    if (flushTimerRef.current !== null) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
     const pending = pendingLogsRef.current;
     pendingLogsRef.current = [];
     if (pending.length === 0) return;
     setLogs(prev => appendLogLines(prev, pending));
+  };
+
+  // Clear discards the buffered tail too, so a console cleared right after
+  // a burst cannot repopulate from the pending backlog.
+  const clearLogs = () => {
+    if (flushTimerRef.current !== null) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    pendingLogsRef.current = [];
+    setLogs([]);
   };
 
   // Repository metadata
@@ -372,6 +386,10 @@ export default function App() {
   const handleStart = () => {
     setIsRunning(true);
     setIsTerminalOpen(true);
+    // Drain the buffered console tail first so this status row renders
+    // after it, never before it (the armed flush would otherwise repaint
+    // the backlog one window later).
+    flushLogs();
     setLogs(prev => appendLogLines(prev, [`[START] Starting the download pipeline (${totalSelectedCount} product(s) selected)...`]));
 
     // Diagnostics only (never rejects): warn if a malformed key somehow
@@ -403,6 +421,7 @@ export default function App() {
   const handleStop = () => {
     sendNative('cancel', {});
     setIsRunning(false);
+    flushLogs();
     setLogs(prev => appendLogLines(prev, ['[WARN] Download cancellation requested.']));
   };
 
@@ -1413,7 +1432,7 @@ export default function App() {
                 <Copy className="w-3.5 h-3.5" />
               </button>
               <button
-                onClick={() => setLogs([])}
+                onClick={clearLogs}
                 className="text-zinc-400 hover:text-zinc-200 p-1 rounded hover:bg-dark-800 transition-colors"
                 title="Clear console"
               >

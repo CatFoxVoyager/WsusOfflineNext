@@ -331,9 +331,32 @@ Thanks to Torsten Wittrock and the WSUS Offline Update Community Edition contrib
 
 ## 6.3.1+2026.11
 
-**Status:** current release.
+**Status:** superseded by 6.3.2+2026.11.
 
 ### Monthly update refresh
 
 - Static download links refreshed from the 2026-11 WSUS catalog: 0 links added, 0 retired links removed.
+
+
+## 6.3.2+2026.11
+
+**Status:** current release.
+
+### Generator: download console no longer freezes mid-download (#47)
+
+- The modern generator's download console kept every output line as a live interface row with no limit, and wget emits one progress line per ~50 KB — on fast connections the embedded browser view saturated after a while and the window stopped responding (and eventually stopped painting) while the download itself kept running.
+- Console output is now capped to the newest 1000 entries, consecutive wget progress lines collapse into a single row with an `(xN)` repetition counter, and incoming log messages are batched into one render per 120 ms window. ERROR/WARN lines are never merged or dropped; the full history remains in `log\download.log`.
+
+### Windows 7 / 8.1 / Server update selection restored (#45, #46)
+
+- Restored the legacy supersession trim for w61/w63 targets: fresh trees no longer carry whole superseded security-only chains (the KB4556853 class on Windows 8.1 / Server 2012 R2), and the client-capable IE11 cumulative (KB5019958) is pinned for w63 — trees produced by 6.3.1 and earlier could produce the documented MMC/Internet Explorer breakage Microsoft itself describes for that KB.
+
+### Client installer robustness
+
+- Sibling `.cmd` calls now resolve through `%~dps0` (download pipeline, client installer, self-update): on hosts where `NoDefaultCurrentDirectoryInExePath=1`, bare-name calls failed silently with error 9009.
+- The `UpdateInstaller.ini` rewrite keeps comment lines (`for /F eol=|`).
+
+### Housekeeping
+
+- Generated `iso/*-hashes.txt` digest files are now gitignored.
 

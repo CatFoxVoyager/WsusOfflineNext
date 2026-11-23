@@ -21,44 +21,7 @@ import {
 } from 'lucide-react';
 
 import logo from './assets/logo.png';
-
-interface LogEntry {
-  id: string;
-  time: string;
-  level: 'info' | 'warn' | 'error' | 'success' | 'start';
-  text: string;
-}
-
-const parseLogLine = (raw: string): LogEntry => {
-  const now = new Date();
-  const defaultTime = now.toTimeString().split(' ')[0];
-  let time = defaultTime;
-  let text = raw;
-
-  const match = raw.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
-  if (match) {
-    time = match[1];
-    text = match[2];
-  }
-
-  let level: LogEntry['level'] = 'info';
-  if (/\[ERROR\]|\[ERR\]|\bERROR\b|\bfailed\b/i.test(text)) {
-    level = 'error';
-  } else if (/\[WARN\]|\bWarning\b/i.test(text)) {
-    level = 'warn';
-  } else if (/\[SUCCESS\]|\bpassed\b|completed successfully|Downloaded\/validated/i.test(text)) {
-    level = 'success';
-  } else if (/\[START\]/i.test(text)) {
-    level = 'start';
-  }
-
-  return {
-    id: Math.random().toString(36).substring(2, 9),
-    time,
-    level,
-    text: text.replace(/^\[(INFO|WARN|ERROR|ERR|SUCCESS|START)\]\s*/i, '')
-  };
-};
+import { appendLogLines, parseLogLine, type LogEntry } from './logBuffer';
 
 interface WinBuild {
   key: string;
@@ -131,6 +94,21 @@ export default function App() {
   ]);
   const [autoScroll, setAutoScroll] = useState(true);
   const logContainerRef = useRef<HTMLDivElement>(null);
+
+  // Issue #47: console appends are batched. The host forwards one message
+  // per child-process output line, so a downloading wget bursts thousands
+  // of 'log' messages; lines buffer in the ref and flush at most once per
+  // 120 ms window, so a burst costs one setState instead of thousands.
+  const pendingLogsRef = useRef<string[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
+
+  const flushLogs = () => {
+    flushTimerRef.current = null;
+    const pending = pendingLogsRef.current;
+    pendingLogsRef.current = [];
+    if (pending.length === 0) return;
+    setLogs(prev => appendLogLines(prev, pending));
+  };
 
   // Repository metadata
   const [catalogDate, setCatalogDate] = useState('15/10/2026');
@@ -243,7 +221,10 @@ export default function App() {
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (data.type === 'log') {
-          setLogs(prev => [...prev, parseLogLine(data.text)]);
+          pendingLogsRef.current.push(data.text);
+          if (flushTimerRef.current === null) {
+            flushTimerRef.current = window.setTimeout(flushLogs, 120);
+          }
         } else if (data.type === 'state') {
           if (data.win11) {
             setWin11Builds(prev => prev.map(b => ({ ...b, enabled: data.win11[b.key] ?? b.enabled })));
@@ -287,6 +268,10 @@ export default function App() {
     }
 
     return () => {
+      if (flushTimerRef.current !== null) {
+        window.clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
       if (typeof window !== 'undefined' && (window as any).chrome?.webview) {
         (window as any).chrome.webview.removeEventListener('message', handleNativeMessage);
       }
@@ -387,7 +372,7 @@ export default function App() {
   const handleStart = () => {
     setIsRunning(true);
     setIsTerminalOpen(true);
-    setLogs(prev => [...prev, parseLogLine(`[START] Starting the download pipeline (${totalSelectedCount} product(s) selected)...`)]);
+    setLogs(prev => appendLogLines(prev, [`[START] Starting the download pipeline (${totalSelectedCount} product(s) selected)...`]));
 
     // Diagnostics only (never rejects): warn if a malformed key somehow
     // reached composition; the host voids the whole selection anyway.
@@ -418,7 +403,7 @@ export default function App() {
   const handleStop = () => {
     sendNative('cancel', {});
     setIsRunning(false);
-    setLogs(prev => [...prev, parseLogLine('[WARN] Download cancellation requested.')]);
+    setLogs(prev => appendLogLines(prev, ['[WARN] Download cancellation requested.']));
   };
 
   const browseFolder = () => {
@@ -1473,6 +1458,7 @@ export default function App() {
                   </span>
                   <span className={`flex-1 break-all ${levelStyles[log.level]}`}>
                     {log.text}
+                    {log.repeatCount > 1 ? ` (x${log.repeatCount})` : null}
                   </span>
                 </div>
               );

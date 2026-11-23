@@ -88,6 +88,9 @@ jobs:
           npm ci
           npm run build
 
+      - name: Generator console buffer battery (issue #47)
+        run: bash ci/tests/test-generator-console-buffer.sh
+
       # DEPS-07 : un glob vide n'est pas une erreur MSBuild — refuser un embed vide avant tout publish.
       - name: Fail-closed on empty dist
         run: |

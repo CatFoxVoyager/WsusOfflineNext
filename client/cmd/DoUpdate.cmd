@@ -73,7 +73,7 @@ if exist "%TEMP%\wou_run_report.txt" del "%TEMP%\wou_run_report.txt" 2>nul
 goto Start
 
 :Log
-echo %DATE% %TIME% - %~1>>%UPDATE_LOGFILE%
+echo %DATE% %TIME% - %~1>>"%UPDATE_LOGFILE%"
 goto :eof
 
 :Start
@@ -85,17 +85,17 @@ if exist .\custom\InitializationHook.cmd (
   set ERR_LEVEL=%errorlevel%
   popd
 )
-if exist %UPDATE_LOGFILE% (
-  echo.>>%UPDATE_LOGFILE%
-  echo -------------------------------------------------------------------------------->>%UPDATE_LOGFILE%
-  echo.>>%UPDATE_LOGFILE%
+if exist "%UPDATE_LOGFILE%" (
+  echo.>>"%UPDATE_LOGFILE%"
+  echo -------------------------------------------------------------------------------->>"%UPDATE_LOGFILE%"
+  echo.>>"%UPDATE_LOGFILE%"
 )
 if exist .\custom\InitializationHook.cmd (
   call :Log "Info: Executed custom initialization hook (Errorlevel: %ERR_LEVEL%)"
   set ERR_LEVEL=
 )
 call :Log "Info: Starting WSUS Offline Next - v. %WSUSOFFLINE_VERSION%"
-call :Log "Info: Used path "%~dp0" on %COMPUTERNAME% (user: %USERNAME%)"
+call :Log "Info: Used path '%~dp0' on %COMPUTERNAME% (user: %USERNAME%)"
 
 :EvalParams
 if "%1"=="" goto NoMoreParams
@@ -312,9 +312,7 @@ call :Log "Info: Found Microsoft .NET Framework 3.5 version %DOTNET35_VER_MAJOR%
 call :Log "Info: Found Microsoft .NET Framework 4 version %DOTNET4_VER_MAJOR%.%DOTNET4_VER_MINOR%.%DOTNET4_VER_BUILD% (release: %DOTNET4_RELEASE%)"
 call :Log "Info: Found Windows Management Framework version %WMF_VER_MAJOR%.%WMF_VER_MINOR%.%WMF_VER_BUILD%.%WMF_VER_REVIS%"
 call :Log "Info: Found Windows Defender definitions version %WDDEFS_VER_MAJOR%.%WDDEFS_VER_MINOR%.%WDDEFS_VER_BUILD%.%WDDEFS_VER_REVIS%"
-if "%O2K16_VER_MAJOR%" NEQ "" (
-  call :Log "Info: Found Microsoft %O2K16_PRODUCT_NAME% version %O2K16_VER_MAJOR%.%O2K16_VER_MINOR%.%O2K16_VER_BUILD%.%O2K16_VER_REVIS% (o2k16 %O2K16_ARCH% %O2K16_LANG% - %O2K16_EOL_STATUS%)"
-)
+if "%O2K16_VER_MAJOR%" NEQ "" call :Log "Info: Found Microsoft !O2K16_PRODUCT_NAME! version %O2K16_VER_MAJOR%.%O2K16_VER_MINOR%.%O2K16_VER_BUILD%.%O2K16_VER_REVIS% (o2k16 %O2K16_ARCH% %O2K16_LANG% - !O2K16_EOL_STATUS!)"
 
 rem ***  Check compatibility mode ***
 if "%__COMPAT_LAYER%"=="" goto NoCompatLayer
@@ -1001,7 +999,7 @@ if not "!WOU_UPG_PREV_LEG!"=="prepare" (
 if !WOU_UPG_ATTEMPT_COUNT! GTR 2 (
   echo Warning: Build upgrade prerequisite installation did not increment OS revision ^(%OS_VER_REVIS% ^< %WOU_BUILDUPGRADE_MINREVIS%^).
   echo Halting build upgrade to prevent infinite reboot loop.
-  if "%UPDATE_LOGFILE%" NEQ "" echo %DATE% %TIME% - Warning: Build upgrade halted - revision %OS_VER_REVIS% did not meet %WOU_BUILDUPGRADE_MINREVIS% after retry>>%UPDATE_LOGFILE%
+  if "%UPDATE_LOGFILE%" NEQ "" echo %DATE% %TIME% - Warning: Build upgrade halted - revision %OS_VER_REVIS% did not meet %WOU_BUILDUPGRADE_MINREVIS% after retry>>"%UPDATE_LOGFILE%"
   if exist %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt del %WOU_TEMP_DIR%\wou_buildupgrade_attempts.txt
   if exist %SystemRoot%\Temp\wou_buildupgrade_attempts.txt del %SystemRoot%\Temp\wou_buildupgrade_attempts.txt
   goto SkipBuildUpgrade
@@ -2908,7 +2906,7 @@ for /f "usebackq delims=" %%f in ("%TEMP%\UpdatesToInstall.txt") do (
             if exist "%TEMP%\hash-%%i-%%j.txt" del "%TEMP%\hash-%%i-%%j.txt"
             rd /s /q "%TEMP%\wou_SSU\tmp" >nul 2>&1
             echo ERROR: File hash does not match stored value ^(file: !WOU_SSU_UPDNAME!^).
-            echo %DATE% %TIME% - Error: File hash does not match stored value ^(file: !WOU_SSU_UPDNAME!^)>>%UPDATE_LOGFILE%
+            echo %DATE% %TIME% - Error: File hash does not match stored value ^(file: !WOU_SSU_UPDNAME!^)>>"%UPDATE_LOGFILE%"
             echo !WOU_SSU_UPDNAME!>>"%TEMP%\wou_corrupt_updates.txt"
           ) else (
             if exist "%TEMP%\hash-%%i-%%j.txt" del "%TEMP%\hash-%%i-%%j.txt"
@@ -2922,7 +2920,7 @@ for /f "usebackq delims=" %%f in ("%TEMP%\UpdatesToInstall.txt") do (
             if exist "%TEMP%\hash-%%i.txt" del "%TEMP%\hash-%%i.txt"
             rd /s /q "%TEMP%\wou_SSU\tmp" >nul 2>&1
             echo ERROR: File hash does not match stored value ^(file: !WOU_SSU_UPDNAME!^).
-            echo %DATE% %TIME% - Error: File hash does not match stored value ^(file: !WOU_SSU_UPDNAME!^)>>%UPDATE_LOGFILE%
+            echo %DATE% %TIME% - Error: File hash does not match stored value ^(file: !WOU_SSU_UPDNAME!^)>>"%UPDATE_LOGFILE%"
             echo !WOU_SSU_UPDNAME!>>"%TEMP%\wou_corrupt_updates.txt"
           ) else (
             if exist "%TEMP%\hash-%%i.txt" del "%TEMP%\hash-%%i.txt"
@@ -2931,7 +2929,7 @@ for /f "usebackq delims=" %%f in ("%TEMP%\UpdatesToInstall.txt") do (
           )
         ) else (
           echo Warning: Hash files ..\md\hashes-%%i-%%j.txt and ..\md\hashes-%%i.txt not found.
-          echo %DATE% %TIME% - Warning: Hash files ..\md\hashes-%%i-%%j.txt and ..\md\hashes-%%i.txt not found>>%UPDATE_LOGFILE%
+          echo %DATE% %TIME% - Warning: Hash files ..\md\hashes-%%i-%%j.txt and ..\md\hashes-%%i.txt not found>>"%UPDATE_LOGFILE%"
         )
       )
     ) else (
@@ -3238,7 +3236,7 @@ if "%USERNAME%"=="WOUTempAdmin" (
 )
 if "%BOOT_MODE%"=="/autoreboot" goto :eof
 if "%FINISH_MODE%"=="/shutdown" goto :eof
-if "%SHOW_LOG%"=="/showlog" start %SystemRoot%\System32\notepad.exe %UPDATE_LOGFILE%
+if "%SHOW_LOG%"=="/showlog" start "" %SystemRoot%\System32\notepad.exe "%UPDATE_LOGFILE%"
 goto :eof
 
 :Installed
@@ -3333,7 +3331,7 @@ goto Error
 :NoTempDir
 echo.
 echo ERROR: Directory "%TEMP%" not found.
-call :Log "Error: Directory "%TEMP%" not found"
+call :Log "Error: Directory '%TEMP%' not found"
 echo.
 goto Error
 
@@ -3488,7 +3486,7 @@ goto EoF
 :GenerateAuditReport
 echo Generating offline applicability report...
 call :WriteMissingUpdatesReport
-echo %DATE% %TIME% - Info: Completed offline applicability audit [zero system modifications]>>%UPDATE_LOGFILE%
+echo %DATE% %TIME% - Info: Completed offline applicability audit [zero system modifications]>>"%UPDATE_LOGFILE%"
 goto Cleanup
 
 :RunMissingUpdatesReport

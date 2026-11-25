@@ -2821,7 +2821,7 @@ goto Error
 :NoTempDir
 echo.
 echo ERROR: Directory "%TEMP%" not found.
-call :Log "Error: Directory "%TEMP%" not found"
+call :Log "Error: Directory '%TEMP%' not found"
 echo.
 goto Error
 

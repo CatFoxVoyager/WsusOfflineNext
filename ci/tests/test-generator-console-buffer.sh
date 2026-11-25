@@ -131,6 +131,30 @@ assert('cross-flush length', logs.length === 2, 'length=' + logs.length);
 assert('cross-flush count', logs[1].repeatCount === 2, 'repeatCount=' + logs[1].repeatCount);
 assert('cross-flush text', logs[1].text === ' 4700K .......... 20% 1.16M 36s', 'text=' + logs[1].text);
 
+// wget-unspecified-length: wget without % (Length: unspecified) coalesces.
+logs = appendLogLines([], [
+  "Saving to: '../client/dotnet/aspnetcore-runtime-8.0.32-win-x86.exe'",
+  '     0K .......... .......... .......... .......... .......... 44.1M',
+  '    50K .......... .......... .......... .......... ..........  103K',
+  '  9450K .......... .......... ...                               396M=15s',
+  "2026-11-24 10:25:16 (639 KB/s) - '../client/dotnet/aspnetcore-runtime-8.0.32-win-x86.exe' saved [9700760]"
+]);
+assert('wget-unspec length', logs.length === 3, 'length=' + logs.length);
+assert('wget-unspec count', logs[1].repeatCount === 3, 'repeatCount=' + logs[1].repeatCount);
+assert('wget-unspec last text', logs[1].text.includes('9450K'), 'text=' + logs[1].text);
+
+// mkisofs-progress: mkisofs "% done, estimate finish" lines coalesce.
+const isoLines = ['Creating ISO image...'];
+for (let i = 0; i < 500; i++) {
+  const pct = (i * 0.2).toFixed(2);
+  isoLines.push(' ' + pct + '% done, estimate finish Tue Nov 24 23:24:10 2026');
+}
+isoLines.push('Total translation table size: 0');
+logs = appendLogLines([], isoLines);
+assert('mkisofs length', logs.length === 3, 'length=' + logs.length);
+assert('mkisofs count', logs[1].repeatCount === 500, 'repeatCount=' + logs[1].repeatCount);
+assert('mkisofs tail', logs[2].text === 'Total translation table size: 0', 'text=' + logs[2].text);
+
 console.log('SECTION-A-PASS');
 process.exit(0);
 RUNNER_EOF

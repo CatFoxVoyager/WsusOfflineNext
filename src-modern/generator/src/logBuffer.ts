@@ -53,20 +53,24 @@ export const parseLogLine = (raw: string): LogEntry => {
   };
 };
 
-// wget dot-progress shape, e.g. " 4600K .......... 23% 1.16M 37s": a size
-// token (optionally decimal, optional K/M/G suffix), spaces, at least two
-// literal dots and a percent sign. The final wget summary line
-// ("100%  107M=2m1s", no dots) is not progress-shaped and renders as its
-// own row by design, so completion stays visible on its own.
+// Progress-line shapes that should coalesce into a single (xN) row:
+// 1. wget dot-progress, e.g. " 4600K .......... 23% 1.16M 37s" or when
+//    Content-Length is unspecified: "    50K .......... ..........  103K".
+//    The final wget summary line ("100%  107M=2m1s", no dots) and "saved [...]"
+//    are not progress-shaped and render as their own rows.
+// 2. mkisofs ISO-build progress, e.g. " 57.53% done, estimate finish Tue Nov 24 23:24:10 2026".
 // NOTE: the battery's coalesce-bite control anchors on this arrow's
 // boolean return-type annotation - the module's only boolean arrow.
-export const isWgetProgressLine = (text: string): boolean =>
-  /^\s*\d+(\.\d+)?[KMG]?\s*\.{2,}/.test(text) && text.includes('%');
+export const isProgressLine = (text: string): boolean =>
+  /^\s*\d+(\.\d+)?[KMG]?\s+\.{2,}/.test(text) ||
+  /^\s*\d+(\.\d+)?%\s+done,\s+estimate finish\b/i.test(text);
+
+export const isWgetProgressLine = isProgressLine;
 
 // Pure reducer: fold a batch of raw console lines into the bounded log
 // state. Returns a new array; the caller's array is never mutated.
 //
-// 1. Consecutive wget progress lines coalesce: when the batch's entry is
+// 1. Consecutive progress lines coalesce: when the batch's entry is
 //    info-level and progress-shaped AND the current last entry is too, the
 //    last entry is replaced in place (stable id, latest text and time,
 //    repeatCount incremented) - one DOM row advances instead of thousands
@@ -84,10 +88,10 @@ export const appendLogLines = (prev: LogEntry[], raw: string[]): LogEntry[] => {
     if (
       next.length === 0 ||
       entry.level !== 'info' ||
-      !isWgetProgressLine(entry.text) ||
+      !isProgressLine(entry.text) ||
       last === null ||
       last.level !== 'info' ||
-      !isWgetProgressLine(last.text)
+      !isProgressLine(last.text)
     ) {
       next.push(entry);
     } else {

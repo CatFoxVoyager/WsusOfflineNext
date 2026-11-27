@@ -2204,6 +2204,7 @@ if "%4"=="/skipdownload" (
   call :Log "Info: Skipped download/validation of updates for %1 %2 on demand"
   goto EndDownload
 )
+if not exist "%TEMP%\ValidStaticLinks-%1-%2.txt" if not exist "%TEMP%\ValidDynamicLinks-%1-%2.txt" goto CleanupDownload
 if not exist ..\client\%1\%2\nul md ..\client\%1\%2
 if not "%TMP_BUILDS_ENABLED%"=="" (
   for %%f in (%TMP_BUILDS_ENABLED%) do (
@@ -2613,10 +2614,10 @@ if "%TMP_PLATFORM%"=="w100" (
 
 del "%TEMP%\ValidLinks-%1-%2.txt"
 
-dir "..\client\%1\%2" >nul 2>&1
-if errorlevel 1 rd "..\client\%1\%2"
-dir "..\client\%1" >nul 2>&1
-if errorlevel 1 rd "..\client\%1"
+dir /B /A "..\client\%1\%2" 2>nul | %SystemRoot%\System32\findstr.exe /R "." >nul
+if errorlevel 1 if exist "..\client\%1\%2\nul" rd "..\client\%1\%2" 2>nul
+dir /B /A "..\client\%1" 2>nul | %SystemRoot%\System32\findstr.exe /R "." >nul
+if errorlevel 1 if exist "..\client\%1\nul" rd "..\client\%1" 2>nul
 
 call :Log "Info: Cleaned up client directory for %1 %2"
 

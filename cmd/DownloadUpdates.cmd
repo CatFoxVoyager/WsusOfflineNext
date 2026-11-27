@@ -1904,6 +1904,12 @@ if "%TMP_PLATFORM%"=="w100" (
     )
   )
 )
+rem IE11 language packs: a non-glb run appends the per-language ie11 family
+rem into the composed list - for w62-x64 this resolves the IE11 language
+rem packs, every other target has no such family and the line stays a no-op.
+if /i not "%2"=="glb" if exist ..\static\StaticDownloadLinks-ie11-%1-%2.txt (
+  type ..\static\StaticDownloadLinks-ie11-%1-%2.txt >>"%TEMP%\StaticDownloadLinks-%1-%2.txt"
+)
 if exist ..\static\custom\StaticDownloadLinks-%1-%2.txt (
   type ..\static\custom\StaticDownloadLinks-%1-%2.txt >>"%TEMP%\StaticDownloadLinks-%1-%2.txt"
 )
@@ -2851,7 +2857,7 @@ exit /b 1
 :InvalidParams
 echo.
 echo ERROR: Invalid command line: %*
-echo Usage: %~n0 {w62-x64 ^| w63 ^| w63-x64 ^| w100 ^| w100-x64 ^| o2k16 ^| o2k16-x64} {glb} [/excludestatics] [/excludewinglb] [/includedotnet] [/seconly] [/includewddefs] [/nocleanup] [/verify] [/skiptz] [/skipdownload] [/skipdynamic] [/proxy http://[username:password@]^<server^>:^<port^>] [/wsus http://^<server^>] [/wsusonly] [/wsusbyproxy]
+echo Usage: %~n0 {w62-x64 ^| w63 ^| w63-x64 ^| w100 ^| w100-x64 ^| o2k16 ^| o2k16-x64} {glb ^| ^<language token^>} [/excludestatics] [/excludewinglb] [/includedotnet] [/seconly] [/includewddefs] [/nocleanup] [/verify] [/skiptz] [/skipdownload] [/skipdynamic] [/proxy http://[username:password@]^<server^>:^<port^>] [/wsus http://^<server^>] [/wsusonly] [/wsusbyproxy]
 call :Log "Error: Invalid command line: %*"
 echo.
 goto Error

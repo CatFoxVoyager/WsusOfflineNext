@@ -529,6 +529,7 @@ if [ "${BITE_MODE}" = "" ]; then
         || fail_case "ACCEPT: no download into client/dotnet recorded (probe vacuous)"
     [ "$(grep -cF "client\\w100-x64\\chs" "${REC}")" -eq 0 ] \
         || fail_case "ACCEPT: a download targeted client/w100-x64/chs (language dir received payload)"
+    ACCEPT_REC_FILE="${REC}"
     if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
     echo "case ACCEPT: rc=0 - chs dispatched, 3 NLP URLs recorded + files in client/dotnet, E2 skip line present"
     fi
@@ -661,6 +662,110 @@ if [ "${BITE_MODE}" = "" ]; then
         || fail_case "GLB-NO-MARKER: the integrity db creation line is missing (the dotnet verify leg did not run)"
     if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
     echo "case GLB-NO-MARKER: no marker, no skip, integrity db created"
+    fi
+fi
+
+# =====================================================================
+# Case IE11-LPS: w62-x64 chs composes the IE11 language-pack family
+# =====================================================================
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case IE11-LPS: w62-x64 chs downloads its IE11 language packs"
+scaffold_full
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+run_engine "w62-x64 chs /includedotnet /nocleanup /skipdynamic /skiptz"
+if [ "${BITE_MODE}" = "" ]; then
+    [ "${ENGINE_RC}" -eq 0 ] \
+        || fail_case "IE11-LPS: the w62-x64 chs run exited ${ENGINE_RC}, expected 0"
+    ! grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
+        || fail_case "IE11-LPS: w62-x64 chs refused at the gate"
+    grep -qF "Determined static update urls for w62-x64 chs" "${SB_DIR}/log/download.log" \
+        || fail_case "IE11-LPS: no statics success line for w62-x64 chs (the ie11 composition did not reach EvalStatics)"
+    n_ie11=0
+    while IFS= read -r u; do
+        u="${u%$'\r'}"
+        [ -n "${u}" ] || continue
+        grep -qF "${u}" "${REC}" || fail_case "IE11-LPS: IE11 LP URL missing from the stub record: ${u}"
+        n_ie11=$((n_ie11 + 1))
+        lp_name="${u##*/}"
+        [ -f "${SB_DIR}/client/w62-x64/chs/${lp_name}" ] \
+            || fail_case "IE11-LPS: the IE11 language pack did not land in client/w62-x64/chs: ${lp_name}"
+    done < "${REPO}/static/StaticDownloadLinks-ie11-w62-x64-chs.txt"
+    [ "${n_ie11}" -gt 0 ] \
+        || fail_case "IE11-LPS: no IE11 LP URLs read from static/ (probe vacuous)"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case IE11-LPS: ie11-w62-x64-chs composed and downloaded into client/w62-x64/chs"
+    fi
+fi
+
+# =====================================================================
+# Case W100-NOOP: the w100-x64 chs run recorded no IE11 family URLs
+# =====================================================================
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case W100-NOOP: the w100-x64 chs run ignores the ie11 family"
+if [ "${BITE_MODE}" = "" ]; then
+    n_ie11_hits=0
+    while IFS= read -r u; do
+        u="${u%$'\r'}"
+        [ -n "${u}" ] || continue
+        grep -qF "${u}" "${ACCEPT_REC_FILE}" && n_ie11_hits=$((n_ie11_hits + 1))
+    done < "${REPO}/static/StaticDownloadLinks-ie11-w62-x64-chs.txt"
+    [ "${n_ie11_hits}" -eq 0 ] \
+        || fail_case "W100-NOOP: ${n_ie11_hits} IE11 URL(s) in the w100-x64 chs record (family composed on the wrong target)"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case W100-NOOP: zero ie11 URLs in the w100-x64 chs record"
+    fi
+fi
+
+# =====================================================================
+# Case CHS-UPPER + REFUSAL-SWEEP: case-insensitive dispatch, every target
+# class refuses non-vocab and injection-shaped tokens
+# =====================================================================
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case CHS-UPPER + REFUSAL-SWEEP: uppercase CHS dispatches, hostile tokens refuse"
+scaffold_full
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+run_engine "w100-x64 CHS /includedotnet /nocleanup /skipdownload /skiptz"
+if [ "${BITE_MODE}" = "" ]; then
+    [ "${ENGINE_RC}" -eq 0 ] \
+        || fail_case "CHS-UPPER: the uppercase CHS run exited ${ENGINE_RC}, expected 0 (dispatch by loop variable broken?)"
+    ! grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
+        || fail_case "CHS-UPPER: uppercase CHS was refused (case-insensitivity contract broken)"
+    grep -qF "for w100-x64 CHS" "${SB_DIR}/log/download.log" \
+        || fail_case "CHS-UPPER: the run start log does not name 'for w100-x64 CHS'"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case CHS-UPPER: uppercase CHS accepted and dispatched past the gate"
+    fi
+fi
+scaffold_mini
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+for tgt in w100-x64 w100 w61 w62-x64 wxp o2k16; do
+    for tok in "zzz" "\"x^y\""; do
+        run_engine "${tgt} ${tok} /includedotnet /nocleanup /skipdynamic /skiptz"
+        grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
+            || fail_case "REFUSAL-SWEEP: ${tgt} accepted token ${tok} (no InvalidParams marker, rc=${ENGINE_RC})"
+        grep -qF "Usage:" "${SB_DIR}/run.log" \
+            || fail_case "REFUSAL-SWEEP: ${tgt} token ${tok} produced no usage line"
+    done
+done
+grep -qF "{glb ^| ^<language token^>}" "${REPO}/${ENGINE_REL}" \
+    || fail_case "REFUSAL-SWEEP: the usage line no longer documents the language-token grammar"
+if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+echo "case REFUSAL-SWEEP: 6 target classes x 2 hostile tokens all refused via InvalidParams"
+fi
+
+# =====================================================================
+# Case ISO-USB-ZERO: the ISO/USB pair carries zero diff at plan end
+# =====================================================================
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case ISO-USB-ZERO: CreateISOImage.cmd + CopyToTarget.cmd untouched"
+if [ "${BITE_MODE}" = "" ]; then
+    iso_usb="$(git -C "${REPO}" status --porcelain -- cmd/CreateISOImage.cmd cmd/CopyToTarget.cmd 2>/dev/null)"
+    [ -n "${iso_usb}" ] && fail_case "ISO-USB-ZERO: ISO/USB files carry a diff: ${iso_usb}"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case ISO-USB-ZERO: porcelain empty for the ISO/USB pair"
     fi
 fi
 

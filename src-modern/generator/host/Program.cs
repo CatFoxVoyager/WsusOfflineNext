@@ -889,6 +889,17 @@ namespace WSUSOffline.Generator
             job.HasWin11Or10x64 |= upgradeKeys.Exists(k => k.EndsWith("_x64"));
             job.HasWin10x86 |= upgradeKeys.Exists(k => k.EndsWith("_x86"));
 
+            // Phase 38 medium languages (DL-01/T-38-03): validated by exact
+            // ENGINE_VOCAB membership (void-all - T-38-03 primary control)
+            // in the DISTINCT named validator. Ascending token order for
+            // the composition (glb first above, then each token); glb
+            // filtered defensively (the derivation never selects it and
+            // the frontend never sends it, but the vocabulary contains it
+            // - the composition must never re-run the glb pass).
+            List<string> selectedLanguages = GetLanguagesPayloadSelection(payload, out _);
+            selectedLanguages.RemoveAll(lang => lang == "glb");
+            selectedLanguages.Sort(StringComparer.Ordinal);
+
             // Arch-routed /includeupgrade tokens (DEC-08 singular grammar,
             // one token per selected target): composed ONLY from the digit
             // prefix of a grammar-validated "<build>_<arch>" key - no
@@ -968,6 +979,39 @@ namespace WSUSOffline.Generator
                     {
                         if (ct.IsCancellationRequested) break;
                         failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"{legTarget} glb {job.Switches}".Trim(), cmdDir, ct);
+                    }
+
+                    // Phase 38 per-language invocations (DL-01): after the
+                    // byte-frozen glb set above, each selected language
+                    // (ascending token order) gets its own
+                    // DownloadUpdates.cmd pass over the SAME client/ tree -
+                    // the engine grammar is one language per run (%2).
+                    // Non-glb passes carry job.Switches ONLY: never the
+                    // upgrade switches, never the 5th upgrade-language
+                    // argument (the DEC-36-06 firewall - the UUP upgrade
+                    // media must not be re-processed per language, and a
+                    // medium token never rides the WOU_UPGRADE_LANG env
+                    // carriage). Serial by contract (same tree + shared
+                    // cleanup state), cancellation checked like the blocks
+                    // above. Empty/voided selection -> the loop body never
+                    // executes -> zero new invocations (SC4: default runs
+                    // are indistinguishable).
+                    foreach (string lang in selectedLanguages)
+                    {
+                        if (ct.IsCancellationRequested) break;
+                        if (job.HasWin11Or10x64)
+                        {
+                            failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"w100-x64 {lang} {job.Switches}".Trim(), cmdDir, ct);
+                        }
+                        if (job.HasWin10x86)
+                        {
+                            failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"w100 {lang} {job.Switches}".Trim(), cmdDir, ct);
+                        }
+                        foreach (var legTarget in job.LegacyTasks)
+                        {
+                            if (ct.IsCancellationRequested) break;
+                            failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"{legTarget} {lang} {job.Switches}".Trim(), cmdDir, ct);
+                        }
                     }
 
                     // 2. Download Office C2R

@@ -215,6 +215,51 @@ check_save_pins () { # <program-cs-file> -> status (fail count)
     return "${fails}"
 }
 
+# check_sc4_pins: the byte-frozen glb invocation literals (38-02 T3,
+# parameterized for the can-fail control). These are the SC4 contract -
+# the three glb argument strings must stay byte-identical. Return status
+# = fail count.
+check_sc4_pins () { # <program-cs-file> -> status (fail count)
+    local fails=0 f="$1" n
+    n="$(count_f "${f}" 'w100-x64 glb {job.Switches}{upgradeSwitchesX64}')"
+    [ "${n}" -eq 1 ] || { echo "    sc4: w100-x64 glb literal x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" 'w100 glb {job.Switches}{upgradeSwitchesX86}')"
+    [ "${n}" -eq 1 ] || { echo "    sc4: w100 glb literal x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" '{legTarget} glb {job.Switches}')"
+    [ "${n}" -eq 1 ] || { echo "    sc4: legacy glb literal x${n}, want 1"; fails=$((fails + 1)); }
+    return "${fails}"
+}
+
+# check_composition_pins: the per-language loop + the DEC-36-06 firewall
+# (38-02 T3, parameterized for the can-fail control). Non-glb passes
+# carry job.Switches ONLY - never the upgrade switches, never the 5th
+# upgrade-language argument. Return status = fail count.
+check_composition_pins () { # <program-cs-file> -> status (fail count)
+    local fails=0 f="$1" loop n
+    loop="$(region "${f}" 'foreach [(]string lang in selectedLanguages[)]' '// 2. Download Office C2R')"
+    if [ -z "${loop}" ]; then
+        echo "    composition: loop region not extractable"
+        return 1
+    fi
+    n="$(printf '%s\n' "${loop}" | grep -cF 'w100-x64 {lang} {job.Switches}')"
+    [ "${n}" -eq 1 ] || { echo "    composition: w100-x64 per-language call x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF 'w100 {lang} {job.Switches}')"
+    [ "${n}" -eq 1 ] || { echo "    composition: w100 per-language call x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF '{legTarget} {lang} {job.Switches}')"
+    [ "${n}" -eq 1 ] || { echo "    composition: legacy per-language call x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF 'upgradeSwitches')"
+    [ "${n}" -eq 0 ] || { echo "    composition: firewall - upgrade switches in a non-glb pass x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF 'upgradeLangValue')"
+    [ "${n}" -eq 0 ] || { echo "    composition: firewall - upgrade-language carriage x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF 'WOU_UPGRADE_LANG')"
+    [ "${n}" -eq 0 ] || { echo "    composition: firewall - env carriage name x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF ', cmdDir, ct, ')"
+    [ "${n}" -eq 0 ] || { echo "    composition: firewall - 5-argument call form x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${loop}" | grep -cF ', cmdDir, ct);')"
+    [ "${n}" -eq 3 ] || { echo "    composition: 4-argument call forms x${n}, want 3"; fails=$((fails + 1)); }
+    return "${fails}"
+}
+
 # --- section a: GOLDEN -----------------------------------------------------
 echo "--- section a: GOLDEN (live static/ derivation vs the pinned 23) ---"
 
@@ -434,6 +479,46 @@ pin_eq "HOST: writer serializes Enabled/Disabled per known token" 1 "${WRITER_ST
 WRITER_INSITU="$(printf '%s\n' "${WRITER_BODY}" | grep -cF 'InsertRange(insertIdx, sectionBody)')"
 pin_eq "HOST: writer rewrites the section in place (key-line splice after the header)" 1 "${WRITER_INSITU}"
 
+# P12 (38-02 T3): the byte-frozen SC4 glb invocation literals.
+if check_sc4_pins "${PROGRAM_CS}"; then
+    echo "  ok: HOST: SC4 glb invocation literals byte-frozen"
+else
+    fail_case "HOST: SC4 glb invocation literals drifted"
+fi
+
+# P13 (38-02 T3): the per-language composition loop + the DEC-36-06
+# firewall (non-glb passes carry job.Switches ONLY).
+if check_composition_pins "${PROGRAM_CS}"; then
+    echo "  ok: HOST: per-language composition + DEC-36-06 firewall complete"
+else
+    fail_case "HOST: per-language composition + DEC-36-06 firewall incomplete"
+fi
+
+# P14 (38-02 T3): extraction site - the validated selection is filtered
+# and sorted ascending before the composition.
+EXTRACT_GLB_FILTER="$(count_f "${PROGRAM_CS}" 'selectedLanguages.RemoveAll(lang => lang == "glb")')"
+pin_eq "HOST: glb filtered defensively out of the selection" 1 "${EXTRACT_GLB_FILTER}"
+EXTRACT_SORT="$(count_f "${PROGRAM_CS}" 'selectedLanguages.Sort(StringComparer.Ordinal)')"
+pin_eq "HOST: selection sorted ascending (Ordinal) before composition" 1 "${EXTRACT_SORT}"
+
+# P15 (38-02 T3): spawn order - all three glb lines precede the
+# per-language loop (line-index assertion, never a line-number pin).
+GLB64_LINE="$(grep -nF 'w100-x64 glb {job.Switches}{upgradeSwitchesX64}' "${PROGRAM_CS}" | head -n1 | cut -d: -f1)"
+GLBX86_LINE="$(grep -nF 'w100 glb {job.Switches}{upgradeSwitchesX86}' "${PROGRAM_CS}" | head -n1 | cut -d: -f1)"
+GLBLEG_LINE="$(grep -nF '{legTarget} glb {job.Switches}' "${PROGRAM_CS}" | head -n1 | cut -d: -f1)"
+LOOP_LINE="$(grep -nF 'foreach (string lang in selectedLanguages)' "${PROGRAM_CS}" | head -n1 | cut -d: -f1)"
+ORDER_OK=1
+for glb_line in "${GLB64_LINE}" "${GLBX86_LINE}" "${GLBLEG_LINE}"; do
+    if [ -z "${glb_line}" ] || [ -z "${LOOP_LINE}" ] || [ "${LOOP_LINE}" -le "${glb_line}" ]; then
+        ORDER_OK=0
+    fi
+done
+if [ "${ORDER_OK}" -eq 1 ]; then
+    echo "  ok: HOST: spawn order — all three glb lines precede the per-language loop (glb64=${GLB64_LINE} glbx86=${GLBX86_LINE} glbleg=${GLBLEG_LINE} loop=${LOOP_LINE})"
+else
+    fail_case "HOST: spawn order broken (glb64=${GLB64_LINE} glbx86=${GLBX86_LINE} glbleg=${GLBLEG_LINE} loop=${LOOP_LINE})"
+fi
+
 # --- section d: CAN-FAIL controls ------------------------------------------
 echo "--- section d: CAN-FAIL controls ---"
 
@@ -495,6 +580,30 @@ if [ -s "${SANDBOX}/ProgramGateBite.cs" ] && [ "${GATE_LANDED}" -eq 0 ] && [ "${
     echo "  control ok: the absent-branch pin set bites on an ungated write path"
 else
     fail_case "control 4: absent-branch bite failed (landed-residue=${GATE_LANDED}, rc=${GATE_RC})"
+fi
+
+# Control 5 (SC4 bite, 38-02 T3): a copy with one glb literal degraded
+# (upgrade switches stripped) must red the SC4 pin set.
+sed 's/w100-x64 glb {job.Switches}{upgradeSwitchesX64}/w100-x64 glb {job.Switches}/' "${PROGRAM_CS}" > "${SANDBOX}/ProgramSc4Bite.cs"
+SC4_RESIDUE="$(count_f "${SANDBOX}/ProgramSc4Bite.cs" '{job.Switches}{upgradeSwitchesX64}')"
+SC4_OUT="$(check_sc4_pins "${SANDBOX}/ProgramSc4Bite.cs")"
+SC4_RC=$?
+if [ -s "${SANDBOX}/ProgramSc4Bite.cs" ] && [ "${SC4_RESIDUE}" -eq 0 ] && [ "${SC4_RC}" -ne 0 ]; then
+    echo "  control ok: the SC4 pin set bites on one degraded glb literal"
+else
+    fail_case "control 5: SC4 bite failed (residue=${SC4_RESIDUE}, rc=${SC4_RC})"
+fi
+
+# Control 6 (firewall bite, 38-02 T3): a copy where one per-language pass
+# regains the 5th upgrade-language argument must red the firewall pins.
+sed 's/w100-x64 {lang} {job.Switches}".Trim(), cmdDir, ct);/w100-x64 {lang} {job.Switches}".Trim(), cmdDir, ct, upgradeLangValue);/' "${PROGRAM_CS}" > "${SANDBOX}/ProgramFwBite.cs"
+FW_LANDED="$(count_f "${SANDBOX}/ProgramFwBite.cs" 'ct, upgradeLangValue);')"
+FW_OUT="$(check_composition_pins "${SANDBOX}/ProgramFwBite.cs")"
+FW_RC=$?
+if [ -s "${SANDBOX}/ProgramFwBite.cs" ] && [ "${FW_LANDED}" -ge 1 ] && [ "${FW_RC}" -ne 0 ]; then
+    echo "  control ok: the firewall pins bite on a 5-argument per-language pass"
+else
+    fail_case "control 6: firewall bite failed (landed=${FW_LANDED}, rc=${FW_RC})"
 fi
 
 # --- verdict (the counter comparison is the final instruction) -------------

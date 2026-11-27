@@ -27,7 +27,15 @@
 #   O2K16-ACCEPT o2k16 chs passes the gate (token membership only; the
 #                Office content axis is deferred LANGV2-01)
 #   MARKER-WRITE / SAME-DAY-SKIP / GLB-NO-MARKER   per-language same-day
-#                keying of the dotnet block (task 2; added there)
+#                keying of the dotnet block (task 2)
+#
+# Same-day provenance (task 2, dated 2026-11-27): the engine's glb-keyed
+# same-day skip (hashes-dotnet-%TARGET_ARCH%-glb.txt) was measured INERT at
+# planning - no writer for its key file existed anywhere in the engine, so
+# it never fired. The non-glb per-language marker mechanism introduced by
+# task 2 is the live implementation of the per-language same-day keying;
+# any future writer for the glb key is a deliberate SC4-breaking decision
+# and must be recorded as such.
 #   IE11-LPS / W100-NOOP / REFUSAL-SWEEP / ISO-USB-ZERO  ie11-w62-x64
 #                composition + refusal sweep + ISO/USB zero-diff (task 3)
 #
@@ -124,12 +132,22 @@ case "${PROCESSOR_ARCHITECTURE:-}" in
     *) echo "FAIL: unexpected PROCESSOR_ARCHITECTURE '${PROCESSOR_ARCHITECTURE:-}' - stub names unknown"; exit 1 ;;
 esac
 
-STUB_DIR="$(mktemp -d)"
-PRISTINE_DIR="$(mktemp -d)"
+# scratch root: the repo's gitignored planning tmp (dispatch convention),
+# NOT the platform temp - engine-written files inside %TEMP% vanished
+# between runs on this host (only 2 of 8 integrity dbs survived; cause
+# unattributed - likely real-time AV policing the temp volume), which
+# broke the same-day marker leg. On the repo scratch every engine-written
+# file survives run-to-run.
+SCRATCH_ROOT="${REPO}/.planning/tmp/38-01"
+mkdir -p "${SCRATCH_ROOT}" || { echo "FAIL: cannot create ${SCRATCH_ROOT}"; exit 1; }
+STUB_DIR="$(mktemp -d "${SCRATCH_ROOT}/stub.XXXXXX")"
+PRISTINE_DIR="$(mktemp -d "${SCRATCH_ROOT}/pristine.XXXXXX")"
 SB_DIR=""
 SB_DIR_A=""
 SB_DIR_B=""
-cleanup () { for d in "${SB_DIR}" "${SB_DIR_A}" "${SB_DIR_B}" "${STUB_DIR}" "${PRISTINE_DIR}"; do
+# WOU_LANG_KEEP=1 keeps the sandboxes on disk for post-run inspection
+# (debugging aid; prints each sandbox path beside its case marker)
+cleanup () { [ -n "${WOU_LANG_KEEP:-}" ] && return 0; for d in "${SB_DIR}" "${SB_DIR_A}" "${SB_DIR_B}" "${STUB_DIR}" "${PRISTINE_DIR}"; do
     [ -n "${d}" ] && [ -d "${d}" ] && rm -rf "${d}"; done; }
 trap cleanup EXIT
 
@@ -207,6 +225,13 @@ class HashdeepStub
             foreach (string a in args) { sb.Append(" "); sb.Append(a); }
             File.AppendAllText(rec, sb.ToString() + Environment.NewLine, new UTF8Encoding(false));
         }
+        // The engine's legacy-db cleanup (DownloadUpdates.cmd, "delete
+        // old-style hashes" block) deletes any client/md/hashes-*.txt whose
+        // content lacks the real hashdeep command-line signature - a bare
+        // fake line got every stub-written db erased at the next run start
+        // (measured live, 2026-11-27). Emit the hashdeep header shape.
+        Console.WriteLine("%%%% HASHDEEP-1.0");
+        Console.WriteLine("%%%% %# -c md5,sha1,sha256 -b battery-stub");
         Console.WriteLine("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,cccccccccccccccccccccccccccccccccccccccc  0,0,0, files,hashes,battery-stub");
         return 0;
     }
@@ -254,7 +279,7 @@ git -C "${REPO}" cat-file blob "${PRISTINE_SHA}" 2>/dev/null | sed -e 's/\r$//' 
 # selective bin/, client skeleton with bin+md, log/). Mini: gate-refusal
 # runs only (engine + log dir - the run exits at the gate).
 function scaffold_mini () {
-    SB_DIR="$(mktemp -d)"
+    SB_DIR="$(mktemp -d "${SCRATCH_ROOT}/sb.XXXXXX")"
     mkdir -p "${SB_DIR}/cmd" "${SB_DIR}/log" "${SB_DIR}/tmp" "${SB_DIR}/client/bin" "${SB_DIR}/client/md"
     cp "${REPO}/${ENGINE_REL}" "${SB_DIR}/cmd/"
 }
@@ -357,8 +382,18 @@ cp "${PRISTINE_DIR}/DownloadUpdates.cmd" "${SB_DIR_A}/cmd/DownloadUpdates.cmd"
 scaffold_full
 SB_DIR_B="${SB_DIR}"
 if [ "${BITE_MODE}" = "bite-sc4" ]; then
-    sed -i 's/echo Downloading\/validating installation files for .NET Frameworks 3.5 SP1 and 4.x.../echo Downloading\/validating installation files for NET Frameworks 3.5 SP1 and 4.x.../' \
-        "${SB_DIR_A}/cmd/DownloadUpdates.cmd"
+    # one glb-visible byte flip; sed is CRLF-UNSAFE on this host (text-mode
+    # read strips CR, the -i rewrite lands LF-only and cmd misparses the
+    # copy into a wedged run - measured twice), so re-force CRLF after
+    sed 's/echo Downloading\/validating installation files for .NET Frameworks 3.5 SP1 and 4.x.../echo Downloading\/validating installation files for NET Frameworks 3.5 SP1 and 4.x.../' \
+        "${SB_DIR_A}/cmd/DownloadUpdates.cmd" \
+        | sed -e 's/\r$//' -e 's/$/\r/' \
+        > "${SB_DIR_A}/cmd/DownloadUpdates.cmd.new" \
+        && mv "${SB_DIR_A}/cmd/DownloadUpdates.cmd.new" "${SB_DIR_A}/cmd/DownloadUpdates.cmd"
+    CR_COUNT="$(tr -dc '\r' < "${SB_DIR_A}/cmd/DownloadUpdates.cmd" | wc -c)"
+    LN_COUNT="$(wc -l < "${SB_DIR_A}/cmd/DownloadUpdates.cmd")"
+    [ "${CR_COUNT}" -eq "${LN_COUNT}" ] \
+        || { echo "FAIL: bite-sc4 sabotage broke CRLF (${CR_COUNT} CRs / ${LN_COUNT} lines)"; exit 1; }
 fi
 ART_A="${SB_DIR_A}/artifacts"; mkdir -p "${ART_A}"
 ART_B="${SB_DIR_B}/artifacts"; mkdir -p "${ART_B}"
@@ -380,8 +415,35 @@ run_sc4 () { # $1 = sandbox dir
 : > "${SB_DIR_A}/record.log"; : > "${SB_DIR_B}/record.log"
 run_sc4 "${SB_DIR_A}" & RUN_A=$!
 run_sc4 "${SB_DIR_B}" & RUN_B=$!
-wait "${RUN_A}"; RC_A="$(cat "${SB_DIR_A}/engine.rc" 2>/dev/null || echo 999)"
-wait "${RUN_B}"; RC_B="$(cat "${SB_DIR_B}/engine.rc" 2>/dev/null || echo 999)"
+# bounded join: a wedged engine leg (e.g. a foreign GUI process joining the
+# console pipe set of a for /F pipeline - observed once on this host,
+# 2026-11-27, resolved externally) must convert into a loud verdict, never
+# an infinite battery hang. 120 s per leg, then the leg is failed loud.
+wait_bound () { # $1 = job pid
+    local n=0
+    while kill -0 "$1" 2>/dev/null; do
+        n=$((n + 1))
+        if [ "${n}" -gt 240 ]; then
+            kill "$1" 2>/dev/null
+            return 124
+        fi
+        sleep 0.5
+    done
+    wait "$1" 2>/dev/null
+    return 0
+}
+if wait_bound "${RUN_A}"; then
+    RC_A="$(cat "${SB_DIR_A}/engine.rc" 2>/dev/null || echo 999)"
+else
+    RC_A=124
+    fail_case "SC4: the pristine leg exceeded the 120 s bound (environment wedge)"
+fi
+if wait_bound "${RUN_B}"; then
+    RC_B="$(cat "${SB_DIR_B}/engine.rc" 2>/dev/null || echo 999)"
+else
+    RC_B=124
+    fail_case "SC4: the working-tree leg exceeded the 120 s bound (environment wedge)"
+fi
 
 normalize "${SB_DIR_A}/run.log" "${ART_A}/run.log"
 normalize "${SB_DIR_A}/log/download.log" "${ART_A}/download.log" 2>/dev/null || : > "${ART_A}/download.log"
@@ -541,6 +603,64 @@ if [ "${BITE_MODE}" = "" ]; then
         || fail_case "O2K16-ACCEPT: the run start log does not name 'for o2k16 chs' (%2 did not flow)"
     if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
     echo "case O2K16-ACCEPT: rc=0 - o2k16 chs dispatched, start log names the target+language"
+    fi
+fi
+
+# =====================================================================
+# Case MARKER-WRITE + SAME-DAY-SKIP: per-language dotnet same-day keying
+# (task 2). Both runs share ONE sandbox - the second must hit the marker.
+# =====================================================================
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case MARKER-WRITE + SAME-DAY-SKIP: chs /verify keys its own marker"
+scaffold_full
+[ -n "${WOU_LANG_KEEP:-}" ] && echo "KEEP: marker sandbox ${SB_DIR}"
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+case "w100-x64" in *x64*) BATTERY_ARCH=x64 ;; *) BATTERY_ARCH=x86 ;; esac
+run_engine "w100-x64 chs /includedotnet /verify /nocleanup /skipdynamic /skiptz"
+if [ "${BITE_MODE}" = "" ]; then
+    [ "${ENGINE_RC}" -eq 0 ] \
+        || fail_case "MARKER-WRITE: the chs /verify run exited ${ENGINE_RC}, expected 0"
+    [ -f "${SB_DIR}/client/md/hashes-dotnet-${BATTERY_ARCH}-chs.txt" ] \
+        || fail_case "MARKER-WRITE: no per-language marker hashes-dotnet-${BATTERY_ARCH}-chs.txt after the chs /verify run"
+    [ ! -f "${SB_DIR}/client/md/hashes-dotnet-${BATTERY_ARCH}-glb.txt" ] \
+        || fail_case "MARKER-WRITE: a -glb marker was written by a chs run"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case MARKER-WRITE: per-language marker present, no -glb marker"
+    fi
+    FAILS_BEFORE="${FAILED_CASES}"
+    run_engine "w100-x64 chs /includedotnet /verify /nocleanup /skipdynamic /skiptz"
+    [ "${ENGINE_RC}" -eq 0 ] \
+        || fail_case "SAME-DAY-SKIP: the second chs /verify run exited ${ENGINE_RC}, expected 0"
+    grep -qF "Skipped download/validation of .NET Frameworks' language files for chs due to 'same day' rule" "${SB_DIR}/log/download.log" \
+        || fail_case "SAME-DAY-SKIP: the same-day skip line naming chs is missing from download.log"
+    [ -f "${SB_DIR}/client/dotnet/ndp481-x86-x64-allos-chs.exe" ] \
+        || fail_case "SAME-DAY-SKIP: the chs NLP vanished after the second run (re-download or cleanup)"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case SAME-DAY-SKIP: second same-day run skipped with the chs line, NLP still on disk"
+    fi
+fi
+
+# =====================================================================
+# Case GLB-NO-MARKER: a glb /verify run writes no marker, never skips
+# =====================================================================
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case GLB-NO-MARKER: glb /verify run writes no marker and never skips"
+scaffold_full
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+run_engine "w100-x64 glb /includedotnet /verify /nocleanup /skipdynamic /skiptz"
+if [ "${BITE_MODE}" = "" ]; then
+    [ "${ENGINE_RC}" -eq 0 ] \
+        || fail_case "GLB-NO-MARKER: the glb /verify run exited ${ENGINE_RC}, expected 0"
+    [ ! -f "${SB_DIR}/client/md/hashes-dotnet-${BATTERY_ARCH}-glb.txt" ] \
+        || fail_case "GLB-NO-MARKER: a per-arch -glb marker was written by a glb run"
+    grep -qF "same day" "${SB_DIR}/log/download.log" \
+        && fail_case "GLB-NO-MARKER: a same-day skip line appeared on a glb run"
+    grep -qF "Created integrity database for .NET Frameworks' installation files" "${SB_DIR}/log/download.log" \
+        || fail_case "GLB-NO-MARKER: the integrity db creation line is missing (the dotnet verify leg did not run)"
+    if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case GLB-NO-MARKER: no marker, no skip, integrity db created"
     fi
 fi
 

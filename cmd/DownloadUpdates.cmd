@@ -945,6 +945,21 @@ if exist ..\client\md\hashes-dotnet.txt (
       goto SkipDotNet
     )
   )
+  rem Non-glb same-day keying: the per-language marker written by the db
+  rem regeneration below - never on a glb run - skips the whole dotnet block
+  rem on a same-day language re-run, so the already-present NLPs are neither
+  rem re-downloaded nor cleaned up. The glb-keyed check above stays untouched:
+  rem measured inert at planning - 2026-11-27, no writer for its key file
+  rem existed anywhere in the engine - and any future writer for the glb key
+  rem is a deliberate SC4-breaking decision.
+  if /i not "%2"=="glb" if exist ..\client\md\hashes-dotnet-%TARGET_ARCH%-%2.txt (
+    for %%i in (..\client\md\hashes-dotnet-%TARGET_ARCH%-%2.txt) do echo _%%~ti | %SystemRoot%\System32\find.exe "_%DATE:~-10%" >nul 2>&1
+    if not errorlevel 1 (
+      echo Skipping download/validation of .NET Frameworks' language files for %2 due to 'same day' rule.
+      call :Log "Info: Skipped download/validation of .NET Frameworks' language files for %2 due to 'same day' rule"
+      goto SkipDotNet
+    )
+  )
 ) else (
   echo Warning: Integrity database ..\client\md\hashes-dotnet.txt not found.
   call :Log "Warning: Integrity database ..\client\md\hashes-dotnet.txt not found"
@@ -1018,6 +1033,11 @@ if errorlevel 1 (
   call :Log "Info: Created integrity database for .NET Frameworks' installation files"
 )
 for %%i in (..\client\md\hashes-dotnet.txt) do if %%~zi==0 del %%i
+rem Per-language integrity marker: a non-glb run keys a copy of the fresh db
+rem by language so the same-day skip above can fire on a language re-run.
+rem A glb run never writes a per-arch marker - the glb behavior of never
+rem skipping stays byte-preserved.
+if /i not "%2"=="glb" if exist ..\client\md\hashes-dotnet.txt copy /Y ..\client\md\hashes-dotnet.txt ..\client\md\hashes-dotnet-%TARGET_ARCH%-%2.txt >nul
 :SkipDotNet
 
 rem *** Download C++ Runtime Libraries' installation files ***

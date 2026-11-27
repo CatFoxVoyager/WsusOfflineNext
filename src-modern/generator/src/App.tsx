@@ -229,6 +229,10 @@ export default function App() {
   // untouched (SC4).
   const [languages, setLanguages] = useState<Record<string, string>>({});
   const [languagesSelection, setLanguagesSelection] = useState<Record<string, boolean>>({});
+  // Flips on the first state message: the fail-open note may only render
+  // after init resolved, so the sub-second startup never flashes an
+  // unavailable panel (the sibling picker's loading precedent).
+  const [catalogResolved, setCatalogResolved] = useState(false);
 
   // Native message sender
   const sendNative = (action: string, payload: any = {}) => {
@@ -250,6 +254,7 @@ export default function App() {
             flushTimerRef.current = window.setTimeout(flushLogs, 120);
           }
         } else if (data.type === 'state') {
+          setCatalogResolved(true);
           if (data.win11) {
             setWin11Builds(prev => prev.map(b => ({ ...b, enabled: data.win11[b.key] ?? b.enabled })));
           }
@@ -1101,21 +1106,36 @@ export default function App() {
                 <h2 className="text-sm font-semibold text-zinc-100">Update languages</h2>
                 <p className="text-xs text-zinc-400">Choose the languages this medium carries in addition to English (global). Each selected language adds its language-specific packages — .NET language packs, plus IE11 language packs when Server 2012 is among the targets.</p>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={selectAllLanguages}
-                  className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-200 border border-dark-800 transition-colors"
-                >
-                  Select all
-                </button>
-                <button
-                  onClick={clearLanguageSelection}
-                  className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-400 border border-dark-800 transition-colors"
-                >
-                  Clear selection
-                </button>
-              </div>
+              {Object.keys(languages).length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={selectAllLanguages}
+                    className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-200 border border-dark-800 transition-colors"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    onClick={clearLanguageSelection}
+                    className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-400 border border-dark-800 transition-colors"
+                  >
+                    Clear selection
+                  </button>
+                </div>
+              )}
             </div>
+
+            {/* Fail-open note: only after init resolved, and only when the
+                catalog came back empty or absent - a calm informational
+                panel on the zinc info idiom, never an error surface (the
+                run behavior stays the untouched default). The toolbar above
+                hides with it: a select-all over zero selectable rows is a
+                no-op button, so it is never rendered. */}
+            {catalogResolved && Object.keys(languages).length === 0 && (
+              <div className="p-4 rounded-lg bg-dark-900 border border-dark-800">
+                <h3 className="text-sm font-semibold text-zinc-100">Additional languages unavailable</h3>
+                <p className="text-xs text-zinc-400 mt-1">Only English (global) is available right now, so the medium will carry global updates only — the same content as a default run. Restart the generator to reload the language list.</p>
+              </div>
+            )}
 
             {/* Dense Tabular List */}
             <div className="border border-dark-800 rounded-lg overflow-hidden bg-dark-900">

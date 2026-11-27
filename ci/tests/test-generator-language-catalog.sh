@@ -303,6 +303,50 @@ check_nav_pins () { # <app-tsx-file> -> status (fail count)
     return "${fails}"
 }
 
+# check_copy_pins: the verbatim UI copy pin set (38-03 T2, parameterized
+# for the can-fail control) — panel heading, sub-copy, and the fail-open
+# note pair, byte-exact per the approved surface contract. Return status
+# = fail count.
+check_copy_pins () { # <app-tsx-file> -> status (fail count)
+    local fails=0 f="$1" n
+    n="$(count_f "${f}" '>Update languages<')"
+    [ "${n}" -eq 1 ] || { echo "    copy: panel heading x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" 'Choose the languages this medium carries in addition to English (global). Each selected language adds its language-specific packages — .NET language packs, plus IE11 language packs when Server 2012 is among the targets.')"
+    [ "${n}" -eq 1 ] || { echo "    copy: panel sub-copy x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" 'Additional languages unavailable')"
+    [ "${n}" -eq 1 ] || { echo "    copy: fail-open note heading x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" 'Only English (global) is available right now, so the medium will carry global updates only — the same content as a default run. Restart the generator to reload the language list.')"
+    [ "${n}" -eq 1 ] || { echo "    copy: fail-open note body x${n}, want 1"; fails=$((fails + 1)); }
+    return "${fails}"
+}
+
+# check_guard_pins: the init-resolution guard + toolbar scoping pins
+# (38-03 T2, parameterized) — the fail-open note renders only after the
+# first state message and only on an empty catalog, on the calm zinc info
+# idiom (never amber/rose), with the toolbar buttons hidden alongside.
+# Return status = fail count.
+check_guard_pins () { # <app-tsx-file> -> status (fail count)
+    local fails=0 f="$1" n tab_region
+    n="$(count_f "${f}" 'const [catalogResolved, setCatalogResolved] = useState(false);')"
+    [ "${n}" -eq 1 ] || { echo "    guard: resolved flag declaration x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" 'setCatalogResolved(true);')"
+    [ "${n}" -eq 1 ] || { echo "    guard: resolved set on the state message x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" 'catalogResolved && Object.keys(languages).length === 0')"
+    [ "${n}" -eq 1 ] || { echo "    guard: note gated on init resolution + empty catalog x${n}, want 1"; fails=$((fails + 1)); }
+    tab_region="$(tsx_tab "${f}" 'languages')"
+    if [ -z "${tab_region}" ]; then
+        echo "    guard: tab region not extractable"
+        return 1
+    fi
+    n="$(printf '%s\n' "${tab_region}" | grep -cF 'p-4 rounded-lg bg-dark-900 border border-dark-800')"
+    [ "${n}" -eq 1 ] || { echo "    guard: note on the calm zinc info panel idiom x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${tab_region}" | grep -cE 'amber|rose')"
+    [ "${n}" -eq 0 ] || { echo "    guard: note is never amber/rose x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${tab_region}" | grep -cF '{Object.keys(languages).length > 0 && (')"
+    [ "${n}" -eq 1 ] || { echo "    guard: toolbar buttons hidden on an empty catalog x${n}, want 1"; fails=$((fails + 1)); }
+    return "${fails}"
+}
+
 # --- section a: GOLDEN -----------------------------------------------------
 echo "--- section a: GOLDEN (live static/ derivation vs the pinned 23) ---"
 
@@ -673,6 +717,46 @@ pin_eq "UI: select-all/clear scope the catalog keys" 2 "${SCOPE_FOREACH}"
 SCOPE_GLB="$(printf '%s\n' "${HANDLERS_REGION}" | grep -ciF 'glb')"
 pin_eq "UI: the interactions never reference the pinned token (not a catalog member)" 0 "${SCOPE_GLB}"
 
+# U9 (38-03 T2): the verbatim copy set — panel heading, sub-copy, and the
+# fail-open note pair, byte-exact per the approved contract.
+if check_copy_pins "${APP_TSX}"; then
+    echo "  ok: UI: verbatim copy set complete (heading, sub-copy, note pair)"
+else
+    fail_case "UI: verbatim copy set drifted from the approved contract"
+fi
+
+# U10 (38-03 T2): the init-resolution guard + toolbar scoping + calm-panel
+# color discipline.
+if check_guard_pins "${APP_TSX}"; then
+    echo "  ok: UI: catalog guard, toolbar scoping and panel colors complete"
+else
+    fail_case "UI: catalog guard / toolbar scoping / panel colors incomplete"
+fi
+
+# U11 (38-03 T2): fail-open naming — a label the push leaves empty falls
+# back to the bare token; labels come from the pushed catalog by
+# construction, never from a frontend-side hardcoded map.
+FALLBACK_TOKEN="$(printf '%s\n' "${TAB_REGION}" | grep -cF '{label || token}')"
+pin_eq "UI: bare-token fallback for a missing pushed label" 1 "${FALLBACK_TOKEN}"
+HARDCODED_ZH="$(count_f "${APP_TSX}" 'Chinese (traditional)')"
+pin_eq "UI: no frontend-side display-name entry (Chinese (traditional))" 0 "${HARDCODED_ZH}"
+HARDCODED_PT="$(count_f "${APP_TSX}" 'Portuguese (Brazil)')"
+pin_eq "UI: no frontend-side display-name entry (Portuguese (Brazil))" 0 "${HARDCODED_PT}"
+HARDCODED_HU="$(count_f "${APP_TSX}" 'Hungarian')"
+pin_eq "UI: no frontend-side display-name entry (Hungarian)" 0 "${HARDCODED_HU}"
+
+# U12 (38-03 T2, DEC-36-06 firewall, frontend side): the languages tab
+# region and its interactions carry zero references to the sibling
+# upgrade-language axis — adjacent axes, never merged.
+TAB_UPGLANG_LEAK="$(printf '%s\n' "${TAB_REGION}" | grep -ciF 'upgradelang')"
+pin_eq "UI: languages tab region carries zero upgrade-language references" 0 "${TAB_UPGLANG_LEAK}"
+TAB_UPTOUCHED_LEAK="$(printf '%s\n' "${TAB_REGION}" | grep -ciF 'upgradetouched')"
+pin_eq "UI: languages tab region carries zero sibling touched-flag references" 0 "${TAB_UPTOUCHED_LEAK}"
+TAB_UPSEL_LEAK="$(printf '%s\n' "${TAB_REGION}" | grep -ciF 'upgradeselection')"
+pin_eq "UI: languages tab region carries zero sibling selection references" 0 "${TAB_UPSEL_LEAK}"
+HDL_UPGLANG_LEAK="$(printf '%s\n' "${HANDLERS_REGION}" | grep -ciF 'upgrade')"
+pin_eq "UI: language interactions carry zero sibling-axis references" 0 "${HDL_UPGLANG_LEAK}"
+
 # --- section d: CAN-FAIL controls ------------------------------------------
 echo "--- section d: CAN-FAIL controls ---"
 
@@ -773,6 +857,34 @@ if [ -s "${SANDBOX}/AppNavBite.tsx" ] && [ "${NAV_RESIDUE}" -eq 0 ] && [ "${NAV_
     echo "  control ok: the nav pins bite on a mutated tab id"
 else
     fail_case "control 7: nav placement bite failed (residue=${NAV_RESIDUE}, rc=${NAV_RC})"
+fi
+
+# Control 8 (copy bite, 38-03 T2): a scratch App.tsx copy with one verbatim
+# UI literal REPLACED must red the copy pin set. The mutation removes the
+# pinned phrase entirely — an appended suffix would leave it intact as a
+# substring and no-op the bite (obs #6590); the landing is proven before
+# the verdict is read.
+sed 's/Additional languages unavailable/Language list unavailable/' "${APP_TSX}" > "${SANDBOX}/AppCopyBite.tsx"
+COPY_RESIDUE="$(count_f "${SANDBOX}/AppCopyBite.tsx" 'Additional languages unavailable')"
+COPY_OUT="$(check_copy_pins "${SANDBOX}/AppCopyBite.tsx")"
+COPY_RC=$?
+if [ -s "${SANDBOX}/AppCopyBite.tsx" ] && [ "${COPY_RESIDUE}" -eq 0 ] && [ "${COPY_RC}" -ne 0 ]; then
+    echo "  control ok: the copy pins bite on one altered verbatim literal"
+else
+    fail_case "control 8: copy bite failed (residue=${COPY_RESIDUE}, rc=${COPY_RC})"
+fi
+
+# Control 9 (guard bite, 38-03 T2): a scratch copy whose fail-open note
+# lost the init-resolution gate must red the guard pin set (the
+# startup-flash regression — an unavailable flash during normal init).
+sed 's/catalogResolved && Object.keys(languages).length === 0/Object.keys(languages).length === 0/' "${APP_TSX}" > "${SANDBOX}/AppGuardBite.tsx"
+GUARD_RESIDUE="$(count_f "${SANDBOX}/AppGuardBite.tsx" 'catalogResolved && Object.keys(languages).length === 0')"
+GUARD_OUT="$(check_guard_pins "${SANDBOX}/AppGuardBite.tsx")"
+GUARD_RC=$?
+if [ -s "${SANDBOX}/AppGuardBite.tsx" ] && [ "${GUARD_RESIDUE}" -eq 0 ] && [ "${GUARD_RC}" -ne 0 ]; then
+    echo "  control ok: the guard pins bite on an ungated fail-open note"
+else
+    fail_case "control 9: guard bite failed (residue=${GUARD_RESIDUE}, rc=${GUARD_RC})"
 fi
 
 # --- verdict (the counter comparison is the final instruction) -------------

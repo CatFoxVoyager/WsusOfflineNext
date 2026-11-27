@@ -102,7 +102,9 @@ Dim arrFiles, i, strFile, strArchDir, bFound
       If (strOSLang <> "") And (strOSLang <> "glb") Then
         If objFSO.FileExists(strArchDir & strOSLang & "\" & strFile) Then bFound = True
       End If
-      If (Not bFound) And objFSO.FileExists(strArchDir & "glb\" & strFile) Then bFound = True
+      If Not bFound Then
+        If objFSO.FileExists(strArchDir & "glb\" & strFile) Then bFound = True
+      End If
       If Not bFound Then
         strMissingFile = strFile
         UpdateIsIncomplete = True

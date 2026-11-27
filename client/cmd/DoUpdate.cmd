@@ -30,6 +30,7 @@ set WOU_UPGRADE_TARGET=
 set WOU_ARG=
 set WOU_UPGRADE_TARGET_CAND=
 set WOU_TARGET_BAD=
+set WOU_TEST_MODE=
 
 if "%DIRCMD%" NEQ "" set DIRCMD=
 
@@ -388,7 +389,7 @@ rem silent (SC4). Non-English systems whose OS language directory is absent
 rem check client\dotnet\*-allos-%OS_LANG%.exe (Phase 38 w100 language packs);
 rem when absent there too, announce the glb-only fallback to console AND log.
 if /i "%OS_LANG%"=="enu" goto :eof
-dir /B "..\dotnet\*-allos-%OS_LANG%.exe" >nul 2>&1
+dir /A:-D /B "..\dotnet\*-allos-%OS_LANG%.exe" >nul 2>&1
 if not errorlevel 1 (
   echo Medium carries %OS_LANG% language packs ^(.NET^) alongside global ^(%OS_NAME% %OS_ARCH% glb^) Windows updates.
   call :Log "Info: Medium carries %OS_LANG% language packs (.NET) alongside global (%OS_NAME% %OS_ARCH% glb) Windows updates"
@@ -1739,7 +1740,7 @@ rem Phase 39 (INST-02, D-02): prefer the per-language directory where Phase 38
 rem downloads StaticDownloadLinks-ie11-w62-x64-<lang>.txt, falling back to glb.
 set IE_LANG_DIR=..\%OS_NAME%-%OS_ARCH%\%OS_LANG%
 set IE_LANG_FILENAME=%IE_LANG_DIR%\ie11-windows6.2-languagepack-%OS_ARCH%-%OS_LANG_EXT%*.msu
-dir /B %IE_LANG_FILENAME% >nul 2>&1
+dir /A:-D /B "%IE_LANG_FILENAME%" >nul 2>&1
 if not errorlevel 1 goto :eof
 set IE_LANG_DIR=..\%OS_NAME%-%OS_ARCH%\glb
 set IE_LANG_FILENAME=%IE_LANG_DIR%\ie11-windows6.2-languagepack-%OS_ARCH%-%OS_LANG_EXT%*.msu
@@ -1759,6 +1760,8 @@ if "%REBOOT_REQUIRED%"=="1" (
 if "%RECALL_REQUIRED%"=="1" goto Installed
 if "%REBOOT_REQUIRED%"=="1" goto Installed
 :SkipIEInst
+set IE_LANG_DIR=
+set IE_LANG_FILENAME=
 
 rem *** Update Edge (Chromium) ***
 echo Determining Edge (Chromium) version...

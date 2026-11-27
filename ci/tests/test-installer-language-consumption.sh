@@ -161,12 +161,15 @@ make_sandbox
 mkdir -p "${SB_DIR}/client/w100-x64/glb" "${SB_DIR}/client/w100-x64/fra"
 printf 'stub\n' > "${SB_DIR}/client/dotnet/ndp481-x86-x64-allos-deu.exe"
 run_medium_check "${SB_DIR}" w100 x64 fra fr-fr
+[ "${RUN_RC}" -eq 0 ] || fail_case "ARBITRARY-LANG-SC3: fra rc=${RUN_RC}"
 grep -qF "Medium supports Microsoft Windows (w100 x64 fra)" "${SB_DIR}/console.log" \
     || fail_case "ARBITRARY-LANG-SC3: fra dir not recognized dynamically"
 run_medium_check "${SB_DIR}" w100 x64 deu de-de
+[ "${RUN_RC}" -eq 0 ] || fail_case "ARBITRARY-LANG-SC3: deu rc=${RUN_RC}"
 grep -qF "Medium carries deu language packs (.NET)" "${SB_DIR}/console.log" \
     || fail_case "ARBITRARY-LANG-SC3: deu dotnet NLP not recognized dynamically"
 run_medium_check "${SB_DIR}" w100 x64 jpn ja-jp
+[ "${RUN_RC}" -eq 0 ] || fail_case "ARBITRARY-LANG-SC3: jpn rc=${RUN_RC}"
 grep -qF "${NOTICE_TEXT}" "${SB_DIR}/console.log" \
     || fail_case "ARBITRARY-LANG-SC3: missing jpn did not emit glb-only notice"
 if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
@@ -181,10 +184,14 @@ echo "--- case X86-PARITY: x86 target glb-only emits notice; x86 lang dir stays 
 make_sandbox
 mkdir -p "${SB_DIR}/client/w100/glb"
 run_medium_check "${SB_DIR}" w100 x86 chs zh-cn
+[ "${RUN_RC}" -eq 0 ] || fail_case "X86-PARITY: x86 glb-only rc=${RUN_RC}"
 grep -qF "${NOTICE_TEXT}" "${SB_DIR}/console.log" \
     || fail_case "X86-PARITY: x86 chs on glb-only missed fallback notice"
+grep -qF "${NOTICE_TEXT}" "${SB_DIR}/log/wsusofflineupdate.log" \
+    || fail_case "X86-PARITY: x86 chs on glb-only missed fallback notice in log"
 mkdir -p "${SB_DIR}/client/w100/chs"
 run_medium_check "${SB_DIR}" w100 x86 chs zh-cn
+[ "${RUN_RC}" -eq 0 ] || fail_case "X86-PARITY: x86 lang-dir rc=${RUN_RC}"
 grep -qF "Medium supports Microsoft Windows (w100 x86 chs)" "${SB_DIR}/console.log" \
     || fail_case "X86-PARITY: x86 chs dir not recognized"
 ! grep -qF "${NOTICE_TEXT}" "${SB_DIR}/console.log" \
@@ -202,11 +209,13 @@ make_sandbox
 mkdir -p "${SB_DIR}/client/w62-x64/glb" "${SB_DIR}/client/w62-x64/chs"
 printf 'lp-chs\n' > "${SB_DIR}/client/w62-x64/chs/ie11-windows6.2-languagepack-x64-zh-cn_abc.msu"
 run_medium_check "${SB_DIR}" w62 x64 chs zh-cn ie11
+[ "${RUN_RC}" -eq 0 ] || fail_case "IE11-W62-LANG-DIR: chs probe rc=${RUN_RC}"
 grep -qF 'IE_LANG_DIR=..\w62-x64\chs' "${SB_DIR}/console.log" \
     || fail_case "IE11-W62-LANG-DIR: did not resolve ..\\w62-x64\\chs when chs LP exists"
 rm -f "${SB_DIR}/client/w62-x64/chs/"*.msu
 printf 'lp-glb\n' > "${SB_DIR}/client/w62-x64/glb/ie11-windows6.2-languagepack-x64-zh-cn_def.msu"
 run_medium_check "${SB_DIR}" w62 x64 chs zh-cn ie11
+[ "${RUN_RC}" -eq 0 ] || fail_case "IE11-W62-LANG-DIR: glb fallback probe rc=${RUN_RC}"
 grep -qF 'IE_LANG_DIR=..\w62-x64\glb' "${SB_DIR}/console.log" \
     || fail_case "IE11-W62-LANG-DIR: did not fall back to ..\\w62-x64\\glb when absent from chs"
 if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
@@ -250,8 +259,10 @@ echo "--- case VBS-INCOMPLETE-LANG: ListMissingUpdateIds.vbs recognizes <os>[-x6
 make_sandbox
 mkdir -p "${SB_DIR}/client/w100-x64/glb" "${SB_DIR}/client/w100-x64/chs"
 printf 'cab-chs\n' > "${SB_DIR}/client/w100-x64/chs/windows10.0-kb9999999-x64_chs.cab"
+printf 'cab-glb\n' > "${SB_DIR}/client/w100-x64/glb/windows10.0-kb7777777-x64_glb.cab"
 printf 'aaaa1111-0000-0000-0000-000000000001,windows10.0-kb9999999-x64_chs.cab\r\n' > "${SB_DIR}/client/UpdateTable/UpdateTable-w100-chs.csv"
 printf 'aaaa1111-0000-0000-0000-000000000002,windows10.0-kb8888888-x64_missing.cab\r\n' > "${SB_DIR}/client/UpdateTable/UpdateTable-w100-glb.csv"
+printf 'aaaa1111-0000-0000-0000-000000000003,windows10.0-kb7777777-x64_glb.cab\r\n' >> "${SB_DIR}/client/UpdateTable/UpdateTable-w100-glb.csv"
 
 # Extract LoadUpdateTableFile + LoadUpdateTable + UpdateIsIncomplete verbatim from real ListMissingUpdateIds.vbs
 run_vbs_probe () { # $1=vbs_source_file $2=sb_dir $3=lang_arg
@@ -266,6 +277,7 @@ run_vbs_probe () { # $1=vbs_source_file $2=sb_dir $3=lang_arg
         awk '/^Private Sub LoadUpdateTableFile/,/^End Function/' "${src}"
         echo "If UpdateIsIncomplete(\"aaaa1111-0000-0000-0000-000000000001\", strMissingFile) Then WScript.Echo \"PRESENT=1\" Else WScript.Echo \"PRESENT=0\""
         echo "If UpdateIsIncomplete(\"aaaa1111-0000-0000-0000-000000000002\", strMissingFile) Then WScript.Echo \"ABSENT=1\" Else WScript.Echo \"ABSENT=0\""
+        echo "If UpdateIsIncomplete(\"aaaa1111-0000-0000-0000-000000000003\", strMissingFile) Then WScript.Echo \"GLB=1\" Else WScript.Echo \"GLB=0\""
     } > "${harness}"
     ( cd "${sb}/client/cmd" && MSYS2_ARG_CONV_EXCL='' cscript //Nologo //E:vbs probe_incomplete.vbs )
 }
@@ -275,10 +287,17 @@ printf '%s\n' "${VBS_OUT}" | grep -qF "PRESENT=0" \
     || fail_case "VBS-INCOMPLETE-LANG: chs file on medium was marked incomplete (out=${VBS_OUT})"
 printf '%s\n' "${VBS_OUT}" | grep -qF "ABSENT=1" \
     || fail_case "VBS-INCOMPLETE-LANG: missing file was not marked incomplete (out=${VBS_OUT})"
+printf '%s\n' "${VBS_OUT}" | grep -qF "GLB=0" \
+    || fail_case "VBS-INCOMPLETE-LANG: glb file on medium was marked incomplete under strOSLang=chs (out=${VBS_OUT})"
+VBS_2ARG="$(run_vbs_probe "${SB_DIR}/client/cmd/ListMissingUpdateIds.vbs" "${SB_DIR}" "" 2>&1)"
+printf '%s\n' "${VBS_2ARG}" | grep -qF "GLB=0" \
+    || fail_case "VBS-INCOMPLETE-LANG: 2-arg mode (strOSLang empty) broke glb lookup (out=${VBS_2ARG})"
+printf '%s\n' "${VBS_2ARG}" | grep -qF "ABSENT=1" \
+    || fail_case "VBS-INCOMPLETE-LANG: 2-arg mode failed to detect missing glb file (out=${VBS_2ARG})"
 grep -qF 'ListMissingUpdateIds.vbs "%LIST_MODE_IDS%" %OS_NAME% %OS_LANG%' "${REPO}/${DOUPDATE_REL}" \
     || fail_case "VBS-INCOMPLETE-LANG: DoUpdate.cmd does not pass %OS_LANG% to ListMissingUpdateIds.vbs"
 if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
-    echo "  ok: VBS-INCOMPLETE-LANG passed (PRESENT=0, ABSENT=1, DoUpdate call pinned)"
+    echo "  ok: VBS-INCOMPLETE-LANG passed (chs PRESENT=0, GLB=0, ABSENT=1, 2-arg compat, DoUpdate call pinned)"
 fi
 
 # =====================================================================
@@ -299,10 +318,10 @@ sed 's/language-specific updates will not be offered - medium is glb-only/mutate
     | sed -e 's/\r$//' -e 's/$/\r/' > "${SB_DIR}/client/cmd/DoUpdate.cmd.new" \
     && mv "${SB_DIR}/client/cmd/DoUpdate.cmd.new" "${SB_DIR}/client/cmd/DoUpdate.cmd"
 run_medium_check "${SB_DIR}" w100 x64 chs zh-cn
-if grep -qF "${NOTICE_TEXT}" "${SB_DIR}/console.log"; then
-    fail_case "control 1 does not bite: notice still found after mutation"
-else
+if [ "${RUN_RC}" -eq 0 ] && grep -qF "mutated-out" "${SB_DIR}/console.log" && ! grep -qF "${NOTICE_TEXT}" "${SB_DIR}/console.log"; then
     echo "  control ok: fallback notice check bites on mutated DoUpdate.cmd"
+else
+    fail_case "control 1 did not bite cleanly (rc=${RUN_RC})"
 fi
 
 # Control 2: revert IE_LANG_DIR to glb-only -> IE11 check must bite
@@ -313,10 +332,10 @@ sed 's/set IE_LANG_DIR=..\\%OS_NAME%-%OS_ARCH%\\%OS_LANG%/set IE_LANG_DIR=..\\%O
     | sed -e 's/\r$//' -e 's/$/\r/' > "${SB_DIR}/client/cmd/DoUpdate.cmd.new" \
     && mv "${SB_DIR}/client/cmd/DoUpdate.cmd.new" "${SB_DIR}/client/cmd/DoUpdate.cmd"
 run_medium_check "${SB_DIR}" w62 x64 chs zh-cn ie11
-if grep -qF 'IE_LANG_DIR=..\w62-x64\chs' "${SB_DIR}/console.log"; then
-    fail_case "control 2 does not bite: IE_LANG_DIR still resolved chs after glb-only mutation"
-else
+if [ "${RUN_RC}" -eq 0 ] && grep -qF 'IE_LANG_DIR=..\w62-x64\glb' "${SB_DIR}/console.log" && ! grep -qF 'IE_LANG_DIR=..\w62-x64\chs' "${SB_DIR}/console.log"; then
     echo "  control ok: IE11 language-pack check bites on glb-only DoUpdate.cmd"
+else
+    fail_case "control 2 did not bite cleanly (rc=${RUN_RC})"
 fi
 
 # Control 3: strip strOSLang file check from scratch ListMissingUpdateIds.vbs -> VBS check must bite

@@ -257,14 +257,12 @@ LABELS_TOKENS="$(printf '%s\n' "${LABELS_REGION}" | grep -oE '"[a-z]{3}"' | tr -
 # Every PUSHABLE token must carry a label: the derived catalog + glb. enu
 # sits in the vocabulary but has no static lists behind it (never derived,
 # never pushed, never labeled — RESEARCH A1; the fail-open fallback covers
-# any surprise token).
-if diff <(printf '%s\n' "${LABELS_TOKENS}") <(printf '%s\n' "${GOLDEN}
-glb" | LC_ALL=C sort -u) >/dev/null; then
+# any surprise token). GOLDEN is space-separated: split to lines first.
+if diff <(printf '%s\n' "${LABELS_TOKENS}") <( { printf '%s\n' "${GOLDEN}" | tr ' ' '\n'; echo glb; } | LC_ALL=C sort -u) >/dev/null; then
     echo "  ok: HOST: LANG_LABELS keys == the pushable space (derived catalog + glb)"
 else
     fail_case "HOST: LANG_LABELS keys diverge from the pushable token space"
-    diff <(printf '%s\n' "${LABELS_TOKENS}") <(printf '%s\n' "${GOLDEN}
-glb" | LC_ALL=C sort -u) | sed 's/^/    /'
+    diff <(printf '%s\n' "${LABELS_TOKENS}") <( { printf '%s\n' "${GOLDEN}" | tr ' ' '\n'; echo glb; } | LC_ALL=C sort -u) | sed 's/^/    /'
 fi
 
 # P4: the derivation helper is declared and called.

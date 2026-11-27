@@ -633,6 +633,12 @@ namespace WSUSOffline.Generator
                 { "wxp_x86", false }
             };
 
+            // Phase 38 language selection (38-02, SEL-02 read side): the
+            // [Languages] keys are recorded by the same section-scoped loop
+            // below (the reader stays dumb - unknown tokens land here too
+            // and are filtered at push time, T-38-04 reader tolerance).
+            var languagesDict = new Dictionary<string, bool>();
+
             if (File.Exists(genIni))
             {
                 string[] lines = File.ReadAllLines(genIni);
@@ -669,6 +675,10 @@ namespace WSUSOffline.Generator
                         {
                             opts[k] = isEnabled;
                         }
+                        if (currentSection == "Languages")
+                        {
+                            languagesDict[k] = isEnabled;
+                        }
                     }
                 }
             }
@@ -685,6 +695,25 @@ namespace WSUSOffline.Generator
             var upgradeSizeMap = BuildUpgradeSizeMap(root);
             var upgradeLangVocabulary = UpgradeLangVocabulary;
 
+            // Phase 38 language catalog (38-02, SEL-01 derivation side):
+            // derived MECHANICALLY from the static/ inventory (never a
+            // curated shortlist, locked decision) and projected onto the
+            // persisted [Languages] keys read above. Only catalog tokens
+            // are pushed; a catalog token with no INI line defaults to
+            // unselected (absence = glb only, the SC4 default). Labels come
+            // from the UI-SPEC display table; an unknown derived token
+            // renders the bare token as its own label (fail-open naming).
+            // Tolerant and never fatal - the derivation contract above
+            // governs (static/ absent or empty yields an empty catalog).
+            var languageCatalog = DeriveLanguageCatalog(root);
+            var languageLabels = new Dictionary<string, string>();
+            var languageSelection = new Dictionary<string, bool>();
+            foreach (string langToken in languageCatalog)
+            {
+                languageLabels[langToken] = LANG_LABELS.TryGetValue(langToken, out var label) ? label : langToken;
+                languageSelection[langToken] = languagesDict.TryGetValue(langToken, out var langEnabled) && langEnabled;
+            }
+
             SendToWeb(new
             {
                 type = "state",
@@ -694,7 +723,9 @@ namespace WSUSOffline.Generator
                 options = opts,
                 upgrades = upgradeRoster,
                 upgradeSizes = upgradeSizeMap,
-                upgradeLangs = upgradeLangVocabulary
+                upgradeLangs = upgradeLangVocabulary,
+                languages = languageLabels,
+                languagesSelection = languageSelection
             });
         }
 
@@ -1626,6 +1657,119 @@ namespace WSUSOffline.Generator
             { "it-it", "Italian (it-it)" },
             { "neutral", "Any Language (neutral)" }
         };
+
+        /// <summary>
+        /// Medium-language vocabulary (Phase 38, SEL-01/DL-01): the engine
+        /// tokens, copied VERBATIM from cmd/CreateISOImage.cmd:55
+        /// (byte-identical in cmd/CopyToTarget.cmd:49) - the reconciliation
+        /// anchor between the static/ inventory and the engine grammar.
+        /// Never parsed from the .cmd at runtime, never a curated shortlist
+        /// (locked decision). glb IS a member (the engine gate accepts it
+        /// first); the derivation excludes it (always included, never a
+        /// checkbox) and the composition filters it defensively. Any
+        /// engine-side vocabulary change is a deliberate battery update
+        /// (ci/tests/test-generator-language-catalog.sh VOCAB-PARITY
+        /// bites); measured 25 tokens (glb + 24 non-glb labels).
+        /// </summary>
+        private static readonly string[] ENGINE_VOCAB =
+        {
+            "glb", "enu", "fra", "esn", "jpn", "kor", "rus", "ptg", "ptb", "deu",
+            "nld", "ita", "chs", "cht", "plk", "hun", "csy", "sve", "trk", "ell",
+            "ara", "heb", "dan", "nor", "fin"
+        };
+
+        /// <summary>
+        /// Display names for the pushed catalog tokens (Phase 38 UI-SPEC
+        /// "Language display table", binding copy): English display name
+        /// per pushable token (the derived catalog + glb). The map is
+        /// display COPY, never the catalog source of truth; a derived
+        /// token missing from it renders the bare token as its own label
+        /// (fail-open naming, UI-SPEC state contract). enu carries no
+        /// static lists (RESEARCH A1) - never derived, never pushed.
+        /// </summary>
+        private static readonly Dictionary<string, string> LANG_LABELS = new()
+        {
+            { "glb", "English (global)" },
+            { "ara", "Arabic" },
+            { "chs", "Chinese (simplified)" },
+            { "cht", "Chinese (traditional)" },
+            { "csy", "Czech" },
+            { "dan", "Danish" },
+            { "deu", "German" },
+            { "ell", "Greek" },
+            { "esn", "Spanish (Spain)" },
+            { "fin", "Finnish" },
+            { "fra", "French" },
+            { "heb", "Hebrew" },
+            { "hun", "Hungarian" },
+            { "ita", "Italian" },
+            { "jpn", "Japanese" },
+            { "kor", "Korean" },
+            { "nld", "Dutch" },
+            { "nor", "Norwegian" },
+            { "plk", "Polish" },
+            { "ptb", "Portuguese (Brazil)" },
+            { "ptg", "Portuguese (Portugal)" },
+            { "rus", "Russian" },
+            { "sve", "Swedish" },
+            { "trk", "Turkish" }
+        };
+
+        /// <summary>
+        /// Medium-language catalog derivation (Phase 38, SEL-01): scan the
+        /// BASE static/ directory (never static/custom - user state), take
+        /// the last '-'-delimited token of every StaticDownloadLinks-*.txt
+        /// basename, keep tokens in ENGINE_VOCAB, exclude glb (always
+        /// included, never a checkbox), dedup, sort Ordinal. Tolerant and
+        /// never fatal (the Phase-36 derivation contract comment governs):
+        /// static/ absent, empty or unreadable yields an empty catalog,
+        /// never an init failure. A static token outside the engine
+        /// vocabulary is logged and skipped (soft assert, never fatal).
+        /// </summary>
+        private List<string> DeriveLanguageCatalog(string root)
+        {
+            var catalog = new List<string>();
+            string staticDir = Path.Combine(root, "static");
+            if (!Directory.Exists(staticDir))
+            {
+                return catalog;
+            }
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(staticDir, "StaticDownloadLinks-*.txt");
+            }
+            catch (Exception ex)
+            {
+                LogToWeb($"[WARN] Language catalog: static/ unreadable ({ex.Message}) - the catalog stays empty.");
+                return catalog;
+            }
+            foreach (string file in files)
+            {
+                string stem = Path.GetFileNameWithoutExtension(file);
+                int idx = stem.LastIndexOf('-');
+                if (idx < 0)
+                {
+                    continue;
+                }
+                string token = stem.Substring(idx + 1);
+                if (token.Length != 3 || token == "glb")
+                {
+                    continue;
+                }
+                if (Array.IndexOf(ENGINE_VOCAB, token) < 0)
+                {
+                    LogToWeb($"[WARN] Language catalog: static token '{token}' is outside the engine vocabulary - skipped.");
+                    continue;
+                }
+                if (!catalog.Contains(token))
+                {
+                    catalog.Add(token);
+                }
+            }
+            catalog.Sort(StringComparer.Ordinal);
+            return catalog;
+        }
 
         private async Task<int> RunCommandAsync(string script, string arguments, string workingDir, CancellationToken ct, string? upgradeLang = null)
         {

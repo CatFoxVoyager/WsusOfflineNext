@@ -439,10 +439,11 @@ if [ "${BITE_MODE}" = "" ]; then
         || fail_case "ACCEPT: the chs run exited ${ENGINE_RC}, expected 0 (gate refusal alive?)"
     ! grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
         || fail_case "ACCEPT: the chs run was refused at the gate (InvalidParams reached)"
-    grep -qF "${E2_LINE} for w100-x64 chs - ${E2_LINE_FULL}" "${SB_DIR}/log/download.log" \
+    grep -qF "${E2_LINE} w100-x64 chs - ${E2_LINE_FULL}" "${SB_DIR}/log/download.log" \
         || fail_case "ACCEPT: the E2 non-glb dynamic-skip line is missing from download.log"
     n_dotnet_base=0
     while IFS= read -r u; do
+        u="${u%$'\r'}"
         [ -n "${u}" ] || continue
         grep -qF "${u}" "${REC}" || fail_case "ACCEPT: base dotnet URL not downloaded: ${u}"
         n_dotnet_base=$((n_dotnet_base + 1))
@@ -451,6 +452,7 @@ if [ "${BITE_MODE}" = "" ]; then
         || fail_case "ACCEPT: no base dotnet URLs read from static/StaticDownloadLinks-dotnet.txt (probe vacuous)"
     n_chs=0
     while IFS= read -r u; do
+        u="${u%$'\r'}"
         [ -n "${u}" ] || continue
         grep -qF "${u}" "${REC}" || fail_case "ACCEPT: chs NLP URL missing from the stub record: ${u}"
         n_chs=$((n_chs + 1))
@@ -478,6 +480,7 @@ elif [ "${BITE_MODE}" = "bite-nolist" ]; then
     # the chs URLs must be absent from the record now (nothing composed them)
     bite_bit=0
     while IFS= read -r u; do
+        u="${u%$'\r'}"
         [ -n "${u}" ] || continue
         grep -qF "${u}" "${REC}" && bite_bit=1
     done < "${REPO}/static/StaticDownloadLinks-dotnet-chs.txt"
@@ -500,6 +503,7 @@ if [ "${BITE_MODE}" = "" ]; then
              "${REPO}"/static/StaticDownloadLinks-w100-*-x64-glb.txt; do
         [ -f "${f}" ] || continue
         while IFS= read -r u; do
+            u="${u%$'\r'}"
             [ -n "${u}" ] || continue
             n_glb_urls=$((n_glb_urls + 1))
             grep -qF "${u}" "${REC}" && n_hits=$((n_hits + 1))

@@ -71,6 +71,9 @@ del /Q ..\exclude\ExcludeList*-o2k13*.txt >nul 2>&1
 for %%i in (wxp w60 w60-x64 w61 w61-x64 w62-x64 w63 w63-x64 w100 w100-x64 o2k16 o2k16-x64) do (
   if /i "%1"=="%%i" (
     if /i "%2"=="glb" goto EvalParams
+    rem Language tokens per the CreateISOImage.cmd vocabulary; dispatch by
+    rem loop variable so the lowercase labels receive the canonical spelling.
+    for %%j in (glb enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve trk ell ara heb dan nor fin) do (if /i "%2"=="%%j" goto Lang_%%j)
   )
 )
 goto InvalidParams
@@ -954,6 +957,12 @@ copy /Y ..\static\StaticDownloadLinks-dotnet.txt "%TEMP%\StaticDownloadLinks-dot
 if exist ..\static\custom\StaticDownloadLinks-dotnet.txt (
   type ..\static\custom\StaticDownloadLinks-dotnet.txt >>"%TEMP%\StaticDownloadLinks-dotnet.txt"
 )
+rem Per-language .NET language packs: a non-glb run appends the language list
+rem into the SAME run's valid list, which keeps the cleanup below from
+rem deleting the freshly downloaded NLPs by construction.
+if /i not "%2"=="glb" if exist ..\static\StaticDownloadLinks-dotnet-%2.txt (
+  type ..\static\StaticDownloadLinks-dotnet-%2.txt >>"%TEMP%\StaticDownloadLinks-dotnet.txt"
+)
 if exist ..\exclude\custom\ExcludeListForce-all.txt (
   %SystemRoot%\System32\findstr.exe /L /I /V /G:..\exclude\custom\ExcludeListForce-all.txt "%TEMP%\StaticDownloadLinks-dotnet.txt" >"%TEMP%\ValidStaticLinks-dotnet.txt"
   del "%TEMP%\StaticDownloadLinks-dotnet.txt"
@@ -1361,9 +1370,13 @@ for %%i in (w62-x64 w63 w63-x64 w100 w100-x64) do (
   )
 )
 :SkipWinGlb
+rem The core runs with the INVOCATION's language token - %2 flows through so
+rem a non-glb run gets its own statics/dotnet composition and, for Office,
+rem the LOCALE_LONG split. The win-glb helper above stays language-neutral
+rem by design. A glb run passes glb, byte-identical to the previous shape.
 for %%i in (wxp w60 w60-x64 w61 w61-x64 w62-x64 w63 w63-x64 w100 w100-x64 o2k16 o2k16-x64) do (
   if /i "%1"=="%%i" (
-    call :DownloadCore %1 glb %TARGET_ARCH% %SKIP_PARAM%
+    call :DownloadCore %1 %2 %TARGET_ARCH% %SKIP_PARAM%
     if errorlevel 1 goto Error
   )
 )
@@ -1899,6 +1912,18 @@ if exist "%TEMP%\ExcludeListStatic.txt" (
 call :Log "Info: Determined static update urls for %1 %2"
 
 :SkipStatics
+rem Non-glb Windows runs skip the dynamic determination entirely - the
+rem Windows dynamic set is language neutral, so a per-language run would
+rem only duplicate the glb set into the language directory. Sits BEFORE the
+rem on-demand skip so every non-glb Windows run logs the language rule.
+set SKIP_DYN_LANG=
+for %%p in (w61 w62 w63 w100) do (if /i "%%p"=="%TMP_PLATFORM%" if /i not "%2"=="glb" set SKIP_DYN_LANG=1)
+if defined SKIP_DYN_LANG (
+  echo Skipping determination of dynamic update urls for %1 %2 - the Windows dynamic set is language neutral.
+  call :Log "Info: Skipped determination of dynamic update urls for %1 %2 - the Windows dynamic set is language neutral"
+  goto DoDownload
+)
+set SKIP_DYN_LANG=
 if "%4"=="/skipdynamic" (
   echo Skipping determination of dynamic update urls for %1 %2 on demand.
   call :Log "Info: Skipped determination of dynamic update urls for %1 %2 on demand"

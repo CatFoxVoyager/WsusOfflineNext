@@ -1188,35 +1188,113 @@ namespace WSUSOffline.Generator
             }
 
             string genIni = Path.Combine(root, "UpdateGenerator.ini");
-            if (File.Exists(genIni) && payload.TryGetProperty("legacy", out var leg))
+            if (File.Exists(genIni))
             {
-                var sectionMap = new Dictionary<string, string>
-                {
-                    { "w61_x64", "Windows 7 x64" },
-                    { "w61_x86", "Windows 7" },
-                    { "w60_x64", "Windows Vista x64" },
-                    { "w60_x86", "Windows Vista" },
-                    { "w63_x64", "Windows Server 2012 R2" },
-                    { "w63_x86", "Windows 8.1" },
-                    { "w62_x64", "Windows Server 2012" },
-                    { "wxp_x86", "Windows XP" }
-                };
+                bool hasLegacy = payload.TryGetProperty("legacy", out JsonElement leg)
+                    && leg.ValueKind == JsonValueKind.Object;
 
-                var lines = new List<string>(File.ReadAllLines(genIni));
-                foreach (var kvp in sectionMap)
+                // Phase 38 (SEL-02, 26a0073 both-sides with plan 38-03's
+                // conditional payload): the [Languages] write branch keys on
+                // its OWN languages property. A payload without it (a
+                // legacy-save rollback, an old exe) never touches
+                // [Languages] - the section, if present from a prior save,
+                // is carried over verbatim. Present-but-empty/voided is an
+                // EXPLICIT cleared save (every known token serialized
+                // Disabled, glb stays Enabled).
+                bool hasLanguages = payload.TryGetProperty("languages", out JsonElement _);
+
+                if (hasLegacy || hasLanguages)
                 {
-                    if (leg.TryGetProperty(kvp.Key, out var val))
+                    var sectionMap = new Dictionary<string, string>
                     {
-                        string status = val.GetBoolean() ? "Enabled" : "Disabled";
-                        int secIdx = lines.FindIndex(l => l.Trim().Equals($"[{kvp.Value}]", StringComparison.OrdinalIgnoreCase));
-                        if (secIdx >= 0 && secIdx + 1 < lines.Count && lines[secIdx + 1].StartsWith("glb="))
+                        { "w61_x64", "Windows 7 x64" },
+                        { "w61_x86", "Windows 7" },
+                        { "w60_x64", "Windows Vista x64" },
+                        { "w60_x86", "Windows Vista" },
+                        { "w63_x64", "Windows Server 2012 R2" },
+                        { "w63_x86", "Windows 8.1" },
+                        { "w62_x64", "Windows Server 2012" },
+                        { "wxp_x86", "Windows XP" }
+                    };
+
+                    var lines = new List<string>(File.ReadAllLines(genIni));
+                    if (hasLegacy)
+                    {
+                        foreach (var kvp in sectionMap)
                         {
-                            lines[secIdx + 1] = $"glb={status}";
+                            if (leg.TryGetProperty(kvp.Key, out var val))
+                            {
+                                string status = val.GetBoolean() ? "Enabled" : "Disabled";
+                                int secIdx = lines.FindIndex(l => l.Trim().Equals($"[{kvp.Value}]", StringComparison.OrdinalIgnoreCase));
+                                if (secIdx >= 0 && secIdx + 1 < lines.Count && lines[secIdx + 1].StartsWith("glb="))
+                                {
+                                    lines[secIdx + 1] = $"glb={status}";
+                                }
+                            }
                         }
                     }
+                    if (hasLanguages)
+                    {
+                        List<string> saveLanguageSelection = GetLanguagesPayloadSelection(payload, out _);
+                        // glb never rides the payload (the host serializes it
+                        // Enabled unconditionally) - filtered defensively;
+                        // ascending token order mirrors the catalog.
+                        saveLanguageSelection.RemoveAll(langToken => langToken == "glb");
+                        saveLanguageSelection.Sort(StringComparer.Ordinal);
+                        WriteLanguagesSection(lines, saveLanguageSelection, DeriveLanguageCatalog(root));
+                    }
+                    File.WriteAllLines(genIni, lines);
                 }
-                File.WriteAllLines(genIni, lines);
             }
+        }
+
+        /// <summary>
+        /// [Languages] section writer (Phase 38, SEL-02): rewrites the
+        /// section IN PLACE in UpdateGenerator.ini - glb=Enabled ALWAYS the
+        /// first key line (locked decision; serialized for reader
+        /// simplicity), then one lang=Enabled/Disabled line per known
+        /// catalog token in the same Ordinal order, Enabled iff the token
+        /// is in the validated selection. An empty/voided selection is an
+        /// EXPLICIT cleared save (every known token Disabled) - mirrors
+        /// the "present-but-empty = explicit cleared save" upgrade
+        /// contract. Stale unknown key lines inside an existing section
+        /// are dropped: the host writes only vocabulary tokens + glb
+        /// (T-38-04 writer grammar).
+        /// </summary>
+        private static void WriteLanguagesSection(List<string> lines, List<string> selection, List<string> catalog)
+        {
+            var sectionBody = new List<string> { "glb=Enabled" };
+            foreach (string token in catalog)
+            {
+                string langStatus = selection.Contains(token) ? "Enabled" : "Disabled";
+                sectionBody.Add($"{token}={langStatus}");
+            }
+
+            int secIdx = lines.FindIndex(l => l.Trim().Equals("[Languages]", StringComparison.OrdinalIgnoreCase));
+            if (secIdx < 0)
+            {
+                lines.Add("[Languages]");
+                lines.AddRange(sectionBody);
+                return;
+            }
+
+            // Drop the old section's key lines (anything with '=' before
+            // the next section header), then splice the fresh block right
+            // after the header.
+            int insertIdx = secIdx + 1;
+            int scan = secIdx + 1;
+            while (scan < lines.Count && !lines[scan].TrimStart().StartsWith("["))
+            {
+                if (lines[scan].Contains('='))
+                {
+                    lines.RemoveAt(scan);
+                }
+                else
+                {
+                    scan++;
+                }
+            }
+            lines.InsertRange(insertIdx, sectionBody);
         }
 
         /// <summary>
@@ -1326,6 +1404,66 @@ namespace WSUSOffline.Generator
                     {
                         selected.Add(value);
                     }
+                }
+            }
+            return selected;
+        }
+
+        /// <summary>
+        /// Medium-language payload validator (Phase 38, DL-01/T-38-03): the
+        /// property "languages" carries an array of 3-char engine tokens.
+        /// DISTINCT named function by contract (obs #6574) - never a
+        /// parameterized reuse of GetUpgradePayloadSelection; the languages
+        /// contract is STRICTER: exact ENGINE_VOCAB membership at fixed
+        /// length 3 kills every injection shape (separators, '=', '&amp;',
+        /// newlines, spaces) by MEMBERSHIP, never by pattern. One
+        /// non-string, wrong-length or out-of-vocabulary element voids the
+        /// WHOLE selection (one bad value voids all, never a partial
+        /// selection) - the tokens travel in the cmd.exe spawn line
+        /// (RunCommandAsync interpolation), THE trust boundary. glb passes
+        /// membership (it is a vocabulary member) - the composition and
+        /// the save branch filter it defensively; the derivation never
+        /// selects it. payloadPresent separates ABSENT (legacy save: the
+        /// caller leaves the persisted [Languages] section untouched) from
+        /// present-but-empty-or-voided (explicit cleared save). Duplicate
+        /// tokens collapse (OrdinalIgnoreCase dedup).
+        /// </summary>
+        private static List<string> GetLanguagesPayloadSelection(JsonElement payload, out bool payloadPresent)
+        {
+            var selected = new List<string>();
+            payloadPresent = false;
+            if (!payload.TryGetProperty("languages", out var langs))
+            {
+                return selected;
+            }
+            payloadPresent = true;
+            if (langs.ValueKind != JsonValueKind.Array)
+            {
+                return new List<string>();
+            }
+            foreach (var element in langs.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.String)
+                {
+                    return new List<string>();
+                }
+                string value = (element.GetString() ?? "").Trim();
+                if (value.Length != 3 || Array.IndexOf(ENGINE_VOCAB, value) < 0)
+                {
+                    return new List<string>();
+                }
+                bool alreadySelected = false;
+                foreach (string chosen in selected)
+                {
+                    if (string.Equals(chosen, value, StringComparison.OrdinalIgnoreCase))
+                    {
+                        alreadySelected = true;
+                        break;
+                    }
+                }
+                if (!alreadySelected)
+                {
+                    selected.Add(value);
                 }
             }
             return selected;

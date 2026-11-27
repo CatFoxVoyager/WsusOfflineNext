@@ -347,6 +347,40 @@ check_guard_pins () { # <app-tsx-file> -> status (fail count)
     return "${fails}"
 }
 
+# check_payload_pins: the conditional start payload pins (38-03 T3,
+# parameterized for the can-fail control) — the session-local touched flag
+# set at every interaction, the standalone conditional spread
+# (touched-or-non-empty emits; untouched omits entirely, the 26a0073
+# frontend half), the pinned token excluded from the payload, and the
+# clause kept separate from the sibling upgrade spread (DEC-36-06). Return
+# status = fail count.
+check_payload_pins () { # <app-tsx-file> -> status (fail count)
+    local fails=0 f="$1" n hr pr
+    n="$(count_f "${f}" 'const [languagesTouched, setLanguagesTouched] = useState(false);')"
+    [ "${n}" -eq 1 ] || { echo "    payload: touched flag declaration x${n}, want 1"; fails=$((fails + 1)); }
+    hr="$(region "${f}" 'const toggleLanguage =' 'const handleStart =')"
+    if [ -z "${hr}" ]; then
+        echo "    payload: handlers region not extractable"
+        return 1
+    fi
+    n="$(printf '%s\n' "${hr}" | grep -cF 'setLanguagesTouched(true);')"
+    [ "${n}" -eq 3 ] || { echo "    payload: touched set at every interaction x${n}, want 3"; fails=$((fails + 1)); }
+    pr="$(region "${f}" "sendNative..start., [{]" '^    [}]);')"
+    if [ -z "${pr}" ]; then
+        echo "    payload: start payload region not extractable"
+        return 1
+    fi
+    n="$(printf '%s\n' "${pr}" | grep -cF '...(languagesTouched || selectedLangs.length > 0 ? { languages: selectedLangs } : {})')"
+    [ "${n}" -eq 1 ] || { echo "    payload: conditional languages spread x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${pr}" | grep -cE 'upgradeTouched.*languages[:]')"
+    [ "${n}" -eq 0 ] || { echo "    payload: fused clause with the sibling axis x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${pr}" | grep -ciF 'glb')"
+    [ "${n}" -eq 0 ] || { echo "    payload: pinned token in the payload x${n}, want 0"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" '...(upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget ? { upgrade:')"
+    [ "${n}" -eq 1 ] || { echo "    payload: sibling spread untouched x${n}, want 1"; fails=$((fails + 1)); }
+    return "${fails}"
+}
+
 # --- section a: GOLDEN -----------------------------------------------------
 echo "--- section a: GOLDEN (live static/ derivation vs the pinned 23) ---"
 
@@ -757,6 +791,35 @@ pin_eq "UI: languages tab region carries zero sibling selection references" 0 "$
 HDL_UPGLANG_LEAK="$(printf '%s\n' "${HANDLERS_REGION}" | grep -ciF 'upgrade')"
 pin_eq "UI: language interactions carry zero sibling-axis references" 0 "${HDL_UPGLANG_LEAK}"
 
+# U13 (38-03 T3): the conditional start payload — touched-or-non-empty
+# emits, an untouched tab omits the property entirely (SC4), the pinned
+# token never travels, and the clause never fuses with the sibling
+# upgrade spread (DEC-36-06; the 26a0073 frontend half).
+if check_payload_pins "${APP_TSX}"; then
+    echo "  ok: UI: conditional payload wiring complete (26a0073 frontend half)"
+else
+    fail_case "UI: conditional payload wiring incomplete"
+fi
+
+# U14 (38-03 T3, backstop): visible row order == engine invocation order —
+# the rows render from the pushed record in host push order (ascending
+# tokens), the per-target global pass renders first (the pinned row), and
+# the host-side spawn-order counterpart is P15 above. The ordering
+# contract is asserted at its two sources: the tab's own documentation
+# comment (sits above the JSX block, so it is pinned file-wide — unique
+# to this tab) and the push-order rendering shape (region-scoped).
+BACKSTOP_DOC="$(count_f "${APP_TSX}" 'visible row order mirrors the invocation order')"
+pin_eq "UI: row-order/invocation-order backstop documented at the tab" 1 "${BACKSTOP_DOC}"
+PUSH_ORDER_RENDER="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'Object.entries(languages).map(([token, label])')"
+pin_eq "UI: rows render from the pushed record in push order" 1 "${PUSH_ORDER_RENDER}"
+
+# U15 (38-03 T3, SC4 non-interference): the languages axis never touches
+# the product selection count or the Start-download gating.
+GATE_DISABLED="$(count_f "${APP_TSX}" 'disabled={totalSelectedCount === 0}')"
+pin_eq "UI: Start gating keys on the product count alone (zero diff)" 1 "${GATE_DISABLED}"
+COUNT_LEAK="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'totalSelectedCount')"
+pin_eq "UI: the languages tab never reads the product selection count" 0 "${COUNT_LEAK}"
+
 # --- section d: CAN-FAIL controls ------------------------------------------
 echo "--- section d: CAN-FAIL controls ---"
 
@@ -885,6 +948,20 @@ if [ -s "${SANDBOX}/AppGuardBite.tsx" ] && [ "${GUARD_RESIDUE}" -eq 0 ] && [ "${
     echo "  control ok: the guard pins bite on an ungated fail-open note"
 else
     fail_case "control 9: guard bite failed (residue=${GUARD_RESIDUE}, rc=${GUARD_RC})"
+fi
+
+# Control 10 (payload bite, 38-03 T3): a scratch copy whose conditional
+# spread lost the touched-or-non-empty gate must red the payload pin set
+# (an untouched tab could emit the property - the 26a0073 regression
+# class). The landing is proven before the verdict is read.
+sed 's/languagesTouched || selectedLangs.length > 0/true/' "${APP_TSX}" > "${SANDBOX}/AppPayloadBite.tsx"
+PAYLOAD_RESIDUE="$(count_f "${SANDBOX}/AppPayloadBite.tsx" 'languagesTouched || selectedLangs.length > 0')"
+PAYLOAD_OUT="$(check_payload_pins "${SANDBOX}/AppPayloadBite.tsx")"
+PAYLOAD_RC=$?
+if [ -s "${SANDBOX}/AppPayloadBite.tsx" ] && [ "${PAYLOAD_RESIDUE}" -eq 0 ] && [ "${PAYLOAD_RC}" -ne 0 ]; then
+    echo "  control ok: the payload pins bite on an ungated languages spread"
+else
+    fail_case "control 10: payload bite failed (residue=${PAYLOAD_RESIDUE}, rc=${PAYLOAD_RC})"
 fi
 
 # --- verdict (the counter comparison is the final instruction) -------------

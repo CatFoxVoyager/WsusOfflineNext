@@ -233,6 +233,12 @@ export default function App() {
   // after init resolved, so the sub-second startup never flashes an
   // unavailable panel (the sibling picker's loading precedent).
   const [catalogResolved, setCatalogResolved] = useState(false);
+  // Session-local touched flag for this tab: set by every row toggle and
+  // by the two toolbar buttons, never reset by render effects - the
+  // payload rule's other half (an untouched tab omits the languages
+  // property so the host legacy-save branch preserves the saved ini
+  // selection, the 26a0073 regression class).
+  const [languagesTouched, setLanguagesTouched] = useState(false);
 
   // Native message sender
   const sendNative = (action: string, payload: any = {}) => {
@@ -414,10 +420,12 @@ export default function App() {
   };
 
   const toggleLanguage = (token: string) => {
+    setLanguagesTouched(true);
     setLanguagesSelection(prev => ({ ...prev, [token]: !prev[token] }));
   };
 
   const selectAllLanguages = () => {
+    setLanguagesTouched(true);
     setLanguagesSelection(prev => {
       const next = { ...prev };
       Object.keys(languages).forEach(t => { next[t] = true; });
@@ -426,6 +434,7 @@ export default function App() {
   };
 
   const clearLanguageSelection = () => {
+    setLanguagesTouched(true);
     setLanguagesSelection(prev => {
       const next = { ...prev };
       Object.keys(languages).forEach(t => { next[t] = false; });
@@ -464,7 +473,15 @@ export default function App() {
       // upgradeLang rides inside the SAME conditional (DEC-36-06) - a
       // language value can never travel without an upgrade payload; the
       // host applies it to the pipeline only on selection-carrying runs.
-      ...(upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget ? { upgrade: upgradeFullTarget ? [...upgradeSelection, upgradeFullTarget] : upgradeSelection, upgradeLang: upgradeLang } : {})
+      ...(upgradeTouched || upgradeSelection.length > 0 || upgradeFullTarget ? { upgrade: upgradeFullTarget ? [...upgradeSelection, upgradeFullTarget] : upgradeSelection, upgradeLang: upgradeLang } : {}),
+      // Languages payload (the 26a0073 frontend half): the selected
+      // tokens travel ONLY when the tab was touched or the
+      // selection is non-empty; an untouched tab omits the property
+      // entirely so the host takes the legacy-save branch and the saved
+      // selection survives. This clause is its OWN spread - never fused
+      // with the sibling axis above (DEC-36-06) - and the pinned global
+      // token never appears in it (the host serializes it itself).
+      ...(languagesTouched || selectedLangs.length > 0 ? { languages: selectedLangs } : {})
     });
   };
 

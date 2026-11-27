@@ -17,7 +17,8 @@ import {
   Monitor,
   PackageCheck,
   LoaderCircle,
-  CircleArrowUp
+  CircleArrowUp,
+  Languages
 } from 'lucide-react';
 
 import logo from './assets/logo.png';
@@ -85,7 +86,7 @@ export default function App() {
   const initialTab = (urlParams?.get('tab') as any) || 'win11';
   const initialConsole = urlParams?.get('console') === 'true';
 
-  const [activeTab, setActiveTab] = useState<'win11' | 'win10' | 'office' | 'legacy' | 'upgrades' | 'options' | 'network'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'win11' | 'win10' | 'office' | 'legacy' | 'languages' | 'upgrades' | 'options' | 'network'>(initialTab);
   const [isRunning, setIsRunning] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialConsole);
   const [logs, setLogs] = useState<LogEntry[]>([
@@ -220,6 +221,15 @@ export default function App() {
   // would clear a hand-seeded selection.
   const [upgradeTouched, setUpgradeTouched] = useState(false);
 
+  // Languages (Phase 38): the catalog (token -> label) and the projected
+  // selection (token -> bool, projected by the host from the generator
+  // ini section) arrive with the init state push; both merge tolerantly
+  // so an absent push key can never crash the tab. An empty catalog
+  // renders the global row alone - fail-open, and the default run stays
+  // untouched (SC4).
+  const [languages, setLanguages] = useState<Record<string, string>>({});
+  const [languagesSelection, setLanguagesSelection] = useState<Record<string, boolean>>({});
+
   // Native message sender
   const sendNative = (action: string, payload: any = {}) => {
     if (typeof window !== 'undefined' && (window as any).chrome?.webview?.postMessage) {
@@ -266,6 +276,12 @@ export default function App() {
           if (data.upgradeLangs) {
             setUpgradeLangs(prev => ({ ...prev, ...data.upgradeLangs }));
           }
+          if (data.languages) {
+            setLanguages(prev => ({ ...prev, ...data.languages }));
+          }
+          if (data.languagesSelection) {
+            setLanguagesSelection(prev => ({ ...prev, ...data.languagesSelection }));
+          }
         } else if (data.type === 'status') {
           setIsRunning(data.running);
         } else if (data.type === 'folder_selected') {
@@ -305,6 +321,15 @@ export default function App() {
     win10Builds.filter(b => b.enabled).length +
     Object.values(officeBuilds).filter(Boolean).length +
     Object.values(legacyBuilds).filter(Boolean).length;
+
+  // Languages derivations: the ascending non-glb selected tokens are the
+  // single source of truth for both the nav badge count and the start
+  // payload; the pinned global token is never a member (the host catalog
+  // excludes it by construction, so a defensive filter is enough).
+  const selectedLangs = Object.keys(languagesSelection)
+    .filter(t => t !== 'glb' && languagesSelection[t])
+    .sort();
+  const languagesCount = selectedLangs.length;
 
   // OS Upgrades roster partition (DEC-36-07): EKB group = rows with
   // non-empty hop fields (enabled iff status=active); full-FU group =
@@ -381,6 +406,26 @@ export default function App() {
       'language-not-carried': 'Language not carried by this target'
     };
     return reasonLabels[row.reason] ?? reasonLabels[row.status] ?? 'Not available';
+  };
+
+  const toggleLanguage = (token: string) => {
+    setLanguagesSelection(prev => ({ ...prev, [token]: !prev[token] }));
+  };
+
+  const selectAllLanguages = () => {
+    setLanguagesSelection(prev => {
+      const next = { ...prev };
+      Object.keys(languages).forEach(t => { next[t] = true; });
+      return next;
+    });
+  };
+
+  const clearLanguageSelection = () => {
+    setLanguagesSelection(prev => {
+      const next = { ...prev };
+      Object.keys(languages).forEach(t => { next[t] = false; });
+      return next;
+    });
   };
 
   const handleStart = () => {
@@ -509,6 +554,7 @@ export default function App() {
           { id: 'win10', label: 'Windows 10 & Server', icon: Server, count: win10Builds.filter(b => b.enabled).length },
           { id: 'office', label: 'Microsoft Office', icon: PackageCheck, count: Object.values(officeBuilds).filter(Boolean).length },
           { id: 'legacy', label: 'Legacy Windows', icon: Cpu, count: Object.values(legacyBuilds).filter(Boolean).length },
+          { id: 'languages', label: 'Languages', icon: Languages, count: languagesCount },
           { id: 'upgrades', label: 'OS Upgrades', icon: CircleArrowUp, count: upgradeSelection.length + (upgradeFullTarget !== null ? 1 : 0) },
           { id: 'options', label: 'Options & Media', icon: Disc, badge: options.copyUsb ? 'USB' : (options.createIso ? 'ISO' : undefined) },
           { id: 'network', label: 'Network & Proxy', icon: Globe }
@@ -1042,7 +1088,98 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: OS UPGRADES */}
+        {/* TAB 5: LANGUAGES (Phase 38): the catalog arrives with the init
+            state push and renders below the permanently-selected global
+            row; the engine runs one pass per selected language, so the
+            visible row order mirrors the invocation order (global pass
+            per target first, then ascending tokens). */}
+        {activeTab === 'languages' && (
+          <div className="space-y-4 max-w-5xl mx-auto">
+            {/* Toolbar */}
+            <div className="flex items-center justify-between pb-3 border-b border-dark-800">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-100">Update languages</h2>
+                <p className="text-xs text-zinc-400">Choose the languages this medium carries in addition to English (global). Each selected language adds its language-specific packages — .NET language packs, plus IE11 language packs when Server 2012 is among the targets.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectAllLanguages}
+                  className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-200 border border-dark-800 transition-colors"
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={clearLanguageSelection}
+                  className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-400 border border-dark-800 transition-colors"
+                >
+                  Clear selection
+                </button>
+              </div>
+            </div>
+
+            {/* Dense Tabular List */}
+            <div className="border border-dark-800 rounded-lg overflow-hidden bg-dark-900">
+              <div className="flex items-center px-4 py-2 bg-dark-850/80 border-b border-dark-800 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                <div className="w-8 text-center"></div>
+                <div className="flex-1">Language</div>
+                <div className="w-36 text-center">Status</div>
+              </div>
+
+              <div className="divide-y divide-dark-800/60">
+                {/* Pinned first row: permanently selected. It renders
+                    locked-active (checked+disabled, full-strength label,
+                    emerald status badge) - the deliberate inverse of the
+                    sibling not-available row - and carries no row toggle. */}
+                <div className="flex items-center px-4 py-2.5 bg-accent-600/5 cursor-default">
+                  <div className="w-8 flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked disabled
+                      aria-label="English (global) — always included"
+                      onChange={() => {}}
+                      className="w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0 cursor-default pointer-events-none"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0 pr-3 flex items-center gap-2">
+                    <span className="text-xs font-semibold text-zinc-100">English (global)</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-dark-800 text-zinc-300 border border-dark-700">glb</span>
+                  </div>
+                  <div className="w-36 text-center">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Always included</span>
+                  </div>
+                </div>
+                {Object.entries(languages).map(([token, label]) => {
+                  const isEnabled = !!languagesSelection[token];
+                  return (
+                    <div
+                      key={token}
+                      onClick={() => toggleLanguage(token)}
+                      className={`flex items-center px-4 py-2.5 hover:bg-dark-850/70 transition-colors cursor-pointer ${
+                        isEnabled ? 'bg-accent-600/5' : ''
+                      }`}
+                    >
+                      <div className="w-8 flex items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={isEnabled}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0 cursor-pointer pointer-events-none"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0 pr-3 flex items-center gap-2">
+                        <span className="text-xs font-semibold text-zinc-100">{label || token}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-dark-800 text-zinc-300 border border-dark-700">{token}</span>
+                      </div>
+                      <div className="w-36 text-center"></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: OS UPGRADES */}
         {activeTab === 'upgrades' && (
           <div className="space-y-6 max-w-5xl mx-auto">
             {/* Panel header */}
@@ -1239,7 +1376,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 6: OPTIONS & MEDIA */}
+        {/* TAB 7: OPTIONS & MEDIA */}
         {activeTab === 'options' && (
           <div className="space-y-6 max-w-5xl mx-auto">
             {/* Additional Components */}
@@ -1351,7 +1488,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 7: NETWORK */}
+        {/* TAB 8: NETWORK */}
         {activeTab === 'network' && (
           <div className="space-y-4 max-w-3xl mx-auto">
             <div className="pb-2 border-b border-dark-800">

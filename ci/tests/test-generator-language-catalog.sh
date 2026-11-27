@@ -38,6 +38,13 @@
 #                     pin set; an ungated languages write path reds the
 #                     save pin set. Conforming twin fixtures must stay
 #                     green (detection without over-blocking).
+#   e. UI-PINS      — App.tsx source-shape pins for the frontend half of the
+#                     phase (plan 38-03): the nav entry id/placement, the
+#                     pushed-catalog state consumption, the 24-row tab with
+#                     the locked-active glb row, the fail-open note guard,
+#                     and the conditional payload wiring (SC4 untouched-omit).
+#                     Plan 38-02 sections a-d stay untouched; the battery
+#                     grows additively per plan task (RED baseline 38-03 T1).
 #
 # Provenance (census idiom DEC-35-10): the golden list was measured on
 # 2026-11-27 (plan 38-02 planning session, RESEARCH G5): 87
@@ -53,6 +60,7 @@ ISO_CMD="${REPO_ROOT}/cmd/CreateISOImage.cmd"
 COPY_CMD="${REPO_ROOT}/cmd/CopyToTarget.cmd"
 ENGINE_CMD="${REPO_ROOT}/cmd/DownloadUpdates.cmd"
 PROGRAM_CS="${REPO_ROOT}/src-modern/generator/host/Program.cs"
+APP_TSX="${REPO_ROOT}/src-modern/generator/src/App.tsx"
 
 FAILED_CASES=0
 fail_case () {
@@ -61,7 +69,7 @@ fail_case () {
     return 0
 }
 
-for f in "${STATIC_DIR}" "${ISO_CMD}" "${COPY_CMD}" "${ENGINE_CMD}" "${PROGRAM_CS}"; do
+for f in "${STATIC_DIR}" "${ISO_CMD}" "${COPY_CMD}" "${ENGINE_CMD}" "${PROGRAM_CS}" "${APP_TSX}"; do
     [ -e "${f}" ] || { echo "FAIL: pre-flight: missing ${f}"; exit 1; }
 done
 
@@ -107,6 +115,20 @@ cs_method () { # <file> <signature_re> -> lines on stdout
         started && /^        }[[:space:]]*$/ { exit }
         started && /^        (private|public|internal)[ ]/ { exit }
         started { print }
+    ' "$1"
+}
+
+# tsx_tab: one tab's JSX block in App.tsx — from its `{activeTab === '<id>' && (`
+# opening line (inclusive) to the NEXT tab block's opening line (exclusive).
+# The any-char quote anchors tolerate the single-quote JSX idiom without
+# ERE quote escapes; the next-tab stop keeps a sibling tab's markup (and its
+# comments, which may carry sibling-contract words) out of the shape greps —
+# the extractor-bound discipline of obs #6603, TSX side.
+tsx_tab () { # <app-tsx-file> <tab-id> -> lines on stdout
+    awk -v id="$2" '
+        !inr && $0 ~ "\\{activeTab === ." id ". && \\(" { inr = 1; print; next }
+        inr && $0 ~ "\\{activeTab === " { exit }
+        inr { print }
     ' "$1"
 }
 
@@ -257,6 +279,27 @@ check_composition_pins () { # <program-cs-file> -> status (fail count)
     [ "${n}" -eq 0 ] || { echo "    composition: firewall - 5-argument call form x${n}, want 0"; fails=$((fails + 1)); }
     n="$(printf '%s\n' "${loop}" | grep -cF ', cmdDir, ct);')"
     [ "${n}" -eq 3 ] || { echo "    composition: 4-argument call forms x${n}, want 3"; fails=$((fails + 1)); }
+    return "${fails}"
+}
+
+# check_nav_pins: the languages nav entry pin set (38-03 T1, parameterized
+# for the can-fail control) — the entry exists exactly once with the
+# Languages glyph, the activeTab union carries the member, and the entry
+# sits BETWEEN the legacy and upgrades entries (line-index comparisons,
+# never line-number pins). Return status = fail count.
+check_nav_pins () { # <app-tsx-file> -> status (fail count)
+    local fails=0 f="$1" n l1 l2 l3
+    n="$(count_f "${f}" "{ id: 'languages', label: 'Languages', icon: Languages, count: languagesCount }")"
+    [ "${n}" -eq 1 ] || { echo "    nav: languages entry x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(count_f "${f}" "'legacy' | 'languages' | 'upgrades'")"
+    [ "${n}" -eq 1 ] || { echo "    nav: activeTab union member x${n}, want 1"; fails=$((fails + 1)); }
+    l1="$(grep -nF "{ id: 'legacy', label: 'Legacy Windows'" "${f}" | head -n1 | cut -d: -f1)"
+    l2="$(grep -nF "{ id: 'languages', label: 'Languages'" "${f}" | head -n1 | cut -d: -f1)"
+    l3="$(grep -nF "{ id: 'upgrades', label: 'OS Upgrades'" "${f}" | head -n1 | cut -d: -f1)"
+    if [ -z "${l1}" ] || [ -z "${l2}" ] || [ -z "${l3}" ] || [ "${l2}" -le "${l1}" ] || [ "${l2}" -ge "${l3}" ]; then
+        echo "    nav: placement broken (legacy=${l1} languages=${l2} upgrades=${l3})"
+        fails=$((fails + 1))
+    fi
     return "${fails}"
 }
 
@@ -519,6 +562,117 @@ else
     fail_case "HOST: spawn order broken (glb64=${GLB64_LINE} glbx86=${GLBX86_LINE} glbleg=${GLBLEG_LINE} loop=${LOOP_LINE})"
 fi
 
+# --- section e: UI-PINS (38-03, App.tsx source shapes) ----------------------
+echo "--- section e: UI-PINS (App.tsx source shapes) ---"
+
+# U1 (38-03 T1): the nav entry pin set — id, icon, badge count, placement.
+if check_nav_pins "${APP_TSX}"; then
+    echo "  ok: UI: languages nav entry complete (id, union member, placement)"
+else
+    fail_case "UI: languages nav entry incomplete or misplaced"
+fi
+
+# U2: the Languages glyph joins the lucide-react import block.
+IMPORT_REGION="$(region "${APP_TSX}" '^import [{]' 'from .lucide-react.')"
+IMPORT_LANGS="$(printf '%s\n' "${IMPORT_REGION}" | grep -cF 'Languages')"
+if [ -z "${IMPORT_REGION}" ]; then
+    fail_case "UI: lucide-react import region not extractable — import pin vacuous"
+else
+    pin_eq "UI: Languages glyph imported from lucide-react" 1 "${IMPORT_LANGS}"
+fi
+
+# U3: the pushed-catalog state records + tolerant merge consumption
+# (absent push keys never crash — the spread-merge reads only when the key
+# is present, mirroring the sibling picker's consumption shape).
+STATE_CATALOG="$(count_f "${APP_TSX}" 'const [languages, setLanguages] = useState<Record<string, string>>({});')"
+pin_eq "UI: pushed catalog state record declared once" 1 "${STATE_CATALOG}"
+STATE_SELECTION="$(count_f "${APP_TSX}" 'const [languagesSelection, setLanguagesSelection] = useState<Record<string, boolean>>({});')"
+pin_eq "UI: pushed selection state record declared once" 1 "${STATE_SELECTION}"
+MERGE_CATALOG="$(count_f "${APP_TSX}" 'setLanguages(prev => ({ ...prev, ...data.languages }));')"
+pin_eq "UI: catalog consumed via the tolerant spread-merge" 1 "${MERGE_CATALOG}"
+MERGE_SELECTION="$(count_f "${APP_TSX}" 'setLanguagesSelection(prev => ({ ...prev, ...data.languagesSelection }));')"
+pin_eq "UI: selection consumed via the tolerant spread-merge" 1 "${MERGE_SELECTION}"
+
+# U4: the derivations are the single source of truth (badge count and
+# payload both read the same sorted, glb-free selection).
+DERIVE_SEL="$(count_f "${APP_TSX}" 'const selectedLangs = Object.keys(languagesSelection)')"
+pin_eq "UI: selectedLangs derives from the pushed selection record" 1 "${DERIVE_SEL}"
+SEL_GLB_FILTER="$(count_f "${APP_TSX}" "filter(t => t !== 'glb' && languagesSelection[t])")"
+pin_eq "UI: selectedLangs filters the pinned token out (badge and payload are non-glb)" 1 "${SEL_GLB_FILTER}"
+SEL_REGION="$(region "${APP_TSX}" 'const selectedLangs' 'const languagesCount')"
+if [ -z "${SEL_REGION}" ]; then
+    fail_case "UI: selection derivation region not extractable — sort pin vacuous"
+else
+    SEL_SORT="$(printf '%s\n' "${SEL_REGION}" | grep -cF '.sort()')"
+    pin_eq "UI: selectedLangs sorted ascending (JS lexicographic == Ordinal over 3-letter ASCII tokens)" 1 "${SEL_SORT}"
+fi
+DERIVE_COUNT="$(count_f "${APP_TSX}" 'const languagesCount = selectedLangs.length')"
+pin_eq "UI: nav badge count derives from selectedLangs" 1 "${DERIVE_COUNT}"
+
+# U5: the tab region exists and carries the Win11 row anatomy — a missing
+# region makes every region-scoped pin below vacuous, so the emptiness is
+# a loud instrument condition, never a green.
+TAB_REGION="$(tsx_tab "${APP_TSX}" 'languages')"
+if [ -z "${TAB_REGION}" ]; then
+    fail_case "UI: languages tab region not extractable — region pins would read vacuously"
+    TAB_REGION="(unextractable)"
+fi
+ROW_TOGGLE="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'onClick={() => toggleLanguage(token)}')"
+pin_eq "UI: selectable rows toggle through the row-level handler" 1 "${ROW_TOGGLE}"
+ROW_ANATOMY="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'px-4 py-2.5 hover:bg-dark-850/70 transition-colors cursor-pointer')"
+pin_eq "UI: selectable rows copy the Win11 row anatomy (hover + cursor-pointer)" 1 "${ROW_ANATOMY}"
+POINTER_NONE="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'pointer-events-none')"
+pin_eq "UI: checkboxes are pointer-events-none (the row owns the toggle)" 2 "${POINTER_NONE}"
+
+# U6: the locked-active glb row — permanently selected, never
+# disabled-unavailable (the explicit inverse of the sibling not-available
+# row): full-strength label, accent tint, checked+disabled checkbox with
+# the pinned accessible name, emerald status badge, NO hover, NO row
+# toggle handler (only the toolbar buttons and the selectable-row
+# template carry onClick in this region).
+TAB_GLB_ARIA="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'aria-label="English (global) — always included"')"
+pin_eq "UI: glb row locked-active aria-label" 1 "${TAB_GLB_ARIA}"
+TAB_GLB_BADGE="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'Always included')"
+pin_eq "UI: glb row carries the emerald included badge" 1 "${TAB_GLB_BADGE}"
+TAB_GLB_EMERALD="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20')"
+pin_eq "UI: the included badge reuses the Listed badge shape byte-for-byte" 1 "${TAB_GLB_EMERALD}"
+TAB_GLB_CHECKED="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'checked disabled')"
+pin_eq "UI: glb checkbox is checked + disabled with the accent idiom retained" 1 "${TAB_GLB_CHECKED}"
+TAB_TINT="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'bg-accent-600/5')"
+pin_eq "UI: accent tint on the glb row and the checked-row template" 2 "${TAB_TINT}"
+TAB_ROW_HOVER="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'hover:bg-dark-850/70')"
+pin_eq "UI: the row-hover idiom appears only on selectable rows (glb never hovers)" 1 "${TAB_ROW_HOVER}"
+TAB_ONCLICK="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'onClick={')"
+pin_eq "UI: onClick sites in the tab (select-all + clear + row toggle; glb has none)" 3 "${TAB_ONCLICK}"
+
+# U7: table columns per the surface contract — header is w-8 empty,
+# flex-1 Language, w-36 Status; token chips reuse the mono chip idiom.
+TAB_HEADER_LANG="$(printf '%s\n' "${TAB_REGION}" | grep -cF '<div className="flex-1">Language</div>')"
+pin_eq "UI: table header Language column" 1 "${TAB_HEADER_LANG}"
+TAB_HEADER_STATUS="$(printf '%s\n' "${TAB_REGION}" | grep -cF '<div className="w-36 text-center">Status</div>')"
+pin_eq "UI: table header Status column" 1 "${TAB_HEADER_STATUS}"
+TAB_CHIP="$(printf '%s\n' "${TAB_REGION}" | grep -cF 'text-[10px] font-mono px-1.5 py-0.5 rounded bg-dark-800 text-zinc-300 border border-dark-700')"
+pin_eq "UI: mono token chips reuse the row-chip idiom (glb + template)" 2 "${TAB_CHIP}"
+
+# U8: the interactions — the row toggle handler and the scoped
+# select-all/clear pair iterate the catalog keys only (the pinned token is
+# not a catalog member by host construction, so it is never touched).
+HANDLER_TOGGLE="$(count_f "${APP_TSX}" 'const toggleLanguage = (token: string)')"
+pin_eq "UI: row toggle handler declared once" 1 "${HANDLER_TOGGLE}"
+HANDLER_ALL="$(count_f "${APP_TSX}" 'const selectAllLanguages = ()')"
+pin_eq "UI: select-all handler declared once" 1 "${HANDLER_ALL}"
+HANDLER_CLEAR="$(count_f "${APP_TSX}" 'const clearLanguageSelection = ()')"
+pin_eq "UI: clear handler declared once" 1 "${HANDLER_CLEAR}"
+HANDLERS_REGION="$(region "${APP_TSX}" 'const toggleLanguage =' 'const handleStart =')"
+if [ -z "${HANDLERS_REGION}" ]; then
+    fail_case "UI: language handlers region not extractable — scoping pins vacuous"
+    HANDLERS_REGION="(unextractable)"
+fi
+SCOPE_FOREACH="$(printf '%s\n' "${HANDLERS_REGION}" | grep -cF 'Object.keys(languages).forEach')"
+pin_eq "UI: select-all/clear scope the catalog keys" 2 "${SCOPE_FOREACH}"
+SCOPE_GLB="$(printf '%s\n' "${HANDLERS_REGION}" | grep -ciF 'glb')"
+pin_eq "UI: the interactions never reference the pinned token (not a catalog member)" 0 "${SCOPE_GLB}"
+
 # --- section d: CAN-FAIL controls ------------------------------------------
 echo "--- section d: CAN-FAIL controls ---"
 
@@ -604,6 +758,21 @@ if [ -s "${SANDBOX}/ProgramFwBite.cs" ] && [ "${FW_LANDED}" -ge 1 ] && [ "${FW_R
     echo "  control ok: the firewall pins bite on a 5-argument per-language pass"
 else
     fail_case "control 6: firewall bite failed (landed=${FW_LANDED}, rc=${FW_RC})"
+fi
+
+# Control 7 (nav placement bite, 38-03 T1): a scratch App.tsx copy whose
+# languages nav entry carries a mutated tab id must red the nav pin set
+# (count AND placement) — the mutation REMOVES the asserted literal from
+# its pinned form (obs #6590: the bite deletes the pinned shape, it never
+# comments it). The landing is proven before the verdict is read.
+sed "s/{ id: 'languages', label: 'Languages', icon: Languages/{ id: 'languagez', label: 'Languages', icon: Languages/" "${APP_TSX}" > "${SANDBOX}/AppNavBite.tsx"
+NAV_RESIDUE="$(count_f "${SANDBOX}/AppNavBite.tsx" "{ id: 'languages', label: 'Languages'")"
+NAV_OUT="$(check_nav_pins "${SANDBOX}/AppNavBite.tsx")"
+NAV_RC=$?
+if [ -s "${SANDBOX}/AppNavBite.tsx" ] && [ "${NAV_RESIDUE}" -eq 0 ] && [ "${NAV_RC}" -ne 0 ]; then
+    echo "  control ok: the nav pins bite on a mutated tab id"
+else
+    fail_case "control 7: nav placement bite failed (residue=${NAV_RESIDUE}, rc=${NAV_RC})"
 fi
 
 # --- verdict (the counter comparison is the final instruction) -------------

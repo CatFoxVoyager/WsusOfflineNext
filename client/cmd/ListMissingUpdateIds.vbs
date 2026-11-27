@@ -7,7 +7,7 @@ Private Const strHideFileName = "HideList-seconly.txt"
 
 Dim wshShell, objUpdateService, objUpdateSearcher, objSearchResult, objUpdate, objIDFile
 Dim strTempFolder, strTextFileName, strArgument, strKBId
-Dim objFSO, objTableDict, strOSName, strMissingFile
+Dim objFSO, objTableDict, strOSName, strOSLang, strMissingFile
 
 Private Sub LogInfo(objShell, strLine)
 Dim objLogFile
@@ -53,11 +53,8 @@ End Function
 ' pass while the identity could never become "installed" (measured: 101 passes in 12 h).
 ' An identity is therefore skipped when at least one of its UpdateTable files is not on the
 ' medium. /all mode and OS names without a table are never filtered.
-Private Sub LoadUpdateTable()
-Dim strTableFile, objTextStream, strLine, iPos, strID, strFile
-  Set objTableDict = CreateObject("Scripting.Dictionary")
-  objTableDict.CompareMode = 1
-  strTableFile = "..\UpdateTable\UpdateTable-" & strOSName & "-glb.csv"
+Private Sub LoadUpdateTableFile(strTableFile)
+Dim objTextStream, strLine, iPos, strID, strFile
   If Not objFSO.FileExists(strTableFile) Then Exit Sub
   Set objTextStream = objFSO.OpenTextFile(strTableFile, 1, False, -2)
   Do Until objTextStream.AtEndOfStream
@@ -76,8 +73,17 @@ Dim strTableFile, objTextStream, strLine, iPos, strID, strFile
   objTextStream.Close
 End Sub
 
+Private Sub LoadUpdateTable()
+  Set objTableDict = CreateObject("Scripting.Dictionary")
+  objTableDict.CompareMode = 1
+  LoadUpdateTableFile "..\UpdateTable\UpdateTable-" & strOSName & "-glb.csv"
+  If (strOSLang <> "") And (strOSLang <> "glb") Then
+    LoadUpdateTableFile "..\UpdateTable\UpdateTable-" & strOSName & "-" & strOSLang & ".csv"
+  End If
+End Sub
+
 Private Function UpdateIsIncomplete(strUpdateID, ByRef strMissingFile)
-Dim arrFiles, i, strFile, strDir
+Dim arrFiles, i, strFile, strArchDir, bFound
   UpdateIsIncomplete = False
   strMissingFile = ""
   If strOSName = "" Then Exit Function
@@ -88,11 +94,16 @@ Dim arrFiles, i, strFile, strDir
     strFile = Trim(arrFiles(i))
     If strFile <> "" Then
       If InStr(LCase(strFile), "-x64_") > 0 Then
-        strDir = "..\" & strOSName & "-x64\glb\"
+        strArchDir = "..\" & strOSName & "-x64\"
       Else
-        strDir = "..\" & strOSName & "\glb\"
+        strArchDir = "..\" & strOSName & "\"
       End If
-      If Not objFSO.FileExists(strDir & strFile) Then
+      bFound = False
+      If (strOSLang <> "") And (strOSLang <> "glb") Then
+        If objFSO.FileExists(strArchDir & strOSLang & "\" & strFile) Then bFound = True
+      End If
+      If (Not bFound) And objFSO.FileExists(strArchDir & "glb\" & strFile) Then bFound = True
+      If Not bFound Then
         strMissingFile = strFile
         UpdateIsIncomplete = True
         Exit Function
@@ -114,6 +125,11 @@ If WScript.Arguments.Count >= 2 Then
   strOSName = LCase(WScript.Arguments(1))
 Else
   strOSName = ""
+End If
+If WScript.Arguments.Count >= 3 Then
+  strOSLang = LCase(Trim(WScript.Arguments(2)))
+Else
+  strOSLang = ""
 End If
 
 On Error Resume Next

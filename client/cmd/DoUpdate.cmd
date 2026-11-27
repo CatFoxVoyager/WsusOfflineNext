@@ -61,6 +61,16 @@ if /i "%~1"=="/testbuildupgrade" (
   shift /1
   goto EvalParams
 )
+if /i "%~1"=="/testmediumlang" (
+  set WOU_TEST_MODE=1
+  if /i "%~2"=="ie11" (
+    call :ResolveIEw62LangPack
+    echo IE_LANG_DIR=!IE_LANG_DIR!
+    echo IE_LANG_FILENAME=!IE_LANG_FILENAME!
+    goto EoF
+  )
+  goto CheckMediumContent
+)
 if "%WOU_TEMP_DIR%"=="" set WOU_TEMP_DIR=%SystemRoot%\Temp
 
 if exist "%TEMP%\wou_corrupt_updates.txt" del "%TEMP%\wou_corrupt_updates.txt" 2>nul
@@ -324,6 +334,7 @@ echo Warning: The compatibility mode is active (__COMPAT_LAYER=%__COMPAT_LAYER%)
 call :Log "Warning: The compatibility mode is active (__COMPAT_LAYER=%__COMPAT_LAYER%)"
 :NoCompatLayer
 
+:CheckMediumContent
 rem *** Check medium content ***
 echo Checking medium content...
 if exist ..\catalogdate.txt (
@@ -347,6 +358,7 @@ if /i "%OS_ARCH%"=="x64" (
   if exist ..\%OS_NAME%-%OS_ARCH%\glb\nul (
     echo Medium supports Microsoft Windows ^(%OS_NAME% %OS_ARCH% glb^).
     call :Log "Info: Medium supports Microsoft Windows (%OS_NAME% %OS_ARCH% glb)"
+    call :CheckMediumLangFallback
     goto CheckOfficeMedium
   )
 ) else (
@@ -358,15 +370,36 @@ if /i "%OS_ARCH%"=="x64" (
   if exist ..\%OS_NAME%\glb\nul (
     echo Medium supports Microsoft Windows ^(%OS_NAME% %OS_ARCH% glb^).
     call :Log "Info: Medium supports Microsoft Windows (%OS_NAME% %OS_ARCH% glb)"
+    call :CheckMediumLangFallback
     goto CheckOfficeMedium
   )
 )
 echo Medium does not support Microsoft Windows (%OS_NAME% %OS_ARCH% %OS_LANG%).
 call :Log "Info: Medium does not support Microsoft Windows (%OS_NAME% %OS_ARCH% %OS_LANG%)"
+if "%WOU_TEST_MODE%"=="1" goto EoF
 if not "%OFC_INSTALLED%"=="1" goto InvalidMedium
 set JUST_OFFICE=1
+goto CheckOfficeMedium
+
+:CheckMediumLangFallback
+rem Phase 39 (INST-01/INST-02): derive medium language availability purely from
+rem the filesystem (no hardcoded language list). English (enu) on glb stays
+rem silent (SC4). Non-English systems whose OS language directory is absent
+rem check client\dotnet\*-allos-%OS_LANG%.exe (Phase 38 w100 language packs);
+rem when absent there too, announce the glb-only fallback to console AND log.
+if /i "%OS_LANG%"=="enu" goto :eof
+dir /B "..\dotnet\*-allos-%OS_LANG%.exe" >nul 2>&1
+if not errorlevel 1 (
+  echo Medium carries %OS_LANG% language packs ^(.NET^) alongside global ^(%OS_NAME% %OS_ARCH% glb^) Windows updates.
+  call :Log "Info: Medium carries %OS_LANG% language packs (.NET) alongside global (%OS_NAME% %OS_ARCH% glb) Windows updates"
+  goto :eof
+)
+echo Notice: System language is %OS_LANG%, language-specific updates will not be offered - medium is glb-only.
+call :Log "Info: System language is %OS_LANG%, language-specific updates will not be offered - medium is glb-only"
+goto :eof
 
 :CheckOfficeMedium
+if "%WOU_TEST_MODE%"=="1" goto EoF
 if not "%OFC_INSTALLED%"=="1" (if "%JUST_OFFICE%"=="1" (goto InvalidMedium) else (goto ProperMedium))
 set OFFICE_SUPPORTED=0
 if not "%O2K16_VER_MAJOR%"=="" (
@@ -1621,7 +1654,7 @@ goto IEInstalled
 if /i "%OS_ARCH%" NEQ "x64" goto SkipIEInst
 if exist %SystemRoot%\Temp\wou_ie_tried.txt goto SkipIEInst
 set IE_FILENAME=..\%OS_NAME%-%OS_ARCH%\glb\ie11-win6.2*.msu
-set IE_LANG_FILENAME=..\%OS_NAME%-%OS_ARCH%\glb\ie11-windows6.2-languagepack-%OS_ARCH%-%OS_LANG_EXT%*.msu
+call :ResolveIEw62LangPack
 dir /B %IE_FILENAME% >nul 2>&1
 if errorlevel 1 (
   echo Warning: File %IE_FILENAME% not found.
@@ -1685,7 +1718,7 @@ for /F %%i in ('dir /B %IE_FILENAME%') do (
   if not errorlevel 1 (
     echo Installing Internet Explorer 11 language pack...
     for /F %%i in ('dir /B %IE_LANG_FILENAME%') do (
-      call "%~dps0InstallOSUpdate.cmd" "..\%OS_NAME%-%OS_ARCH%\glb\%%i" %VERIFY_MODE% /ignoreerrors
+      call "%~dps0InstallOSUpdate.cmd" "%IE_LANG_DIR%\%%i" %VERIFY_MODE% /ignoreerrors
       set ERR_LEVEL=!errorlevel!
       rem echo DoUpdate: ERR_LEVEL=!ERR_LEVEL!
       if "!ERR_LEVEL!"=="3010" (
@@ -1701,10 +1734,23 @@ for /F %%i in ('dir /B %IE_FILENAME%') do (
 )
 goto IEInstalled
 
+:ResolveIEw62LangPack
+rem Phase 39 (INST-02, D-02): prefer the per-language directory where Phase 38
+rem downloads StaticDownloadLinks-ie11-w62-x64-<lang>.txt, falling back to glb.
+set IE_LANG_DIR=..\%OS_NAME%-%OS_ARCH%\%OS_LANG%
+set IE_LANG_FILENAME=%IE_LANG_DIR%\ie11-windows6.2-languagepack-%OS_ARCH%-%OS_LANG_EXT%*.msu
+dir /B %IE_LANG_FILENAME% >nul 2>&1
+if not errorlevel 1 goto :eof
+set IE_LANG_DIR=..\%OS_NAME%-%OS_ARCH%\glb
+set IE_LANG_FILENAME=%IE_LANG_DIR%\ie11-windows6.2-languagepack-%OS_ARCH%-%OS_LANG_EXT%*.msu
+goto :eof
+
 :IEw63
 :IEw100
 :IEInstalled
 set IE_FILENAME=
+set IE_LANG_DIR=
+set IE_LANG_FILENAME=
 if "%REBOOT_REQUIRED%"=="1" (
   if "%RECALL_REQUIRED%" NEQ "1" (
     set RECALL_REQUIRED=1
@@ -2817,7 +2863,7 @@ echo %TIME% - Listing ids of missing updates (please be patient, this will take 
 copy /Y ..\wsus\wsusscn2.cab "%TEMP%" >nul
 if exist "%TEMP%\MissingUpdateIds.txt" del "%TEMP%\MissingUpdateIds.txt"
 rem *** %LIST_MODE_IDS% quoted: when empty the args would shift and OS_NAME would land in the mode slot
-%CSCRIPT_PATH% //Nologo //E:vbs ListMissingUpdateIds.vbs "%LIST_MODE_IDS%" %OS_NAME%
+%CSCRIPT_PATH% //Nologo //E:vbs ListMissingUpdateIds.vbs "%LIST_MODE_IDS%" %OS_NAME% %OS_LANG%
 if errorlevel 1 (
   if exist "%TEMP%\wsusscn2.cab" del "%TEMP%\wsusscn2.cab"
   goto ScanError

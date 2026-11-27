@@ -570,7 +570,7 @@ export default function App() {
       </header>
 
       {/* 2. Navigation Tabs */}
-      <nav className="h-11 border-b border-dark-800 bg-dark-900/40 px-5 flex items-center gap-2 shrink-0">
+      <nav className="h-11 border-b border-dark-800 bg-dark-900/40 px-5 flex items-center gap-2 shrink-0 overflow-x-auto">
         {[
           { id: 'win11', label: 'Windows 11', icon: Monitor, count: win11Builds.filter(b => b.enabled).length },
           { id: 'win10', label: 'Windows 10 & Server', icon: Server, count: win10Builds.filter(b => b.enabled).length },
@@ -587,7 +587,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                 isActive
                   ? 'bg-dark-800 text-accent-400 border border-accent-600/40'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-dark-850 border border-transparent'
@@ -1118,22 +1118,22 @@ export default function App() {
         {activeTab === 'languages' && (
           <div className="space-y-4 max-w-5xl mx-auto">
             {/* Toolbar */}
-            <div className="flex items-center justify-between pb-3 border-b border-dark-800">
-              <div>
+            <div className="flex items-center justify-between gap-4 pb-3 border-b border-dark-800">
+              <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-zinc-100">Update languages</h2>
-                <p className="text-xs text-zinc-400">Choose the languages this medium carries in addition to English (global). Each selected language adds its language-specific packages — .NET language packs, plus IE11 language packs when Server 2012 is among the targets.</p>
+                <p className="text-xs text-zinc-400 mt-1 leading-normal">Choose the languages this medium carries in addition to English (global). Each selected language adds its language-specific packages — .NET language packs, plus IE11 language packs when Server 2012 is among the targets.</p>
               </div>
               {Object.keys(languages).length > 0 && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={selectAllLanguages}
-                    className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-200 border border-dark-800 transition-colors"
+                    className="whitespace-nowrap px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-200 border border-dark-800 transition-colors"
                   >
                     Select all
                   </button>
                   <button
                     onClick={clearLanguageSelection}
-                    className="px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-400 border border-dark-800 transition-colors"
+                    className="whitespace-nowrap px-2.5 py-1 text-xs font-medium rounded bg-dark-850 hover:bg-dark-800 text-zinc-400 border border-dark-800 transition-colors"
                   >
                     Clear selection
                   </button>
@@ -1150,7 +1150,7 @@ export default function App() {
             {catalogResolved && Object.keys(languages).length === 0 && (
               <div className="p-4 rounded-lg bg-dark-900 border border-dark-800">
                 <h3 className="text-sm font-semibold text-zinc-100">Additional languages unavailable</h3>
-                <p className="text-xs text-zinc-400 mt-1">Only English (global) is available right now, so the medium will carry global updates only — the same content as a default run. Restart the generator to reload the language list.</p>
+                <p className="text-xs text-zinc-400 mt-1 leading-normal">Only English (global) is available right now, so the medium will carry global updates only — the same content as a default run. Restart the generator to reload the language list.</p>
               </div>
             )}
 
@@ -1174,7 +1174,7 @@ export default function App() {
                       checked disabled
                       aria-label="English (global) — always included"
                       onChange={() => {}}
-                      className="w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0 cursor-default pointer-events-none"
+                      className="w-4 h-4 rounded bg-dark-800 border-dark-700 accent-accent-600 text-accent-600 disabled:opacity-100 focus:ring-0 cursor-default pointer-events-none"
                     />
                   </div>
                   <div className="flex-1 min-w-0 pr-3 flex items-center gap-2">
@@ -1190,17 +1190,29 @@ export default function App() {
                   return (
                     <div
                       key={token}
+                      role="checkbox"
+                      aria-checked={isEnabled}
+                      aria-label={label ? label : token}
+                      tabIndex={0}
                       onClick={() => toggleLanguage(token)}
-                      className={`flex items-center px-4 py-2.5 hover:bg-dark-850/70 transition-colors cursor-pointer ${
+                      onKeyDown={(e) => {
+                        if (e.key === ' ' || e.key === 'Enter') {
+                          e.preventDefault();
+                          toggleLanguage(token);
+                        }
+                      }}
+                      className={`flex items-center px-4 py-2.5 hover:bg-dark-850/70 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent-400 focus-visible:outline-offset-[-2px] ${
                         isEnabled ? 'bg-accent-600/5' : ''
                       }`}
                     >
                       <div className="w-8 flex items-center justify-center">
                         <input
                           type="checkbox"
+                          tabIndex={-1}
+                          aria-hidden="true"
                           checked={isEnabled}
                           onChange={() => {}}
-                          className="w-4 h-4 rounded bg-dark-800 border-dark-700 text-accent-600 focus:ring-0 cursor-pointer pointer-events-none"
+                          className="w-4 h-4 rounded bg-dark-800 border-dark-700 accent-accent-600 text-accent-600 focus:ring-0 cursor-pointer pointer-events-none"
                         />
                       </div>
                       <div className="flex-1 min-w-0 pr-3 flex items-center gap-2">

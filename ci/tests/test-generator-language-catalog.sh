@@ -17,7 +17,7 @@
 #                     family parity (dotnet set == ie11-w62-x64 set), the
 #                     measured golden list pinned verbatim, golden within the
 #                     engine vocabulary, glb excluded.
-#   b. VOCAB-PARITY — the 24-token engine vocabulary literal is identical in
+#   b. VOCAB-PARITY — the 25-token engine vocabulary literal is identical in
 #                     cmd/CreateISOImage.cmd and cmd/CopyToTarget.cmd; the
 #                     :Lang_* label set in cmd/DownloadUpdates.cmd equals the
 #                     vocabulary minus glb. These are the reconciliation
@@ -222,14 +222,14 @@ check_save_pins () { # <program-cs-file> -> status (fail count)
         echo "    save: region not extractable"
         return 1
     fi
-    n="$(printf '%s\n' "${sec}" | grep -cF 'bool hasLanguages = payload.TryGetProperty("languages", out JsonElement _)')"
-    [ "${n}" -eq 1 ] || { echo "    save: languages presence gate x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${sec}" | grep -cF 'GetLanguagesPayloadSelection(payload, out bool hasLanguages)')"
+    [ "${n}" -eq 1 ] || { echo "    save: languages presence + selection gate x${n}, want 1"; fails=$((fails + 1)); }
     n="$(printf '%s\n' "${sec}" | grep -cF 'if (hasLegacy || hasLanguages)')"
     [ "${n}" -eq 1 ] || { echo "    save: compound write guard x${n}, want 1"; fails=$((fails + 1)); }
     n="$(printf '%s\n' "${sec}" | grep -cF 'if (hasLegacy)')"
     [ "${n}" -eq 1 ] || { echo "    save: legacy loop on its own gate x${n}, want 1"; fails=$((fails + 1)); }
-    n="$(printf '%s\n' "${sec}" | grep -cF 'GetLanguagesPayloadSelection(payload, out _)')"
-    [ "${n}" -eq 1 ] || { echo "    save: validated selection call x${n}, want 1"; fails=$((fails + 1)); }
+    n="$(printf '%s\n' "${sec}" | grep -cF 'if (hasLanguages)')"
+    [ "${n}" -eq 1 ] || { echo "    save: languages writer on its own gate x${n}, want 1"; fails=$((fails + 1)); }
     n="$(printf '%s\n' "${sec}" | grep -cF 'WriteLanguagesSection(lines,')"
     [ "${n}" -eq 1 ] || { echo "    save: section writer call x${n}, want 1"; fails=$((fails + 1)); }
     n="$(printf '%s\n' "${sec}" | grep -cF 'File.WriteAllLines(genIni, lines)')"
@@ -425,7 +425,7 @@ pin_eq "VOCAB: exactly one %%j vocabulary line in CopyToTarget.cmd" 1 "${COPY_VO
 
 COPY_VOCAB="$(vocab_from_cmd "${COPY_CMD}")"
 if diff <(printf '%s\n' "${ISO_VOCAB}") <(printf '%s\n' "${COPY_VOCAB}") >/dev/null; then
-    echo "  ok: the 24-token vocabulary literal is identical in both engine scripts"
+    echo "  ok: the 25-token vocabulary literal is identical in both engine scripts"
 else
     fail_case "VOCAB: CreateISOImage.cmd and CopyToTarget.cmd vocabularies diverge"
     diff <(printf '%s\n' "${ISO_VOCAB}") <(printf '%s\n' "${COPY_VOCAB}") | sed 's/^/    /'
@@ -535,8 +535,8 @@ pin_eq "HOST: derivation is tolerant and never fatal (no throw)" 0 "${DERIVE_THR
 # P6: the [Languages] branch inside the existing section-scoped INI reader
 # loop (same isEnabled parse as the sibling branches; the reader stays
 # dumb — unknown tokens land in the dict and are filtered at push time).
-READER_LANG_BRANCH="$(count_f "${PROGRAM_CS}" 'currentSection == "Languages"')"
-pin_eq "HOST: [Languages] reader branch present in the INI loop" 1 "${READER_LANG_BRANCH}"
+READER_LANG_BRANCH="$(count_f "${PROGRAM_CS}" 'currentSection.Equals("Languages", StringComparison.OrdinalIgnoreCase)')"
+pin_eq "HOST: [Languages] reader branch present in the INI loop (case-insensitive)" 1 "${READER_LANG_BRANCH}"
 
 LANGS_DICT_USES="$(count_f "${PROGRAM_CS}" 'languagesDict')"
 if [ "${LANGS_DICT_USES}" -ge 3 ]; then
@@ -870,11 +870,11 @@ else
     fail_case "control 3: void-all bite failed (landed=${VOID_LANDED}, rc=${VOID_RC})"
 fi
 
-# Control 4 (absent-branch bite, 38-02 T2): a copy whose languages write
-# branch lost its property gate must red the save pin set (the 26a0073
-# regression — a languages-less save reaching the writer).
-sed 's/if (hasLegacy || hasLanguages)/if (hasLegacy)/' "${PROGRAM_CS}" > "${SANDBOX}/ProgramGateBite.cs"
-GATE_LANDED="$(count_f "${SANDBOX}/ProgramGateBite.cs" 'if (hasLegacy || hasLanguages)')"
+# Control 4 (absent-branch bite, 38-02 T2 / review WR-05): a copy whose
+# inner languages write gate is stripped must red the save pin set (the
+# 26a0073 regression — a languages-less save reaching WriteLanguagesSection).
+sed 's/if (hasLanguages)/if (true)/' "${PROGRAM_CS}" > "${SANDBOX}/ProgramGateBite.cs"
+GATE_LANDED="$(count_f "${SANDBOX}/ProgramGateBite.cs" 'if (hasLanguages)')"
 GATE_OUT="$(check_save_pins "${SANDBOX}/ProgramGateBite.cs")"
 GATE_RC=$?
 if [ -s "${SANDBOX}/ProgramGateBite.cs" ] && [ "${GATE_LANDED}" -eq 0 ] && [ "${GATE_RC}" -ne 0 ]; then

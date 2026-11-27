@@ -73,6 +73,7 @@ for %%i in (wxp w60 w60-x64 w61 w61-x64 w62-x64 w63 w63-x64 w100 w100-x64 o2k16 
     if /i "%2"=="glb" goto EvalParams
     rem Language tokens per the CreateISOImage.cmd vocabulary; dispatch by
     rem loop variable so the lowercase labels receive the canonical spelling.
+    rem Note: the glb guard on the line above MUST precede this loop (no :Lang_glb label).
     for %%j in (glb enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve trk ell ara heb dan nor fin) do (if /i "%2"=="%%j" goto Lang_%%j)
   )
 )
@@ -953,11 +954,14 @@ if exist ..\client\md\hashes-dotnet.txt (
   rem existed anywhere in the engine - and any future writer for the glb key
   rem is a deliberate SC4-breaking decision.
   if /i not "%2"=="glb" if exist ..\client\md\hashes-dotnet-%TARGET_ARCH%-%2.txt (
-    for %%i in (..\client\md\hashes-dotnet-%TARGET_ARCH%-%2.txt) do echo _%%~ti | %SystemRoot%\System32\find.exe "_%DATE:~-10%" >nul 2>&1
+    %SystemRoot%\System32\findstr.exe /I /C:"-allos-%2.exe" ..\client\md\hashes-dotnet.txt >nul 2>&1
     if not errorlevel 1 (
-      echo Skipping download/validation of .NET Frameworks' language files for %2 due to 'same day' rule.
-      call :Log "Info: Skipped download/validation of .NET Frameworks' language files for %2 due to 'same day' rule"
-      goto SkipDotNet
+      for %%i in (..\client\md\hashes-dotnet-%TARGET_ARCH%-%2.txt) do echo _%%~ti | %SystemRoot%\System32\find.exe "_%DATE:~-10%" >nul 2>&1
+      if not errorlevel 1 (
+        echo Skipping download/validation of .NET Frameworks' language files for %2 due to 'same day' rule.
+        call :Log "Info: Skipped download/validation of .NET Frameworks' language files for %2 due to 'same day' rule"
+        goto SkipDotNet
+      )
     )
   )
 ) else (
@@ -1002,13 +1006,18 @@ if "%CLEANUP_DL%"=="0" (
   goto VerifyDotNet
 )
 echo Cleaning up client directory for .NET Frameworks 3.5 SP1 and 4.x...
+copy /Y "%TEMP%\ValidStaticLinks-dotnet.txt" "%TEMP%\ValidCleanupLinks-dotnet.txt" >nul
+for %%l in (..\static\StaticDownloadLinks-dotnet-*.txt) do (
+  if exist "%%l" type "%%l" >>"%TEMP%\ValidCleanupLinks-dotnet.txt"
+)
 for /F "delims=" %%i in ('dir "..\client\dotnet" /A:-D /B 2^>nul') do (
-  %SystemRoot%\System32\find.exe /I "%%i" "%TEMP%\ValidStaticLinks-dotnet.txt" >nul 2>&1
+  %SystemRoot%\System32\find.exe /I "%%i" "%TEMP%\ValidCleanupLinks-dotnet.txt" >nul 2>&1
   if errorlevel 1 (
     del "..\client\dotnet\%%i"
     call :Log "Info: Deleted ..\client\dotnet\%%i"
   )
 )
+del "%TEMP%\ValidCleanupLinks-dotnet.txt"
 del "%TEMP%\ValidStaticLinks-dotnet.txt"
 call :Log "Info: Cleaned up client directory for .NET Frameworks 3.5 SP1 and 4.x"
 :VerifyDotNet
@@ -1945,11 +1954,11 @@ rem on-demand skip so every non-glb Windows run logs the language rule.
 set SKIP_DYN_LANG=
 for %%p in (w61 w62 w63 w100) do (if /i "%%p"=="%TMP_PLATFORM%" if /i not "%2"=="glb" set SKIP_DYN_LANG=1)
 if defined SKIP_DYN_LANG (
+  set SKIP_DYN_LANG=
   echo Skipping determination of dynamic update urls for %1 %2 - the Windows dynamic set is language neutral.
   call :Log "Info: Skipped determination of dynamic update urls for %1 %2 - the Windows dynamic set is language neutral"
   goto DoDownload
 )
-set SKIP_DYN_LANG=
 if "%4"=="/skipdynamic" (
   echo Skipping determination of dynamic update urls for %1 %2 on demand.
   call :Log "Info: Skipped determination of dynamic update urls for %1 %2 on demand"

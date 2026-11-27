@@ -115,7 +115,7 @@ command -v git >/dev/null 2>&1 \
     || { echo "FAIL: static/StaticDownloadLinks-ie11-w62-x64-chs.txt missing - the IE11 probe has no list"; exit 1; }
 grep -qF "for %%j in (glb enu fra esn jpn kor rus ptg ptb deu nld ita chs cht plk hun csy sve trk ell ara heb dan nor fin)" \
     "${REPO}/cmd/CreateISOImage.cmd" \
-    || { echo "FAIL: the 24-token vocabulary anchor moved in cmd/CreateISOImage.cmd - re-pin the battery"; exit 1; }
+    || { echo "FAIL: the 25-token vocabulary anchor moved in cmd/CreateISOImage.cmd - re-pin the battery"; exit 1; }
 
 # stub compiler: the OS-bundled csc (repo precedent: office-c2r scenario D)
 CSC=""
@@ -145,9 +145,10 @@ PRISTINE_DIR="$(mktemp -d "${SCRATCH_ROOT}/pristine.XXXXXX")"
 SB_DIR=""
 SB_DIR_A=""
 SB_DIR_B=""
+SANDBOXES=()
 # WOU_LANG_KEEP=1 keeps the sandboxes on disk for post-run inspection
 # (debugging aid; prints each sandbox path beside its case marker)
-cleanup () { [ -n "${WOU_LANG_KEEP:-}" ] && return 0; for d in "${SB_DIR}" "${SB_DIR_A}" "${SB_DIR_B}" "${STUB_DIR}" "${PRISTINE_DIR}"; do
+cleanup () { [ -n "${WOU_LANG_KEEP:-}" ] && return 0; for d in "${SANDBOXES[@]}" "${STUB_DIR}" "${PRISTINE_DIR}"; do
     [ -n "${d}" ] && [ -d "${d}" ] && rm -rf "${d}"; done; }
 trap cleanup EXIT
 
@@ -229,10 +230,44 @@ class HashdeepStub
         // old-style hashes" block) deletes any client/md/hashes-*.txt whose
         // content lacks the real hashdeep command-line signature - a bare
         // fake line got every stub-written db erased at the next run start
-        // (measured live, 2026-11-27). Emit the hashdeep header shape.
+        // (measured live, 2026-11-27). Emit the hashdeep header shape plus
+        // one line per real matched file when -c is passed so findstr
+        // checks against hashes-dotnet.txt reflect the actual files on disk.
         Console.WriteLine("%%%% HASHDEEP-1.0");
         Console.WriteLine("%%%% %# -c md5,sha1,sha256 -b battery-stub");
-        Console.WriteLine("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,cccccccccccccccccccccccccccccccccccccccc  0,0,0, files,hashes,battery-stub");
+        bool isCreate = false;
+        bool wroteFile = false;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "-c") { isCreate = true; }
+        }
+        if (isCreate)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (a.StartsWith("-") || a == "md5,sha1,sha256") { continue; }
+                try
+                {
+                    string dir = Path.GetDirectoryName(a);
+                    string pat = Path.GetFileName(a);
+                    if (string.IsNullOrEmpty(dir)) { dir = "."; }
+                    if (Directory.Exists(dir) && !string.IsNullOrEmpty(pat))
+                    {
+                        foreach (string fp in Directory.GetFiles(dir, pat))
+                        {
+                            Console.WriteLine("1,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,cccccccccccccccccccccccccccccccccccccccc," + Path.GetFileName(fp));
+                            wroteFile = true;
+                        }
+                    }
+                }
+                catch (Exception) { }
+            }
+        }
+        if (!wroteFile)
+        {
+            Console.WriteLine("1,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,cccccccccccccccccccccccccccccccccccccccc,battery-stub");
+        }
         return 0;
     }
 }
@@ -280,6 +315,7 @@ git -C "${REPO}" cat-file blob "${PRISTINE_SHA}" 2>/dev/null | sed -e 's/\r$//' 
 # runs only (engine + log dir - the run exits at the gate).
 function scaffold_mini () {
     SB_DIR="$(mktemp -d "${SCRATCH_ROOT}/sb.XXXXXX")"
+    SANDBOXES+=("${SB_DIR}")
     mkdir -p "${SB_DIR}/cmd" "${SB_DIR}/log" "${SB_DIR}/tmp" "${SB_DIR}/client/bin" "${SB_DIR}/client/md"
     cp "${REPO}/${ENGINE_REL}" "${SB_DIR}/cmd/"
 }
@@ -471,7 +507,7 @@ for f in run.log download.log record.log; do
         diff "${ART_A}/${f}" "${ART_B}/${f}" | head -10 | sed 's/^/    /'
     fi
 done
-if [ "${BITE_MODE}" = "bite-sc4" ] && [ "${FAILED_CASES}" -gt 0 ]; then
+if [ "${BITE_MODE}" = "bite-sc4" ] && [ "${FAILED_CASES}" -gt "${FAILS_BEFORE}" ]; then
     BITE_HIT=1
 fi
 if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
@@ -589,13 +625,13 @@ fi
 # =====================================================================
 # Case O2K16-ACCEPT: o2k16 chs passes the gate (content out of scope)
 # =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
 FAILS_BEFORE="${FAILED_CASES}"
 echo "--- case O2K16-ACCEPT: o2k16 chs token membership"
 scaffold_full
 begin_case
 TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
 run_engine "o2k16 chs /nocleanup /skipdynamic /skiptz"
-if [ "${BITE_MODE}" = "" ]; then
     [ "${ENGINE_RC}" -eq 0 ] \
         || fail_case "O2K16-ACCEPT: the o2k16 chs run exited ${ENGINE_RC}, expected 0"
     ! grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
@@ -611,15 +647,15 @@ fi
 # Case MARKER-WRITE + SAME-DAY-SKIP: per-language dotnet same-day keying
 # (task 2). Both runs share ONE sandbox - the second must hit the marker.
 # =====================================================================
+case "w100-x64" in *x64*) BATTERY_ARCH=x64 ;; *) BATTERY_ARCH=x86 ;; esac
+if [ "${BITE_MODE}" = "" ]; then
 FAILS_BEFORE="${FAILED_CASES}"
 echo "--- case MARKER-WRITE + SAME-DAY-SKIP: chs /verify keys its own marker"
 scaffold_full
 [ -n "${WOU_LANG_KEEP:-}" ] && echo "KEEP: marker sandbox ${SB_DIR}"
 begin_case
 TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
-case "w100-x64" in *x64*) BATTERY_ARCH=x64 ;; *) BATTERY_ARCH=x86 ;; esac
 run_engine "w100-x64 chs /includedotnet /verify /nocleanup /skipdynamic /skiptz"
-if [ "${BITE_MODE}" = "" ]; then
     [ "${ENGINE_RC}" -eq 0 ] \
         || fail_case "MARKER-WRITE: the chs /verify run exited ${ENGINE_RC}, expected 0"
     [ -f "${SB_DIR}/client/md/hashes-dotnet-${BATTERY_ARCH}-chs.txt" ] \
@@ -645,13 +681,13 @@ fi
 # =====================================================================
 # Case GLB-NO-MARKER: a glb /verify run writes no marker, never skips
 # =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
 FAILS_BEFORE="${FAILED_CASES}"
 echo "--- case GLB-NO-MARKER: glb /verify run writes no marker and never skips"
 scaffold_full
 begin_case
 TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
 run_engine "w100-x64 glb /includedotnet /verify /nocleanup /skipdynamic /skiptz"
-if [ "${BITE_MODE}" = "" ]; then
     [ "${ENGINE_RC}" -eq 0 ] \
         || fail_case "GLB-NO-MARKER: the glb /verify run exited ${ENGINE_RC}, expected 0"
     [ ! -f "${SB_DIR}/client/md/hashes-dotnet-${BATTERY_ARCH}-glb.txt" ] \
@@ -666,15 +702,85 @@ if [ "${BITE_MODE}" = "" ]; then
 fi
 
 # =====================================================================
+# Case MULTI-LANG-CLEANUP (review CR-01): default mode (NO /nocleanup)
+# sequential ara -> chs preserves BOTH languages' NLPs and deletes junk
+# =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case MULTI-LANG-CLEANUP: default cleanup preserves earlier language NLPs and deletes obsolete files"
+scaffold_full
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+mkdir -p "${SB_DIR}/client/dotnet"
+printf 'obsolete\n' > "${SB_DIR}/client/dotnet/obsolete-junk.exe"
+run_engine "w100-x64 ara /includedotnet /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "MULTI-LANG-CLEANUP: ara pass exited ${ENGINE_RC}"
+run_engine "w100-x64 chs /includedotnet /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "MULTI-LANG-CLEANUP: chs pass exited ${ENGINE_RC}"
+[ ! -f "${SB_DIR}/client/dotnet/obsolete-junk.exe" ] \
+    || fail_case "MULTI-LANG-CLEANUP: cleanup failed to delete obsolete-junk.exe"
+for f in ndp462-kb3151800-x86-x64-allos-ara.exe ndp48-x86-x64-allos-ara.exe ndp481-x86-x64-allos-ara.exe \
+         ndp462-kb3151800-x86-x64-allos-chs.exe ndp48-x86-x64-allos-chs.exe ndp481-x86-x64-allos-chs.exe; do
+    [ -f "${SB_DIR}/client/dotnet/${f}" ] \
+        || fail_case "MULTI-LANG-CLEANUP: NLP lost across multi-language cleanup: ${f}"
+done
+if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case MULTI-LANG-CLEANUP: both ara and chs NLPs survived default cleanup; obsolete-junk.exe deleted"
+fi
+fi
+
+# =====================================================================
+# Case SAMEDAY-GLB-PRESERVE (review CR-02): default mode (NO /nocleanup)
+# glb /verify -> chs /verify -> glb /verify -> chs /verify preserves chs
+# NLPs AND a stale marker after manual deletion re-downloads instead of
+# falsely skipping.
+# =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
+FAILS_BEFORE="${FAILED_CASES}"
+echo "--- case SAMEDAY-GLB-PRESERVE: same-day glb+chs /verify preserves NLPs and guards stale markers"
+scaffold_full
+begin_case
+TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
+run_engine "w100-x64 glb /includedotnet /verify /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "SAMEDAY-GLB-PRESERVE: run1 glb exited ${ENGINE_RC}"
+run_engine "w100-x64 chs /includedotnet /verify /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "SAMEDAY-GLB-PRESERVE: run1 chs exited ${ENGINE_RC}"
+run_engine "w100-x64 glb /includedotnet /verify /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "SAMEDAY-GLB-PRESERVE: run2 glb exited ${ENGINE_RC}"
+[ -f "${SB_DIR}/client/dotnet/ndp481-x86-x64-allos-chs.exe" ] \
+    || fail_case "SAMEDAY-GLB-PRESERVE: run2 glb cleanup wiped chs NLP"
+grep -qiF -- "-allos-chs.exe" "${SB_DIR}/client/md/hashes-dotnet.txt" \
+    || fail_case "SAMEDAY-GLB-PRESERVE: run2 glb hashes-dotnet.txt lost chs NLP entry"
+run_engine "w100-x64 chs /includedotnet /verify /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "SAMEDAY-GLB-PRESERVE: run2 chs exited ${ENGINE_RC}"
+[ -f "${SB_DIR}/client/dotnet/ndp481-x86-x64-allos-chs.exe" ] \
+    || fail_case "SAMEDAY-GLB-PRESERVE: chs NLP missing after run2 chs"
+grep -qF "Skipped download/validation of .NET Frameworks' language files for chs due to 'same day' rule" "${SB_DIR}/log/download.log" \
+    || fail_case "SAMEDAY-GLB-PRESERVE: run2 chs did not hit same-day skip"
+# Stale-marker guard: remove chs NLPs + refresh hashes-dotnet.txt via glb, then
+# run chs /verify again — it must NOT falsely skip and must re-download chs NLPs.
+rm -f "${SB_DIR}"/client/dotnet/*-allos-chs.exe
+run_engine "w100-x64 glb /includedotnet /verify /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "SAMEDAY-GLB-PRESERVE: stale-probe glb exited ${ENGINE_RC}"
+run_engine "w100-x64 chs /includedotnet /verify /skipdynamic /skiptz"
+[ "${ENGINE_RC}" -eq 0 ] || fail_case "SAMEDAY-GLB-PRESERVE: stale-probe chs exited ${ENGINE_RC}"
+[ -f "${SB_DIR}/client/dotnet/ndp481-x86-x64-allos-chs.exe" ] \
+    || fail_case "SAMEDAY-GLB-PRESERVE: stale marker skipped re-download after manual NLP removal"
+if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
+    echo "case SAMEDAY-GLB-PRESERVE: glb+chs same-day preserved NLPs, skipped cleanly, and recovered from stale marker"
+fi
+fi
+
+# =====================================================================
 # Case IE11-LPS: w62-x64 chs composes the IE11 language-pack family
 # =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
 FAILS_BEFORE="${FAILED_CASES}"
 echo "--- case IE11-LPS: w62-x64 chs downloads its IE11 language packs"
 scaffold_full
 begin_case
 TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
 run_engine "w62-x64 chs /includedotnet /nocleanup /skipdynamic /skiptz"
-if [ "${BITE_MODE}" = "" ]; then
     [ "${ENGINE_RC}" -eq 0 ] \
         || fail_case "IE11-LPS: the w62-x64 chs run exited ${ENGINE_RC}, expected 0"
     ! grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
@@ -701,9 +807,9 @@ fi
 # =====================================================================
 # Case W100-NOOP: the w100-x64 chs run recorded no IE11 family URLs
 # =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
 FAILS_BEFORE="${FAILED_CASES}"
 echo "--- case W100-NOOP: the w100-x64 chs run ignores the ie11 family"
-if [ "${BITE_MODE}" = "" ]; then
     n_ie11_hits=0
     while IFS= read -r u; do
         u="${u%$'\r'}"
@@ -721,13 +827,13 @@ fi
 # Case CHS-UPPER + REFUSAL-SWEEP: case-insensitive dispatch, every target
 # class refuses non-vocab and injection-shaped tokens
 # =====================================================================
+if [ "${BITE_MODE}" = "" ]; then
 FAILS_BEFORE="${FAILED_CASES}"
 echo "--- case CHS-UPPER + REFUSAL-SWEEP: uppercase CHS dispatches, hostile tokens refuse"
 scaffold_full
 begin_case
 TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
 run_engine "w100-x64 CHS /includedotnet /nocleanup /skipdownload /skiptz"
-if [ "${BITE_MODE}" = "" ]; then
     [ "${ENGINE_RC}" -eq 0 ] \
         || fail_case "CHS-UPPER: the uppercase CHS run exited ${ENGINE_RC}, expected 0 (dispatch by loop variable broken?)"
     ! grep -qF "ERROR: Invalid command line" "${SB_DIR}/run.log" \
@@ -737,7 +843,6 @@ if [ "${BITE_MODE}" = "" ]; then
     if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
     echo "case CHS-UPPER: uppercase CHS accepted and dispatched past the gate"
     fi
-fi
 scaffold_mini
 begin_case
 TEMP_WIN="$(cygpath -w "${SB_DIR}")\\tmp"
@@ -754,6 +859,7 @@ grep -qF "{glb ^| ^<language token^>}" "${REPO}/${ENGINE_REL}" \
     || fail_case "REFUSAL-SWEEP: the usage line no longer documents the language-token grammar"
 if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
 echo "case REFUSAL-SWEEP: 6 target classes x 2 hostile tokens all refused via InvalidParams"
+fi
 fi
 
 # =====================================================================

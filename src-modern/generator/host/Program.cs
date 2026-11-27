@@ -637,7 +637,7 @@ namespace WSUSOffline.Generator
             // [Languages] keys are recorded by the same section-scoped loop
             // below (the reader stays dumb - unknown tokens land here too
             // and are filtered at push time, T-38-04 reader tolerance).
-            var languagesDict = new Dictionary<string, bool>();
+            var languagesDict = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
             if (File.Exists(genIni))
             {
@@ -675,7 +675,7 @@ namespace WSUSOffline.Generator
                         {
                             opts[k] = isEnabled;
                         }
-                        if (currentSection == "Languages")
+                        if (currentSection.Equals("Languages", StringComparison.OrdinalIgnoreCase))
                         {
                             languagesDict[k] = isEnabled;
                         }
@@ -1003,7 +1003,7 @@ namespace WSUSOffline.Generator
                         {
                             failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"w100-x64 {lang} {job.Switches}".Trim(), cmdDir, ct);
                         }
-                        if (job.HasWin10x86)
+                        if (job.HasWin10x86 && !ct.IsCancellationRequested)
                         {
                             failedSteps += await RunCommandAsync("DownloadUpdates.cmd", $"w100 {lang} {job.Switches}".Trim(), cmdDir, ct);
                         }
@@ -1232,63 +1232,66 @@ namespace WSUSOffline.Generator
             }
 
             string genIni = Path.Combine(root, "UpdateGenerator.ini");
-            if (File.Exists(genIni))
+            bool genIniExists = File.Exists(genIni);
+            JsonElement leg = default;
+            bool hasLegacy = genIniExists
+                && payload.TryGetProperty("legacy", out leg)
+                && leg.ValueKind == JsonValueKind.Object;
+
+            // Phase 38 (SEL-02, 26a0073 both-sides with plan 38-03's
+            // conditional payload): the [Languages] write branch keys on
+            // its OWN languages property. A payload without it (a
+            // legacy-save rollback, an old exe) never touches
+            // [Languages] - the section, if present from a prior save,
+            // is carried over verbatim. Present-but-empty/voided is an
+            // EXPLICIT cleared save (every known token serialized
+            // Disabled, glb stays Enabled). On a fresh install lacking
+            // UpdateGenerator.ini, hasLanguages creates the file so
+            // selections persist on restart (SEL-02).
+            List<string> saveLanguageSelection = GetLanguagesPayloadSelection(payload, out bool hasLanguages);
+
+            if (hasLegacy || hasLanguages)
             {
-                bool hasLegacy = payload.TryGetProperty("legacy", out JsonElement leg)
-                    && leg.ValueKind == JsonValueKind.Object;
-
-                // Phase 38 (SEL-02, 26a0073 both-sides with plan 38-03's
-                // conditional payload): the [Languages] write branch keys on
-                // its OWN languages property. A payload without it (a
-                // legacy-save rollback, an old exe) never touches
-                // [Languages] - the section, if present from a prior save,
-                // is carried over verbatim. Present-but-empty/voided is an
-                // EXPLICIT cleared save (every known token serialized
-                // Disabled, glb stays Enabled).
-                bool hasLanguages = payload.TryGetProperty("languages", out JsonElement _);
-
-                if (hasLegacy || hasLanguages)
+                var sectionMap = new Dictionary<string, string>
                 {
-                    var sectionMap = new Dictionary<string, string>
-                    {
-                        { "w61_x64", "Windows 7 x64" },
-                        { "w61_x86", "Windows 7" },
-                        { "w60_x64", "Windows Vista x64" },
-                        { "w60_x86", "Windows Vista" },
-                        { "w63_x64", "Windows Server 2012 R2" },
-                        { "w63_x86", "Windows 8.1" },
-                        { "w62_x64", "Windows Server 2012" },
-                        { "wxp_x86", "Windows XP" }
-                    };
+                    { "w61_x64", "Windows 7 x64" },
+                    { "w61_x86", "Windows 7" },
+                    { "w60_x64", "Windows Vista x64" },
+                    { "w60_x86", "Windows Vista" },
+                    { "w63_x64", "Windows Server 2012 R2" },
+                    { "w63_x86", "Windows 8.1" },
+                    { "w62_x64", "Windows Server 2012" },
+                    { "wxp_x86", "Windows XP" }
+                };
 
-                    var lines = new List<string>(File.ReadAllLines(genIni));
-                    if (hasLegacy)
+                var lines = genIniExists
+                    ? new List<string>(File.ReadAllLines(genIni))
+                    : new List<string>();
+                if (hasLegacy)
+                {
+                    foreach (var kvp in sectionMap)
                     {
-                        foreach (var kvp in sectionMap)
+                        if (leg.TryGetProperty(kvp.Key, out var val))
                         {
-                            if (leg.TryGetProperty(kvp.Key, out var val))
+                            string status = val.GetBoolean() ? "Enabled" : "Disabled";
+                            int secIdx = lines.FindIndex(l => l.Trim().Equals($"[{kvp.Value}]", StringComparison.OrdinalIgnoreCase));
+                            if (secIdx >= 0 && secIdx + 1 < lines.Count && lines[secIdx + 1].StartsWith("glb="))
                             {
-                                string status = val.GetBoolean() ? "Enabled" : "Disabled";
-                                int secIdx = lines.FindIndex(l => l.Trim().Equals($"[{kvp.Value}]", StringComparison.OrdinalIgnoreCase));
-                                if (secIdx >= 0 && secIdx + 1 < lines.Count && lines[secIdx + 1].StartsWith("glb="))
-                                {
-                                    lines[secIdx + 1] = $"glb={status}";
-                                }
+                                lines[secIdx + 1] = $"glb={status}";
                             }
                         }
                     }
-                    if (hasLanguages)
-                    {
-                        List<string> saveLanguageSelection = GetLanguagesPayloadSelection(payload, out _);
-                        // glb never rides the payload (the host serializes it
-                        // Enabled unconditionally) - filtered defensively;
-                        // ascending token order mirrors the catalog.
-                        saveLanguageSelection.RemoveAll(langToken => langToken == "glb");
-                        saveLanguageSelection.Sort(StringComparer.Ordinal);
-                        WriteLanguagesSection(lines, saveLanguageSelection, DeriveLanguageCatalog(root));
-                    }
-                    File.WriteAllLines(genIni, lines);
                 }
+                if (hasLanguages)
+                {
+                    // glb never rides the payload (the host serializes it
+                    // Enabled unconditionally) - filtered defensively;
+                    // ascending token order mirrors the catalog.
+                    saveLanguageSelection.RemoveAll(langToken => langToken == "glb");
+                    saveLanguageSelection.Sort(StringComparer.Ordinal);
+                    WriteLanguagesSection(lines, saveLanguageSelection, DeriveLanguageCatalog(root));
+                }
+                File.WriteAllLines(genIni, lines);
             }
         }
 

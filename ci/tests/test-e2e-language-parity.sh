@@ -52,14 +52,12 @@ for req in "${PARITY_DOC}" "${BASH_DIALOG}" "${BASH_MENU}" "${BASH_DOTNET}" "${B
     [ -f "${req}" ] || { echo "FAIL: missing required file: ${req}"; exit 1; }
 done
 
-SCRATCH_ROOT="${REPO}/.planning/tmp/40-01"
-mkdir -p "${SCRATCH_ROOT}" || { echo "FAIL: cannot create ${SCRATCH_ROOT}"; exit 1; }
-RUN_ROOT="$(mktemp -d "${SCRATCH_ROOT}/run.XXXXXX")" || { echo "FAIL: cannot create run dir under ${SCRATCH_ROOT}"; exit 1; }
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wou-e2e-lang.XXXXXX")" || { echo "FAIL: cannot create temp run dir"; exit 1; }
 cleanup () {
     [ -n "${WOU_E2E_KEEP:-}" ] && return 0
     [ -n "${RUN_ROOT:-}" ] && [ -d "${RUN_ROOT}" ] && rm -rf "${RUN_ROOT}"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 make_tmp () {
     mktemp -d "${RUN_ROOT}/sb.XXXXXX"
@@ -136,13 +134,15 @@ run_bash_dotnet_calc () { # $1=lang $2=out_file
         # shellcheck disable=SC1090
         source "${BASH_DOS}"
         apply_exclude_lists () { cp "$1" "$2"; }
-        eval "$(awk '/^function calculate_static_downloads_dotnet/,/^}/' "${BASH_DOTNET}")"
+        eval "$(awk '/^function calculate_static_downloads_dotnet[[:space:]]*\(\)/{p=1} p{print; if (/^\}$/) exit}' "${BASH_DOTNET}")"
         calculate_static_downloads_dotnet "x64" "${out_file}"
     )
 }
 
-run_bash_dotnet_calc "chs" "${BASH_DOTNET_OUT_CHS}"
-run_bash_dotnet_calc "enu" "${BASH_DOTNET_OUT_ENU}"
+run_bash_dotnet_calc "chs" "${BASH_DOTNET_OUT_CHS}" || fail_case "A3: run_bash_dotnet_calc(chs) exited non-zero"
+run_bash_dotnet_calc "enu" "${BASH_DOTNET_OUT_ENU}" || fail_case "A3: run_bash_dotnet_calc(enu) exited non-zero"
+[ -s "${BASH_DOTNET_OUT_CHS}" ] || fail_case "A3: bash dotnet(chs) output missing or empty"
+[ -s "${BASH_DOTNET_OUT_ENU}" ] || fail_case "A3: bash dotnet(enu) output missing or empty"
 
 n_bash_chs=0
 while IFS= read -r u; do
@@ -170,17 +170,18 @@ run_bash_w62_ie11 () { # $1=lang $2=out_file
         # shellcheck disable=SC1090
         source "${BASH_DOS}"
         log_info_message () { :; }
-        filter_default_languages () { cat_dos "$1"; }
         sort_in_place () { LC_ALL=C sort -u "$1" -o "$1"; }
         apply_exclude_lists () { cp "$1" "$2"; }
         ensure_non_empty_file () { [[ -s "$1" ]]; }
-        eval "$(awk '/^function calculate_static_updates/,/^}/' "${BASH_MAIN}")"
+        eval "$(awk '/^function calculate_static_updates[[:space:]]*\(\)/{p=1} p{print; if (/^\}$/) exit}' "${BASH_MAIN}")"
         calculate_static_updates "w62" "x64" "glb" "${out_file}"
     )
 }
 
-run_bash_w62_ie11 "chs" "${BASH_IE11_OUT_CHS}"
-run_bash_w62_ie11 "enu" "${BASH_IE11_OUT_ENU}"
+run_bash_w62_ie11 "chs" "${BASH_IE11_OUT_CHS}" || fail_case "A3: run_bash_w62_ie11(chs) exited non-zero"
+run_bash_w62_ie11 "enu" "${BASH_IE11_OUT_ENU}" || fail_case "A3: run_bash_w62_ie11(enu) exited non-zero"
+[ -s "${BASH_IE11_OUT_CHS}" ] || fail_case "A3: bash w62(chs) output missing or empty"
+[ -s "${BASH_IE11_OUT_ENU}" ] || fail_case "A3: bash w62(enu) output missing or empty"
 
 n_bash_ie11=0
 while IFS= read -r u; do
@@ -198,14 +199,19 @@ if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
     echo "  ok: A3 real bash dotnet (3 chs NLPs / 0 on enu) and w62 IE11 LP (${n_bash_ie11} chs / 0 on enu) verified"
 fi
 
-# A4: bash -n syntax check over all sh/**/*.bash
+# A4: bash -n syntax check over every sh/**/*.bash script individually (WR-01: bash -n only checks its first arg)
 FAILS_BEFORE="${FAILED_CASES}"
-if ! find "${REPO}/sh" -type f -name "*.bash" -exec bash -n {} + 2>"${BASH_SB}/syntax.err"; then
-    fail_case "A4: bash -n failed on sh/**/*.bash"
-    sed 's/^/    /' "${BASH_SB}/syntax.err"
-fi
+n_bash_files=0
+while IFS= read -r -d '' bf; do
+    n_bash_files=$((n_bash_files + 1))
+    if ! bash -n "${bf}" 2>"${BASH_SB}/syntax.err"; then
+        fail_case "A4: bash -n failed on ${bf}"
+        sed 's/^/    /' "${BASH_SB}/syntax.err"
+    fi
+done < <(find "${REPO}/sh" -type f -name "*.bash" -print0)
+[ "${n_bash_files}" -gt 0 ] || fail_case "A4: found 0 sh/**/*.bash scripts"
 if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
-    echo "  ok: A4 bash -n clean across all sh/**/*.bash scripts"
+    echo "  ok: A4 bash -n clean across all ${n_bash_files} sh/**/*.bash scripts"
 fi
 
 # Control A1: mutating bash language_keys must bite vocab parity
@@ -231,11 +237,13 @@ else
         [ -f "${c}" ] && CSC="${c}" && break
     done
     [ -n "${CSC}" ] || { echo "FAIL: csc.exe missing on Windows host"; exit 1; }
-    case "${PROCESSOR_ARCHITECTURE:-}" in
-        AMD64) WGET_NAME=wget64.exe; SIG_NAME=sigcheck64.exe; HASH_NAME=hashdeep64.exe ;;
-        x86)   WGET_NAME=wget.exe;   SIG_NAME=sigcheck.exe;   HASH_NAME=hashdeep.exe ;;
-        *) echo "FAIL: unexpected arch ${PROCESSOR_ARCHITECTURE:-}"; exit 1 ;;
-    esac
+    if [ "${PROCESSOR_ARCHITECTURE:-}" = "AMD64" ] || [ "${PROCESSOR_ARCHITEW6432:-}" = "AMD64" ]; then
+        WGET_NAME=wget64.exe
+    elif [ "${PROCESSOR_ARCHITECTURE:-}" = "x86" ]; then
+        WGET_NAME=wget.exe
+    else
+        echo "FAIL: unexpected arch ${PROCESSOR_ARCHITECTURE:-}/${PROCESSOR_ARCHITEW6432:-}"; exit 1
+    fi
 
     STUB_DIR="$(make_tmp)"
     cat > "${STUB_DIR}/wget.cs" <<'CSEOF'
@@ -267,11 +275,12 @@ class WgetStub
                 if (ln.Length > 0 && !ln.StartsWith("#")) urls.Add(ln);
             }
         }
+        int rc = 0;
         foreach (string u in urls)
         {
             string name = "";
-            try { name = Path.GetFileName(new Uri(u).LocalPath); } catch { name = u; }
-            if (name.Length == 0) continue;
+            try { name = Path.GetFileName(new Uri(u).LocalPath); } catch { name = Path.GetFileName(u); }
+            if (string.IsNullOrEmpty(name)) continue;
             string target = outFile ?? (dest != null ? Path.Combine(dest, name) : name);
             try
             {
@@ -279,9 +288,13 @@ class WgetStub
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllText(target, u + Environment.NewLine, new UTF8Encoding(false));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("wget-stub write failed: " + target + ": " + ex.Message);
+                rc = 1;
+            }
         }
-        return 0;
+        return rc;
     }
 }
 CSEOF
@@ -299,7 +312,9 @@ CSEOF
         MSYS2_ARG_CONV_EXCL='' robocopy \
             "$(cygpath -w "${REPO}/exclude")" "$(cygpath -w "${sb}/exclude")" \
             //E //XF ExcludeList-superseded.txt ExcludeList-superseded-seconly.txt \
-            //NFL //NDL //NJH //NJS > /dev/null 2>&1 || true
+            //NFL //NDL //NJH //NJS > /dev/null 2>&1
+        local rc=$?
+        [ "${rc}" -lt 8 ] || { echo "FAIL: robocopy exclude failed (rc=${rc})" >&2; return 1; }
         cp -r "${REPO}/xslt/." "${sb}/xslt/"
         for t in unzip gsort join cut; do
             [ -f "${REPO}/bin/${t}.exe" ] && cp "${REPO}/bin/${t}.exe" "${sb}/bin/"
@@ -400,13 +415,22 @@ CSEOF
     [ "${INST_RC}" -eq 0 ] || fail_case "E2E-51-W62: DoUpdate ie11 (CMD layout) rc=${INST_RC}"
     grep -qF 'IE_LANG_DIR=..\w62-x64\chs' "${SB_W62}/inst.log" \
         || fail_case "E2E-51-W62: CMD layout did not resolve ..\\w62-x64\\chs"
+    grep -qiF 'IE_LANG_FILENAME=..\w62-x64\chs\ie11-windows6.2-languagepack-x64-zh-cn*.msu' "${SB_W62}/inst.log" \
+        || fail_case "E2E-51-W62: CMD layout did not emit zh-cn IE11 LP pattern"
+    compgen -G "${SB_W62}/client/w62-x64/chs/ie11-windows6.2-languagepack-x64-zh-cn*.msu" >/dev/null \
+        || fail_case "E2E-51-W62: zh-cn IE11 LP .msu missing in w62-x64/chs/"
     # Bash layout: move IE11 LP to w62-x64/glb/ (exact bash 60-main-updates.bash destination)
     mkdir -p "${SB_W62}/client/w62-x64/glb"
-    mv "${SB_W62}"/client/w62-x64/chs/*.msu "${SB_W62}/client/w62-x64/glb/"
+    mv "${SB_W62}"/client/w62-x64/chs/*.msu "${SB_W62}/client/w62-x64/glb/" \
+        || fail_case "E2E-51-W62: failed to move chs IE11 LP .msu to w62-x64/glb/"
+    compgen -G "${SB_W62}/client/w62-x64/glb/ie11-windows6.2-languagepack-x64-zh-cn*.msu" >/dev/null \
+        || fail_case "E2E-51-W62: zh-cn IE11 LP .msu missing in w62-x64/glb/ after move"
     run_inst "${SB_W62}" w62 x64 chs zh-cn ie11
     [ "${INST_RC}" -eq 0 ] || fail_case "E2E-51-W62: DoUpdate ie11 (bash layout) rc=${INST_RC}"
     grep -qF 'IE_LANG_DIR=..\w62-x64\glb' "${SB_W62}/inst.log" \
         || fail_case "E2E-51-W62: bash layout did not resolve ..\\w62-x64\\glb"
+    grep -qiF 'IE_LANG_FILENAME=..\w62-x64\glb\ie11-windows6.2-languagepack-x64-zh-cn*.msu' "${SB_W62}/inst.log" \
+        || fail_case "E2E-51-W62: bash layout did not emit zh-cn IE11 LP pattern in glb/"
     if [ "${FAILED_CASES}" -eq "${FAILS_BEFORE}" ]; then
         echo "  ok: B3 E2E-51-W62-BOTH-LAYOUTS passed (CMD w62-x64\\chs and bash w62-x64\\glb both resolved)"
     fi
